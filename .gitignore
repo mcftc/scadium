@@ -1,0 +1,57 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+coverage
+*.lcov
+
+# next.js
+.next/
+out/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# turbo
+.turbo
+
+# env
+.env
+.env*.local
+.env.development
+.env.production
+
+# logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Anchor / Solana
+programs/**/target
+programs/**/.anchor
+test-ledger/
+
+# Prisma
+infra/prisma/*.db
+infra/prisma/*.db-journal
+
+# Local tool state (Claude Code session memory, Playwright MCP logs)
+.remember/
+.playwright-mcp/
+.claude/

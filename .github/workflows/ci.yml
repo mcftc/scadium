@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: scadium
+          POSTGRES_PASSWORD: scadium
+          POSTGRES_DB: scadium
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scadium -d scadium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://scadium:scadium@localhost:5432/scadium?schema=public
+      JWT_SECRET: ci-test-secret-not-for-production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prisma migrate
+        run: pnpm --filter @scadium/api exec prisma migrate deploy
+
+      - name: Build shared packages
+        run: pnpm --filter @scadium/shared --filter @scadium/fair build
+
+      - name: Fair engine tests
+        run: pnpm --filter @scadium/fair test
+
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+
+      - name: Build web
+        run: pnpm --filter @scadium/web build
+
+      - name: Build api
+        run: pnpm --filter @scadium/api exec tsc -p tsconfig.json

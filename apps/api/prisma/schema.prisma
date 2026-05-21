@@ -1,0 +1,304 @@
+// Scadium Prisma schema — single source of truth for the Postgres DB.
+// Run migrations with `pnpm --filter @scadium/api prisma migrate dev`.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum Role {
+  user
+  moderator
+  admin
+}
+
+enum GameType {
+  crash
+  coinflip
+  blackjack
+}
+
+enum BetStatus {
+  pending
+  won
+  lost
+  refunded
+}
+
+enum CrashRoundStatus {
+  waiting
+  running
+  busted
+}
+
+enum CoinflipStatus {
+  open
+  matched
+  resolving
+  completed
+  cancelled
+}
+
+enum BlackjackTableStatus {
+  waiting
+  betting
+  dealing
+  player_turns
+  dealer_turn
+  settling
+}
+
+// ==================== USERS & AUTH ====================
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  walletAddress  String   @unique
+  username       String?  @unique
+  avatarUrl      String?
+  role           Role     @default(user)
+  refCode        String   @unique
+  referredById   String?  @db.Uuid
+  referredBy     User?    @relation("Referrals", fields: [referredById], references: [id])
+  referrals      User[]   @relation("Referrals")
+  banned         Boolean  @default(false)
+  banReason      String?
+  totalWagered   BigInt   @default(0)
+  totalWon       BigInt   @default(0)
+  totalLost      BigInt   @default(0)
+  biggestWin     BigInt   @default(0)
+  gamesPlayed    Int      @default(0)
+  scadiumBalance BigInt   @default(0)
+  // Play-money balance used by the off-chain game loop until on-chain
+  // programs land. New users get 10 SOL equivalent (10_000_000_000 lamports).
+  playBalanceLamports BigInt @default(10000000000)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions       Session[]
+  bets           Bet[]
+  chatMessages   ChatMessage[]
+  crashBets      CrashBet[]
+  coinflipsMade  CoinflipGame[] @relation("creator")
+  coinflipsJoined CoinflipGame[] @relation("joiner")
+  airdropClaims  AirdropClaim[]
+  referralsAsReferrer Referral[] @relation("referrer")
+  referralsAsReferee  Referral[] @relation("referee")
+
+  @@index([walletAddress])
+  @@index([refCode])
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jwtId        String   @unique
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AuthNonce {
+  walletAddress String   @id
+  nonce         String
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+}
+
+// ==================== FAIRNESS ====================
+
+model Seed {
+  id              String    @id @default(uuid()) @db.Uuid
+  serverSeedHash  String    @unique
+  serverSeed      String?   @unique
+  clientSeed      String
+  nonce           Int       @default(0)
+  revealedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  crashRounds   CrashRound[]
+  coinflips     CoinflipGame[]
+  blackjackRounds BlackjackRound[]
+}
+
+// ==================== BETS (unified history) ====================
+
+model Bet {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @db.Uuid
+  user            User      @relation(fields: [userId], references: [id])
+  gameType        GameType
+  amountLamports  BigInt
+  payoutLamports  BigInt    @default(0)
+  multiplier      Float?
+  status          BetStatus @default(pending)
+  txSignature     String?
+  seedId          String?   @db.Uuid
+  nonce           Int?
+  resultJson      Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([gameType, createdAt])
+}
+
+// ==================== CRASH ====================
+
+model CrashRound {
+  id              String            @id @default(uuid()) @db.Uuid
+  seedId          String            @db.Uuid
+  seed            Seed              @relation(fields: [seedId], references: [id])
+  nonce           Int
+  status          CrashRoundStatus  @default(waiting)
+  bustMultiplier  Float?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime          @default(now())
+
+  bets CrashBet[]
+
+  @@index([status, createdAt])
+}
+
+model CrashBet {
+  id                    String   @id @default(uuid()) @db.Uuid
+  roundId               String   @db.Uuid
+  round                 CrashRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  userId                String   @db.Uuid
+  user                  User     @relation(fields: [userId], references: [id])
+  amountLamports        BigInt
+  autoCashoutMultiplier Float?
+  cashoutMultiplier     Float?
+  payoutLamports        BigInt   @default(0)
+  won                   Boolean  @default(false)
+  createdAt             DateTime @default(now())
+
+  @@index([roundId])
+  @@index([userId])
+}
+
+// ==================== COINFLIP ====================
+
+model CoinflipGame {
+  id             String         @id @default(uuid()) @db.Uuid
+  creatorId      String         @db.Uuid
+  creator        User           @relation("creator", fields: [creatorId], references: [id])
+  creatorSide    String         // 'heads' | 'tails'
+  joinerId       String?        @db.Uuid
+  joiner         User?          @relation("joiner", fields: [joinerId], references: [id])
+  amountLamports BigInt
+  result         String?        // 'heads' | 'tails'
+  winnerId       String?        @db.Uuid
+  status         CoinflipStatus @default(open)
+  seedId         String?        @db.Uuid
+  seed           Seed?          @relation(fields: [seedId], references: [id])
+  nonce          Int?
+  txSignature    String?
+  createdAt      DateTime       @default(now())
+  resolvedAt     DateTime?
+
+  @@index([status, createdAt])
+  @@index([creatorId])
+}
+
+// ==================== BLACKJACK ====================
+
+model BlackjackTable {
+  id                String                @id @default(uuid()) @db.Uuid
+  name              String
+  status            BlackjackTableStatus  @default(waiting)
+  minBetLamports    BigInt
+  maxBetLamports    BigInt
+  maxSeats          Int                   @default(5)
+  createdAt         DateTime              @default(now())
+
+  rounds BlackjackRound[]
+}
+
+model BlackjackRound {
+  id         String         @id @default(uuid()) @db.Uuid
+  tableId    String         @db.Uuid
+  table      BlackjackTable @relation(fields: [tableId], references: [id])
+  seedId     String         @db.Uuid
+  seed       Seed           @relation(fields: [seedId], references: [id])
+  nonce      Int
+  stateJson  Json
+  endedAt    DateTime?
+  createdAt  DateTime       @default(now())
+
+  @@index([tableId, createdAt])
+}
+
+// ==================== CHAT ====================
+
+model ChatMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  body       String
+  deletedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ==================== AIRDROPS / REWARDS ====================
+
+model AirdropEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  distributedAt   DateTime @default(now())
+  totalLamports   BigInt
+  participantCount Int
+
+  claims AirdropClaim[]
+}
+
+model AirdropClaim {
+  id             String       @id @default(uuid()) @db.Uuid
+  eventId        String       @db.Uuid
+  event          AirdropEvent @relation(fields: [eventId], references: [id])
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id])
+  lamports       BigInt
+  txSignature    String?
+  claimedAt      DateTime     @default(now())
+
+  @@unique([eventId, userId])
+}
+
+// ==================== AFFILIATE ====================
+
+model Referral {
+  id                  String   @id @default(uuid()) @db.Uuid
+  referrerId          String   @db.Uuid
+  referrer            User     @relation("referrer", fields: [referrerId], references: [id])
+  refereeId           String   @unique @db.Uuid
+  referee             User     @relation("referee", fields: [refereeId], references: [id])
+  volumeLamports      BigInt   @default(0)
+  commissionLamports  BigInt   @default(0)
+  createdAt           DateTime @default(now())
+}
+
+// ==================== LEADERBOARD ====================
+
+model LeaderboardSnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  period         String   // 'hourly' | 'daily' | 'weekly' | 'all_time'
+  userId         String   @db.Uuid
+  volumeLamports BigInt
+  rank           Int
+  capturedAt     DateTime @default(now())
+
+  @@index([period, capturedAt, rank])
+}

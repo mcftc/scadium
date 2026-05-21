@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: scadium-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scadium
+      POSTGRES_PASSWORD: scadium
+      POSTGRES_DB: scadium
+    ports:
+      - '5432:5432'
+    volumes:
+      - scadium-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U scadium -d scadium']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: scadium-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - scadium-redis-data:/data
+    command: ['redis-server', '--appendonly', 'yes']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  scadium-pg-data:
+  scadium-redis-data:

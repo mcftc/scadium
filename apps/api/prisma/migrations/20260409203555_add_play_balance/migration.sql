@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "playBalanceLamports" BIGINT NOT NULL DEFAULT 10000000000;
