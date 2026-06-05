@@ -1,31 +1,25 @@
 'use client';
 
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { useAuthStore } from '@/store/auth-store';
 
 /**
  * Convenience hook that unifies wallet-adapter state and our auth store.
  *
- * - `isAuthenticated` means both the wallet is connected AND we hold a
- *   matching JWT for its address. If the user disconnects their wallet
- *   (or connects a different one), we invalidate any stale session.
+ * The JWT is the session of record: it's issued only after a SIWS signature,
+ * so once a user has signed in, the short-lived token *is* their identity.
+ * The wallet adapter only needs to be connected at sign-in time (to produce
+ * that signature) — keeping it live afterwards isn't required to browse the
+ * authenticated app. This also means a regenerating demo (burner) wallet, or a
+ * page reload that drops the adapter connection, doesn't log the user out.
+ *
+ * - `isAuthenticated` ⇔ we hold a JWT + the wallet address it was issued for.
  * - `signOut` clears the JWT and disconnects the wallet adapter.
  */
 export function useWalletAuth() {
-  const { connected, publicKey, disconnect } = useWallet();
+  const { publicKey, disconnect } = useWallet();
   const { accessToken, walletAddress, clear } = useAuthStore();
-
-  const currentWalletAddress = publicKey?.toBase58() ?? null;
-
-  // If the connected wallet no longer matches the authenticated wallet,
-  // drop the JWT — it belongs to a different identity.
-  useEffect(() => {
-    if (!connected) return;
-    if (walletAddress && currentWalletAddress && walletAddress !== currentWalletAddress) {
-      clear();
-    }
-  }, [connected, currentWalletAddress, walletAddress, clear]);
 
   const signOut = useCallback(async () => {
     clear();
@@ -36,12 +30,12 @@ export function useWalletAuth() {
     }
   }, [clear, disconnect]);
 
-  const isAuthenticated =
-    connected && !!accessToken && !!walletAddress && walletAddress === currentWalletAddress;
+  const isAuthenticated = !!accessToken && !!walletAddress;
 
   return {
     isAuthenticated,
-    walletAddress: currentWalletAddress,
+    // Prefer the address the JWT was issued for; fall back to a live adapter.
+    walletAddress: walletAddress ?? publicKey?.toBase58() ?? null,
     accessToken,
     signOut,
   };

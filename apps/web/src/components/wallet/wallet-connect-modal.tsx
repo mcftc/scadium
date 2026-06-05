@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useWallet, type Wallet } from '@solana/wallet-adapter-react';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
@@ -31,14 +31,31 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
   const { signIn } = useSiwsSignIn();
   const [step, setStep] = useState<Step>('choose');
   const [error, setError] = useState<string | null>(null);
+  const connectStartedRef = useRef(false);
 
   // Reset state whenever the modal opens afresh
   useEffect(() => {
     if (open) {
       setStep('choose');
       setError(null);
+      connectStartedRef.current = false;
     }
   }, [open]);
+
+  // `select()` only sets the active wallet on the *next* render — calling
+  // connect() synchronously after it throws WalletNotSelectedError. So we wait
+  // until the chosen wallet is actually selected, then connect exactly once.
+  useEffect(() => {
+    if (!open || step !== 'connecting') return;
+    if (!wallet || connected || connecting) return;
+    if (connectStartedRef.current) return;
+    connectStartedRef.current = true;
+    connect().catch((e) => {
+      connectStartedRef.current = false;
+      setStep('error');
+      setError(e instanceof Error ? e.message : 'Failed to connect to wallet');
+    });
+  }, [open, step, wallet, connected, connecting, connect]);
 
   // After the wallet adapter reports `connected: true`, kick off SIWS
   useEffect(() => {
@@ -68,17 +85,13 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
     }
   }
 
-  async function handleChoose(w: Wallet) {
+  function handleChoose(w: Wallet) {
     setError(null);
+    connectStartedRef.current = false;
     setStep('connecting');
-    try {
-      select(w.adapter.name);
-      // Adapter's connect() is idempotent; awaiting it triggers the wallet popup.
-      await connect();
-    } catch (e) {
-      setStep('error');
-      setError(e instanceof Error ? e.message : 'Failed to connect to wallet');
-    }
+    // Just select here — the effect above connects once selection lands. If
+    // this wallet is already the active one, nudge the connect effect directly.
+    select(w.adapter.name);
   }
 
   const installedWallets = wallets.filter(
