@@ -1,11 +1,13 @@
 'use client';
 
+import { Users } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { CrashCurve } from './crash-curve';
 import { CrashBetPanel } from './crash-bet-panel';
 import { CrashPlayersList } from './crash-players-list';
 import { CrashHistory } from './crash-history';
+import { CrashFairness } from './crash-fairness';
 import { useCrash } from '@/hooks/use-crash';
 
 /**
@@ -30,6 +32,14 @@ export function CrashGame() {
         <CrashHistory history={state?.history ?? []} />
         <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[520px]">
           <CrashCurve state={state} />
+          {/* Live player count overlay (top-left), like solpump */}
+          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10">
+            <Users className="h-3 w-3 text-cyan-300" />
+            <span className="text-[11px] font-semibold text-white/90 tabular-nums">
+              {state?.bets.length ?? 0}
+            </span>
+            <span className="text-[10px] text-white/50">Playing</span>
+          </div>
         </div>
       </div>
 
@@ -39,11 +49,18 @@ export function CrashGame() {
           <CrashBetPanel state={state} />
         </Card>
         <Card className="p-4 max-h-[380px] overflow-y-auto">
-          <h3 className="text-[10px] uppercase tracking-wider text-foreground-muted mb-3 font-semibold">
-            Live bets
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
+              Live bets
+            </h3>
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-foreground-muted">
+              <Users className="h-3 w-3" />
+              {state?.bets.length ?? 0} Playing
+            </span>
+          </div>
           <CrashPlayersList bets={state?.bets ?? []} />
         </Card>
+        <CrashFairness state={state} />
       </div>
     </div>
   );

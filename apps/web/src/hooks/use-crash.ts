@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
+import { useQueryClient } from '@tanstack/react-query';
 import { env } from '@/config/env';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
@@ -22,6 +23,9 @@ export interface CrashSnapshot {
   phase: CrashPhase;
   startedAt: number | null;
   serverSeedHash: string;
+  clientSeed: string;
+  nonce: number;
+  serverSeed: string | null;
   bustPoint: number | null;
   multiplier: number;
   bets: CrashBet[];
@@ -36,7 +40,7 @@ export interface CrashSnapshot {
 export function useCrash() {
   const [state, setState] = useState<CrashSnapshot | null>(null);
   const [, setTick] = useState(0);
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     // Seed from REST
@@ -52,18 +56,24 @@ export function useCrash() {
       withCredentials: true,
     });
 
-    sock.on('crash:round-start', (p: { roundId: string; serverSeedHash: string }) => {
-      setState((prev) => ({
-        roundId: p.roundId,
-        phase: 'waiting' as const,
-        startedAt: null,
-        serverSeedHash: p.serverSeedHash,
-        bustPoint: null,
-        multiplier: 1.0,
-        bets: [],
-        history: prev?.history ?? [],
-      }));
-    });
+    sock.on(
+      'crash:round-start',
+      (p: { roundId: string; serverSeedHash: string; clientSeed: string; nonce: number }) => {
+        setState((prev) => ({
+          roundId: p.roundId,
+          phase: 'waiting' as const,
+          startedAt: null,
+          serverSeedHash: p.serverSeedHash,
+          clientSeed: p.clientSeed,
+          nonce: p.nonce,
+          serverSeed: null,
+          bustPoint: null,
+          multiplier: 1.0,
+          bets: [],
+          history: prev?.history ?? [],
+        }));
+      },
+    );
 
     sock.on('crash:running', () => {
       setState((s) => (s ? { ...s, phase: 'running', startedAt: Date.now() } : s));
@@ -74,7 +84,7 @@ export function useCrash() {
       setTick((t) => t + 1);
     });
 
-    sock.on('crash:bust', ({ bustPoint }: { bustPoint: number }) => {
+    sock.on('crash:bust', ({ bustPoint, serverSeed }: { bustPoint: number; serverSeed: string }) => {
       setState((s) =>
         s
           ? {
@@ -82,10 +92,13 @@ export function useCrash() {
               phase: 'busted',
               bustPoint,
               multiplier: bustPoint,
+              serverSeed,
               history: [{ bustPoint, roundId: s.roundId }, ...s.history].slice(0, 20),
             }
           : s,
       );
+      // Round settled server-side (auto-cashout wins / losses) — refresh balance.
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
     });
 
     sock.on('crash:bet-placed', (bet: CrashBet & { roundId: string }) => {
@@ -115,7 +128,6 @@ export function useCrash() {
       },
     );
 
-    setSocket(sock);
     return () => {
       sock.disconnect();
     };
@@ -127,24 +139,29 @@ export function useCrash() {
 
 export function useCrashActions() {
   const token = useAuthStore((s) => s.accessToken);
+  const queryClient = useQueryClient();
   const placeBet = useCallback(
-    (params: { amountLamports: string; autoCashout?: number | null }) =>
-      api<{ ok: true; roundId: string }>('/crash/bet', {
+    async (params: { amountLamports: string; autoCashout?: number | null }) => {
+      const res = await api<{ ok: true; roundId: string }>('/crash/bet', {
         method: 'POST',
         body: {
           amountLamports: params.amountLamports,
           autoCashout: params.autoCashout ?? undefined,
         },
         token,
-      }),
-    [token],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      return res;
+    },
+    [token, queryClient],
   );
-  const cashOut = useCallback(
-    () => api<{ payoutLamports: string; multiplier: number }>('/crash/cashout', {
+  const cashOut = useCallback(async () => {
+    const res = await api<{ payoutLamports: string; multiplier: number }>('/crash/cashout', {
       method: 'POST',
       token,
-    }),
-    [token],
-  );
+    });
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+    return res;
+  }, [token, queryClient]);
   return { placeBet, cashOut };
 }

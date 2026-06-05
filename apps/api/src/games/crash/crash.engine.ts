@@ -60,6 +60,12 @@ export class CrashEngine implements OnModuleInit {
       phase: this.current.phase,
       startedAt: this.current.startedAt,
       serverSeedHash: this.current.serverSeedHash,
+      // Public, non-secret round inputs — let players reproduce the result.
+      clientSeed: this.current.clientSeed,
+      nonce: this.current.nonce,
+      // serverSeed is only revealed once the round has busted (the commitment
+      // is sha256(serverSeed), published up-front via serverSeedHash).
+      serverSeed: this.current.phase === 'busted' ? this.current.serverSeed : null,
       bustPoint: this.current.phase === 'busted' ? this.current.bustPoint : null,
       multiplier: this.currentMultiplier(),
       bets: Array.from(this.current.bets.values()).map((b) => ({
@@ -170,6 +176,8 @@ export class CrashEngine implements OnModuleInit {
       roundId: this.current.id,
       phase: 'waiting',
       serverSeedHash: seed.serverSeedHash,
+      clientSeed: seed.clientSeed,
+      nonce: seed.nonce,
       bettingWindowMs: CRASH.BET_WINDOW_MS,
     });
 

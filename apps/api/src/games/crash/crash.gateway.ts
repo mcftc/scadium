@@ -22,6 +22,8 @@ export class CrashGateway {
     roundId: string;
     phase: 'waiting';
     serverSeedHash: string;
+    clientSeed: string;
+    nonce: number;
     bettingWindowMs: number;
   }) {
     this.server.emit('crash:round-start', payload);

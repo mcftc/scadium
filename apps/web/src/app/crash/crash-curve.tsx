@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import type { CrashSnapshot } from '@/hooks/use-crash';
 import { cn } from '@/lib/cn';
 
@@ -14,11 +14,11 @@ import { cn } from '@/lib/cn';
  *  - Red flash on bust
  */
 export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
-  const [countdown, setCountdown] = useState(6);
+  const [countdown, setCountdown] = useState(20);
 
   useEffect(() => {
     if (state?.phase !== 'waiting') return;
-    setCountdown(6);
+    setCountdown(20);
     const interval = setInterval(() => {
       setCountdown((c) => Math.max(0, c - 0.1));
     }, 100);
@@ -181,32 +181,99 @@ function PerspectiveGrid() {
   );
 }
 
-/** SVG crash curve with a rocket at the tip and a neon trail. */
+/**
+ * SVG crash curve with a rocket at the tip and a neon trail.
+ *
+ * The real game grows the multiplier exponentially in time
+ * (`m(t) = GROWTH_RATE^(t/10)`), so to render the characteristic upward-
+ * accelerating "hockey stick" we plot TIME on x and the MULTIPLIER on y:
+ *   x ∝ ln(m)   (elapsed time is proportional to ln of the multiplier)
+ *   y ∝ m       (linear in the multiplier value)
+ * which makes screen-y ∝ e^x — a curve that bends sharply upward, exactly
+ * like solpump. The y-axis auto-ranges so the rocket floats ~70% up.
+ */
 function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolean }) {
+  // Measure the (non-uniformly stretched) plot in real pixels so the rocket can
+  // be rotated to the *visual* tangent of the curve, not the viewBox tangent.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ w: 16, h: 9 });
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const r = entry?.contentRect;
+      if (r && r.width > 0 && r.height > 0) setSize({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const points = useMemo(() => {
+    const m = Math.max(1.0001, multiplier);
+    const yMax = Math.max(2, m * 1.45); // headroom so the tip sits ~69% up
+    const xRef = Math.max(2.2, m * 1.5); // time scale → keeps rocket off the edge
+    const lnX = Math.log(xRef);
     const pts: { x: number; y: number }[] = [];
-    const steps = 80;
+    const steps = 72;
     for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const curM = 1 + (multiplier - 1) * t;
-      const x = 5 + t * 85;
-      const maxM = Math.max(2, multiplier * 1.2);
-      const y = 90 - (Math.log(curM) / Math.log(maxM)) * 75;
-      pts.push({ x, y });
+      // geometric sweep of multiplier values from 1 → m. Slope ∝ v, so the
+      // path leaves the floor nearly horizontal (a launch ramp) and rears up
+      // toward vertical as the multiplier climbs.
+      const v = Math.pow(m, i / steps);
+      const fx = Math.min(0.84, Math.log(v) / lnX);
+      const fy = v / yMax;
+      pts.push({ x: 6 + fx * 82, y: 94 - fy * 84 });
     }
     return pts;
   }, [multiplier]);
 
-  const fillD =
-    points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') +
-    ` L${points[points.length - 1]?.x ?? 90},95 L5,95 Z`;
-
   const last = points[points.length - 1];
-  const trailColor = busted ? '#ef4444' : '#22d3ee';
-  const glowColor = busted ? 'rgba(239,68,68,0.4)' : 'rgba(34,211,238,0.3)';
+  const fillD =
+    points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ') +
+    ` L${(last?.x ?? 90).toFixed(2)},94 L6,94 Z`;
+
+  // Trail hue rises with the multiplier: white → cyan → violet → (red on bust)
+  const trailColor = busted
+    ? '#ef4444'
+    : multiplier >= 10
+      ? '#a855f7'
+      : multiplier >= 2
+        ? '#22d3ee'
+        : '#e8f0ff';
+  const glowColor = busted ? 'rgba(239,68,68,0.45)' : 'rgba(34,211,238,0.3)';
+
+  const ptsStr = (arr: { x: number; y: number }[]) => arr.map((p) => `${p.x},${p.y}`).join(' ');
+  // Warm exhaust flame = the trailing slice of the curve, layered brightest at
+  // the rocket. Because it's the tail of the same path it follows and steepens
+  // with the curve automatically.
+  const n = points.length;
+  // Exhaust plume: a billowing smoke base, then a fat fire body tapering to a
+  // hot white core right at the nozzle. Outer layers are longer (lingering
+  // smoke), inner layers short + bright (the burn at the rocket).
+  const flame = busted
+    ? []
+    : [
+        { pts: points.slice(Math.max(0, n - 34)), w: 5.4, c: '#5b2a06', o: 0.14 }, // smoke
+        { pts: points.slice(Math.max(0, n - 28)), w: 4.2, c: '#ff3d00', o: 0.24 }, // outer fire
+        { pts: points.slice(Math.max(0, n - 20)), w: 3.0, c: '#ff6a00', o: 0.42 },
+        { pts: points.slice(Math.max(0, n - 13)), w: 2.0, c: '#ff9d2e', o: 0.6 },
+        { pts: points.slice(Math.max(0, n - 8)), w: 1.3, c: '#ffd36b', o: 0.82 },
+        { pts: points.slice(Math.max(0, n - 4)), w: 0.7, c: '#fff7e6', o: 1 }, // hot core
+      ];
+
+  // Rocket rotation: tangent of the last segment in REAL pixels (the SVG is
+  // stretched, so viewBox angles ≠ on-screen angles). 🚀 points NE at 0°, so
+  // offset by +45° to align its nose with the direction of travel.
+  let rocketDeg = -45;
+  if (last) {
+    const back = points[Math.max(0, n - 5)] ?? last;
+    const dxpx = ((last.x - back.x) / 100) * size.w;
+    const dypx = ((last.y - back.y) / 100) * size.h;
+    rocketDeg = (Math.atan2(dypx, dxpx) * 180) / Math.PI + 45;
+  }
 
   return (
-    <div className="absolute inset-0 z-[5]">
+    <div ref={rootRef} className="absolute inset-0 z-[5]">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
         <defs>
           <linearGradient id="trail-grad" x1="0" y1="0" x2="1" y2="0">
@@ -225,44 +292,59 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <filter id="flame-glow">
+            <feGaussianBlur stdDeviation="0.9" />
+          </filter>
         </defs>
         <path d={fillD} fill="url(#trail-fill)" />
         <polyline
-          points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+          points={ptsStr(points)}
           fill="none"
           stroke={glowColor}
-          strokeWidth="2"
+          strokeWidth="1.1"
           strokeLinecap="round"
         />
+        {/* The path line itself stays thin; the flame below carries the drama. */}
         <polyline
-          points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+          points={ptsStr(points)}
           fill="none"
           stroke="url(#trail-grad)"
-          strokeWidth="0.8"
+          strokeWidth="0.45"
           strokeLinecap="round"
           filter="url(#glow)"
         />
+        {/* Exhaust flame: warm, tapering, brightest at the rocket */}
+        {flame.map((f, i) => (
+          <polyline
+            key={i}
+            points={ptsStr(f.pts)}
+            fill="none"
+            stroke={f.c}
+            strokeOpacity={f.o}
+            strokeWidth={f.w}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            filter="url(#flame-glow)"
+          />
+        ))}
       </svg>
 
-      {/* Rocket at the tip of the curve */}
+      {/* Rocket at the tip of the curve, nose along the curve's tangent */}
       {last && !busted && (
         <div
           className="absolute z-10 transition-all duration-75"
           style={{ left: `${last.x}%`, top: `${last.y}%`, transform: 'translate(-50%, -50%)' }}
         >
           <div
-            className="text-2xl md:text-3xl"
+            className="text-4xl md:text-6xl"
             style={{
-              filter: 'drop-shadow(0 0 12px rgba(34,211,238,0.8))',
-              transform: 'rotate(-30deg)',
+              filter:
+                'drop-shadow(0 0 14px rgba(255,140,40,0.9)) drop-shadow(0 0 28px rgba(255,90,0,0.5))',
+              transform: `rotate(${rocketDeg.toFixed(1)}deg)`,
             }}
           >
             🚀
           </div>
-          <div
-            className="absolute -left-4 top-1/2 w-8 h-4 rounded-full blur-sm animate-pulse"
-            style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.5), transparent)' }}
-          />
         </div>
       )}
 
@@ -319,7 +401,7 @@ function MultiplierRuler({
           return (
             <div
               key={v}
-              className="absolute left-0 right-12"
+              className="absolute left-0 right-16"
               style={{ bottom: `${5 + pct}%` }}
             >
               <div
@@ -337,27 +419,29 @@ function MultiplierRuler({
       </div>
 
       {/* Right ruler labels */}
-      <div className="absolute right-0 top-0 bottom-0 w-12 z-[8] pointer-events-none flex flex-col justify-end pb-[5%]">
+      <div className="absolute right-0 top-0 bottom-0 w-16 z-[8] pointer-events-none flex flex-col justify-end pb-[5%]">
         {ticks.map((v) => {
           const pct = (v / maxLabel) * 85;
           const isActive = phase !== 'waiting' && multiplier >= v;
           return (
             <div
               key={v}
-              className="absolute right-2 flex items-center gap-1"
+              className="absolute right-2 flex items-center gap-1.5"
               style={{ bottom: `${5 + pct}%`, transform: 'translateY(50%)' }}
             >
               {/* Tick mark */}
               <div
-                className="w-2 h-px"
-                style={{ background: isActive ? 'rgba(34,211,238,0.5)' : 'rgba(100,100,180,0.3)' }}
+                className="h-[2px] rounded-full"
+                style={{
+                  width: isActive ? 14 : 9,
+                  background: isActive ? 'rgba(34,211,238,0.85)' : 'rgba(140,140,200,0.45)',
+                }}
               />
               <span
-                className="text-[9px] font-mono tabular-nums"
+                className="text-[11px] font-mono font-semibold tabular-nums"
                 style={{
-                  color: isActive
-                    ? 'rgba(34,211,238,0.8)'
-                    : 'rgba(150,150,200,0.35)',
+                  color: isActive ? '#67e8f9' : 'rgba(170,170,215,0.55)',
+                  textShadow: isActive ? '0 0 8px rgba(34,211,238,0.5)' : 'none',
                 }}
               >
                 {v.toFixed(1)}x
