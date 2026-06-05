@@ -17,11 +17,8 @@ export function CrashPlayersList({ bets }: { bets: CrashBet[] }) {
   return (
     <div className="space-y-1">
       {sorted.map((bet) => {
-        const cashed = bet.cashedOutAt !== null;
-        const payout = cashed
-          ? (BigInt(bet.amountLamports) * BigInt(Math.floor(bet.cashedOutAt! * 100))) /
-            BigInt(100)
-          : BigInt(bet.amountLamports);
+        // != null also covers undefined — the socket payload may omit the field
+        const cashed = bet.cashedOutAt != null;
         const name = bet.username ?? shortAddress(bet.walletAddress);
         return (
           <div

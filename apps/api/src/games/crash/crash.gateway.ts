@@ -56,6 +56,10 @@ export class CrashGateway {
       walletAddress: bet.walletAddress,
       amountLamports: bet.amountLamports.toString(),
       autoCashout: bet.autoCashout,
+      // A fresh bet is never cashed out. The web CrashBet type expects
+      // `number | null` — omitting the field delivers undefined and breaks
+      // the players list's cashed-out check.
+      cashedOutAt: null,
     });
   }
 
