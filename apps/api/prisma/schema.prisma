@@ -23,6 +23,19 @@ enum GameType {
   crash
   coinflip
   blackjack
+  lottery
+  jackpot
+}
+
+enum LotteryDrawStatus {
+  open
+  drawn
+}
+
+enum JackpotRoundStatus {
+  open
+  drawn
+  refunded
 }
 
 enum BetStatus {
@@ -90,6 +103,9 @@ model User {
   airdropClaims  AirdropClaim[]
   referralsAsReferrer Referral[] @relation("referrer")
   referralsAsReferee  Referral[] @relation("referee")
+  lotteryTickets LotteryTicket[]
+  jackpotEntries JackpotEntry[]
+  jackpotWins    JackpotRound[] @relation("jackpotWinner")
 
   @@index([walletAddress])
   @@index([refCode])
@@ -130,6 +146,8 @@ model Seed {
   crashRounds   CrashRound[]
   coinflips     CoinflipGame[]
   blackjackRounds BlackjackRound[]
+  lotteryDraws  LotteryDraw[]
+  jackpotRounds JackpotRound[]
 }
 
 // ==================== BETS (unified history) ====================
@@ -210,6 +228,82 @@ model CoinflipGame {
 
   @@index([status, createdAt])
   @@index([creatorId])
+}
+
+// ==================== LOTTERY ====================
+
+model LotteryDraw {
+  id           String            @id @default(uuid()) @db.Uuid
+  seedId       String            @db.Uuid
+  seed         Seed              @relation(fields: [seedId], references: [id])
+  nonce        Int               @default(0)
+  status       LotteryDrawStatus @default(open)
+  // Result (null until drawn): 5 main numbers (1..36) + 1 bonus (1..10)
+  mainNumbers  Int[]
+  bonusNumber  Int?
+  potLamports  BigInt            @default(0)
+  ticketCount  Int               @default(0)
+  drawAt       DateTime // when this draw is scheduled to resolve
+  drawnAt      DateTime?
+  createdAt    DateTime          @default(now())
+
+  tickets LotteryTicket[]
+
+  @@index([status, drawAt])
+}
+
+model LotteryTicket {
+  id             String      @id @default(uuid()) @db.Uuid
+  drawId         String      @db.Uuid
+  draw           LotteryDraw @relation(fields: [drawId], references: [id])
+  userId         String      @db.Uuid
+  user           User        @relation(fields: [userId], references: [id])
+  mainNumbers    Int[] // the 5 picked main numbers
+  bonusNumber    Int // the picked bonus number
+  costLamports   BigInt
+  matchedMain    Int         @default(0)
+  matchedBonus   Int         @default(0)
+  payoutLamports BigInt      @default(0)
+  won            Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+
+  @@index([drawId])
+  @@index([userId, createdAt])
+}
+
+// ==================== JACKPOT ====================
+
+model JackpotRound {
+  id             String             @id @default(uuid()) @db.Uuid
+  seedId         String             @db.Uuid
+  seed           Seed               @relation(fields: [seedId], references: [id])
+  nonce          Int                @default(0)
+  status         JackpotRoundStatus @default(open)
+  totalLamports  BigInt             @default(0) // sum of all entries
+  winnerId       String?            @db.Uuid
+  winner         User?              @relation("jackpotWinner", fields: [winnerId], references: [id])
+  winningTicket  BigInt? // the drawn lamport index in [0, totalLamports)
+  payoutLamports BigInt             @default(0) // amount paid to the winner (after edge)
+  closeAt        DateTime // when the open window ends and the draw runs
+  drawnAt        DateTime?
+  createdAt      DateTime           @default(now())
+
+  entries JackpotEntry[]
+
+  @@index([status, closeAt])
+}
+
+model JackpotEntry {
+  id             String       @id @default(uuid()) @db.Uuid
+  roundId        String       @db.Uuid
+  round          JackpotRound @relation(fields: [roundId], references: [id])
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id])
+  amountLamports BigInt
+  createdAt      DateTime     @default(now())
+
+  @@index([roundId])
+  @@index([userId, createdAt])
 }
 
 // ==================== BLACKJACK ====================
