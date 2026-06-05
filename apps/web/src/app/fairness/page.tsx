@@ -45,8 +45,10 @@ export default function FairnessPage() {
                 </div>
                 <div>
                   <span className="font-semibold text-foreground">4. Verify.</span> Paste the
-                  seeds into the verifier below (coming in phase 5) and reproduce the exact
-                  result.
+                  seeds into the verifier below — or hit{' '}
+                  <span className="text-foreground">&ldquo;Verify this round&rdquo;</span> on any
+                  game — and reproduce the exact result locally in your browser. Nothing is sent
+                  back to the server.
                 </div>
               </CardContent>
             </Card>

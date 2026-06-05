@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useSolBalance } from '@/hooks/use-sol-balance';
+import { formatSol } from '@/lib/format';
 import { env } from '@/config/env';
 import { StatsGrid } from '@/components/profile/stats-grid';
 import { BetHistory } from '@/components/profile/bet-history';
@@ -68,20 +69,28 @@ export function ProfileContent() {
               {copied && <p className="text-xs text-success mt-2">Copied to clipboard</p>}
             </div>
 
-            <div className="grid grid-cols-3 gap-4 pt-6 border-t border-border">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6 border-t border-border">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
+                  Play Balance
+                </div>
+                <div className="font-semibold text-success">
+                  {me ? `${formatSol(me.playBalanceLamports, 4)} SOL` : '…'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
+                  Wallet SOL
+                </div>
+                <div className="font-semibold">
+                  {loading ? '…' : sol !== null ? `${sol.toFixed(4)} SOL` : '—'}
+                </div>
+              </div>
               <div>
                 <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
                   Network
                 </div>
                 <div className="font-semibold capitalize">{env.solanaNetwork}</div>
-              </div>
-              <div>
-                <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
-                  Balance
-                </div>
-                <div className="font-semibold">
-                  {loading ? '…' : sol !== null ? `${sol.toFixed(4)} SOL` : '—'}
-                </div>
               </div>
               <div>
                 <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">

@@ -17,6 +17,14 @@ export function formatSol(lamportsStr: string | number | bigint, decimals = 4): 
   return `${sol.toFixed(decimals)} SOL`;
 }
 
+/** Format a USDT amount with a leading $ and thousands separators. */
+export function formatUsd(amount: number, decimals = 2): string {
+  return `$${amount.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
+}
+
 export function shortAddress(address: string, leading = 4, trailing = 4): string {
   if (address.length <= leading + trailing + 1) return address;
   return `${address.slice(0, leading)}…${address.slice(-trailing)}`;

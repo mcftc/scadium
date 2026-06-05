@@ -101,6 +101,7 @@ export class UsersService {
     biggestWin: bigint;
     gamesPlayed: number;
     scadiumBalance: bigint;
+    playBalanceLamports: bigint;
     createdAt: Date;
   }) {
     return {
@@ -121,6 +122,7 @@ export class UsersService {
         gamesPlayed: user.gamesPlayed,
       },
       scadiumBalance: user.scadiumBalance.toString(),
+      playBalanceLamports: user.playBalanceLamports.toString(),
     };
   }
 }

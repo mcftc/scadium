@@ -89,6 +89,43 @@ export async function blackjackDeal(
 }
 
 /**
+ * Matches @scadium/fair `lotteryDraw`. Picks 5 distinct main numbers (1..36)
+ * plus one bonus (1..10) via a seeded Fisher-Yates draw — identical to the
+ * server so the /fairness verifier can reproduce any lottery result.
+ */
+export async function lotteryDraw(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+): Promise<{ main: number[]; bonus: number }> {
+  const pool = Array.from({ length: 36 }, (_, i) => i + 1);
+  const main: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const hash = await hmacSha256Hex(serverSeed, `${clientSeed}:${nonce}:m${i}`);
+    const r = parseInt(hash.slice(0, 13), 16) % pool.length;
+    main.push(pool[r]!);
+    pool.splice(r, 1);
+  }
+  main.sort((a, b) => a - b);
+  const hashB = await hmacSha256Hex(serverSeed, `${clientSeed}:${nonce}:b`);
+  const bonus = (parseInt(hashB.slice(0, 13), 16) % 10) + 1;
+  return { main, bonus };
+}
+
+/**
+ * Matches @scadium/fair `jackpotRoll`. The raw 52-bit roll behind a jackpot
+ * draw; the winning lamport ticket is `roll % totalPotLamports`.
+ */
+export async function jackpotRoll(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+): Promise<number> {
+  const hash = await hmacSha256Hex(serverSeed, buildMessage(clientSeed, nonce));
+  return parseInt(hash.slice(0, 13), 16);
+}
+
+/**
  * Verify a server seed matches its committed hash. Lets the user prove the
  * server didn't swap in a different seed after the fact.
  */

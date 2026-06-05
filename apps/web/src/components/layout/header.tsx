@@ -2,21 +2,25 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { TrendingUp, Coins, Spade } from 'lucide-react';
+import { TrendingUp, Coins, Spade, Ticket, Trophy } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
 import { ConnectButton } from '@/components/wallet/connect-button';
+import { BalancePill } from '@/components/wallet/balance-pill';
 import { cn } from '@/lib/cn';
 
 const gameNavItems = [
   { href: '/crash', label: 'Crash', icon: TrendingUp },
   { href: '/coinflip', label: 'CoinFlip', icon: Coins },
   { href: '/blackjack', label: 'Blackjack', icon: Spade },
+  { href: '/lottery', label: 'Lottery', icon: Ticket },
+  { href: '/jackpot', label: 'Jackpot', icon: Trophy },
 ];
 
 const secondaryNavItems = [
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/airdrop', label: 'Airdrop' },
+  { href: '/fairness', label: 'Provably Fair' },
 ];
 
 export function Header() {
@@ -81,6 +85,7 @@ export function Header() {
               <span className="text-[10px] font-mono text-foreground-muted">$SCADIUM</span>
               <span className="text-[10px] font-bold">$0.0305</span>
             </div>
+            <BalancePill />
             <ConnectButton />
           </div>
         </div>

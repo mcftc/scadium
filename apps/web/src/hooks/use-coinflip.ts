@@ -92,6 +92,7 @@ export function useRecentCoinflips() {
 
 export function useCreateCoinflip() {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (params: { side: 'heads' | 'tails'; amountLamports: string }) =>
       api<CoinflipGame>('/coinflip', {
@@ -99,17 +100,20 @@ export function useCreateCoinflip() {
         body: params,
         token,
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
   });
 }
 
 export function useJoinCoinflip() {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (gameId: string) =>
       api<CoinflipGame>(`/coinflip/${gameId}/join`, {
         method: 'POST',
         token,
       }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
   });
 }
 

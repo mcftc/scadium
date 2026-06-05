@@ -22,6 +22,7 @@ export interface MeResponse {
     gamesPlayed: number;
   };
   scadiumBalance: string;
+  playBalanceLamports: string;
 }
 
 export interface BetRow {

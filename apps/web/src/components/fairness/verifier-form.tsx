@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, X, Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -8,10 +8,12 @@ import {
   crashPoint,
   coinflipResult,
   blackjackDeal,
+  lotteryDraw,
+  jackpotRoll,
   verifyCommit,
 } from '@/lib/fair-browser';
 
-type Game = 'crash' | 'coinflip' | 'blackjack';
+type Game = 'crash' | 'coinflip' | 'blackjack' | 'lottery' | 'jackpot';
 
 interface Result {
   game: Game;
@@ -34,6 +36,22 @@ export function VerifierForm() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Prefill from a deep link, e.g. the crash "Verify this round" button:
+  // /fairness?game=crash&clientSeed=…&nonce=…&commit=…&serverSeed=…
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get('game');
+    if (g === 'crash' || g === 'coinflip' || g === 'blackjack') setGame(g);
+    const ss = q.get('serverSeed');
+    const cs = q.get('clientSeed');
+    const n = q.get('nonce');
+    const commit = q.get('commit');
+    if (ss) setServerSeed(ss);
+    if (cs) setClientSeed(cs);
+    if (n) setNonce(n);
+    if (commit) setCommitHash(commit);
+  }, []);
+
   async function compute() {
     setError(null);
     setResult(null);
@@ -54,6 +72,12 @@ export function VerifierForm() {
       } else if (game === 'coinflip') {
         const r = await coinflipResult(serverSeed, clientSeed, nonceNum);
         output = r;
+      } else if (game === 'lottery') {
+        const { main, bonus } = await lotteryDraw(serverSeed, clientSeed, nonceNum);
+        output = `${main.join('  ')}   +${bonus}`;
+      } else if (game === 'jackpot') {
+        const roll = await jackpotRoll(serverSeed, clientSeed, nonceNum);
+        output = `roll ${roll}  (winner = roll mod pot)`;
       } else {
         const cards = await blackjackDeal(serverSeed, clientSeed, nonceNum, 10);
         output = cards.map((c) => `${c.rank}${c.suit}`).join(' ');
@@ -75,8 +99,8 @@ export function VerifierForm() {
     <div className="space-y-5">
       <div>
         <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">Game</div>
-        <div className="grid grid-cols-3 gap-2">
-          {(['crash', 'coinflip', 'blackjack'] as const).map((g) => (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {(['crash', 'coinflip', 'blackjack', 'lottery', 'jackpot'] as const).map((g) => (
             <button
               key={g}
               type="button"
