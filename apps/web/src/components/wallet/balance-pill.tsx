@@ -1,7 +1,7 @@
 'use client';
 
 import { useMe } from '@/hooks/use-me';
-import { formatSol } from '@/lib/format';
+import { lamportsToSol } from '@/lib/format';
 
 /**
  * Play-money balance pill shown in the header once authenticated. This is the
@@ -13,7 +13,7 @@ export function BalancePill() {
   if (!me) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border">
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap">
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
         <defs>
           <linearGradient id="sol-pill" x1="0" y1="0" x2="1" y2="1">
@@ -27,7 +27,7 @@ export function BalancePill() {
         />
       </svg>
       <span className="text-xs font-bold font-mono tabular-nums">
-        {formatSol(me.playBalanceLamports, 3)}
+        {lamportsToSol(me.playBalanceLamports).toFixed(3)}
       </span>
       <span className="text-[10px] font-semibold text-foreground-muted">SOL</span>
     </div>

@@ -31,7 +31,7 @@ export function Header() {
       <Container>
         <div className="flex h-14 items-center justify-between">
           {/* Left: Logo + Game tabs */}
-          <div className="flex items-center gap-6">
+          <div className="flex min-w-0 items-center gap-4">
             <Link href="/crash" aria-label="Scadium home">
               <Logo />
             </Link>
@@ -46,7 +46,7 @@ export function Header() {
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all',
+                      'flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-lg whitespace-nowrap transition-all',
                       active
                         ? 'bg-surface-elevated text-foreground shadow-sm'
                         : 'text-foreground-muted hover:text-foreground hover:bg-surface-elevated/50',
@@ -66,7 +66,7 @@ export function Header() {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                    'px-2.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors',
                     pathname === item.href
                       ? 'text-foreground bg-surface-elevated'
                       : 'text-foreground-muted hover:text-foreground',
@@ -79,8 +79,8 @@ export function Header() {
           </div>
 
           {/* Right: Token ticker + Connect */}
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border">
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap">
               <div className="h-1.5 w-1.5 rounded-full bg-gradient-primary animate-pulse-glow" />
               <span className="text-[10px] font-mono text-foreground-muted">$SCADIUM</span>
               <span className="text-[10px] font-bold">$0.0305</span>

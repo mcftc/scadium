@@ -48,7 +48,7 @@ export function ConnectButton() {
         type="button"
         onClick={() => setMenuOpen((o) => !o)}
         className={cn(
-          'flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 h-11',
+          'flex items-center gap-2 rounded-xl border border-border bg-surface-elevated px-4 h-11 whitespace-nowrap',
           'font-semibold text-sm hover:border-primary-400/50 transition-colors',
         )}
       >

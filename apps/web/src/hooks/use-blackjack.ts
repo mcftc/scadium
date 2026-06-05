@@ -30,7 +30,9 @@ export function useBlackjackActive() {
   return useQuery({
     queryKey: ['blackjack', 'active'],
     enabled: !!token,
-    queryFn: () => api<BlackjackState | null>('/blackjack/active', { token }),
+    // The API responds with an empty body when there is no active round —
+    // api() yields undefined, which React Query rejects. Coerce to null.
+    queryFn: async () => (await api<BlackjackState | null>('/blackjack/active', { token })) ?? null,
     refetchOnMount: 'always',
   });
 }

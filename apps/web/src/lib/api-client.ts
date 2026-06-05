@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { useAuthStore } from '@/store/auth-store';
 
 /**
  * Thin fetch wrapper that prefixes requests with the API base URL, attaches
@@ -44,6 +45,11 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   const json = text ? safeParse(text) : undefined;
 
   if (!res.ok) {
+    // An expired/invalid JWT otherwise leaves the UI looking signed-in while
+    // every authed call 401s — drop the stale session so the connect CTA shows.
+    if (res.status === 401 && opts.token && typeof window !== 'undefined') {
+      useAuthStore.getState().clear();
+    }
     const msg =
       (json as { message?: string } | undefined)?.message ??
       `API ${opts.method ?? 'GET'} ${path} failed: ${res.status}`;

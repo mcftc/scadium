@@ -111,7 +111,7 @@ export function JackpotGame() {
                 <>
                   Balance{' '}
                   <span className="font-mono text-foreground">
-                    {formatSol(me.playBalanceLamports, 3)} SOL
+                    {formatSol(me.playBalanceLamports, 3)}
                   </span>
                 </>
               ) : (
@@ -220,7 +220,7 @@ function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
               <span className="text-foreground-muted">Last winner</span>
               <span className="font-semibold">{last.winnerName ?? 'anon'}</span>
               <span className="text-success font-mono font-semibold">
-                +{formatSol(last.payoutLamports, 3)} SOL
+                +{formatSol(last.payoutLamports, 3)}
               </span>
             </>
           ) : (
@@ -286,7 +286,7 @@ function MyEntries() {
                 : 'bg-surface-elevated/40 border-border',
             )}
           >
-            <span className="font-mono">{formatSol(r.myAmountLamports, 3)} SOL</span>
+            <span className="font-mono">{formatSol(r.myAmountLamports, 3)}</span>
             <span>
               {!settled ? (
                 <span className="text-foreground-muted">in pot</span>
@@ -328,7 +328,7 @@ function RecentWinners() {
                   <div className="font-semibold truncate">
                     {r.winnerName ?? (r.winnerWallet ? shortAddress(r.winnerWallet) : 'anon')}
                   </div>
-                  <div className="text-success font-mono">+{formatSol(r.payoutLamports, 3)} SOL</div>
+                  <div className="text-success font-mono">+{formatSol(r.payoutLamports, 3)}</div>
                 </>
               ) : (
                 <div className="text-foreground-muted">refunded</div>

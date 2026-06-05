@@ -75,7 +75,7 @@ export function ProfileContent() {
                   Play Balance
                 </div>
                 <div className="font-semibold text-success">
-                  {me ? `${formatSol(me.playBalanceLamports, 4)} SOL` : '…'}
+                  {me ? formatSol(me.playBalanceLamports, 4) : '…'}
                 </div>
               </div>
               <div>

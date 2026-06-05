@@ -4,6 +4,8 @@ import { Container } from '@/components/ui/container';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { ProfileContent } from './profile-content';
 
+export const metadata = { title: 'Profile' };
+
 export default function ProfilePage() {
   return (
     <div className="flex min-h-screen flex-col">
