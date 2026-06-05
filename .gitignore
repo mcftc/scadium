@@ -55,3 +55,8 @@ infra/prisma/*.db-journal
 .remember/
 .playwright-mcp/
 .claude/
+.keys/
+
+# Rust/Anchor build artifacts
+target/
+!target/idl/

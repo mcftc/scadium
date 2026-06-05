@@ -90,7 +90,13 @@ model User {
   scadiumBalance BigInt   @default(0)
   // Play-money balance used by the off-chain game loop until on-chain
   // programs land. New users get 10 SOL equivalent (10_000_000_000 lamports).
+  // Once the vault is live this becomes a CACHE of the on-chain UserVault
+  // balance (reconciled periodically) — fast validation stays in Postgres.
   playBalanceLamports BigInt @default(10000000000)
+  // On-chain custody (Phase A): UserVault PDA address once the user has
+  // deposited at least once; null = never deposited (still play-money).
+  vaultAddress   String?  @unique
+  lastDailyCaseAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

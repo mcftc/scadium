@@ -16,6 +16,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AirdropModule } from './airdrop/airdrop.module';
 import { AffiliatesModule } from './affiliates/affiliates.module';
 import { AdminModule } from './admin/admin.module';
+import { SolanaModule } from './solana/solana.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { AdminModule } from './admin/admin.module';
       },
     ]),
     PrismaModule,
+    SolanaModule,
     FairnessModule,
     AuthModule,
     UsersModule,

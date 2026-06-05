@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMe } from '@/hooks/use-me';
 import { lamportsToSol } from '@/lib/format';
 
@@ -13,7 +14,10 @@ export function BalancePill() {
   if (!me) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap">
+    <Link
+      href="/wallet"
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap hover:border-primary-400/50 transition-colors"
+    >
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
         <defs>
           <linearGradient id="sol-pill" x1="0" y1="0" x2="1" y2="1">
@@ -30,6 +34,6 @@ export function BalancePill() {
         {lamportsToSol(me.playBalanceLamports).toFixed(3)}
       </span>
       <span className="text-[10px] font-semibold text-foreground-muted">SOL</span>
-    </div>
+    </Link>
   );
 }

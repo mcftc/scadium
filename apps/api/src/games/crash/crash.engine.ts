@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
 import { CRASH } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChainService } from '../../solana/chain.service';
 import { CrashGateway } from './crash.gateway';
 
 type Phase = 'waiting' | 'running' | 'busted';
@@ -46,6 +47,7 @@ export class CrashEngine implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: CrashGateway,
+    private readonly chain: ChainService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -292,9 +294,13 @@ export class CrashEngine implements OnModuleInit {
         }),
       );
 
+      // Pre-generate the bet id so the on-chain settlement receipt can carry
+      // it without waiting for the insert round-trip.
+      const betId = randomUUID();
       ops.push(
         this.prisma.bet.create({
           data: {
+            id: betId,
             userId: bet.userId,
             gameType: 'crash',
             amountLamports: bet.amountLamports,
@@ -310,6 +316,32 @@ export class CrashEngine implements OnModuleInit {
           },
         }),
       );
+
+      // Fire-and-forget on-chain settlement receipt (no-op when disabled).
+      // Never blocks the game loop; on success the Solscan link lands on
+      // Bet.txSignature.
+      if (this.chain.enabled) {
+        void this.chain
+          .settleBet({
+            betId,
+            walletAddress: bet.walletAddress,
+            game: 'crash',
+            stakeLamports: bet.amountLamports,
+            payoutLamports: payout,
+            multiplier: bet.cashedOutAt ?? this.current.bustPoint,
+          })
+          .then(async (sig) => {
+            if (sig) {
+              await this.prisma.bet.update({
+                where: { id: betId },
+                data: { txSignature: sig },
+              });
+            }
+          })
+          .catch((e: unknown) =>
+            this.logger.error(`on-chain settle failed for ${betId}: ${String(e)}`),
+          );
+      }
     }
     try {
       await Promise.all(ops);
