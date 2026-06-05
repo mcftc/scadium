@@ -8,6 +8,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { CoinflipModule } from './games/coinflip/coinflip.module';
 import { CrashModule } from './games/crash/crash.module';
+import { LotteryModule } from './games/lottery/lottery.module';
+import { JackpotModule } from './games/jackpot/jackpot.module';
 import { BlackjackModule } from './games/blackjack/blackjack.module';
 import { ChatModule } from './chat/chat.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
@@ -33,6 +35,8 @@ import { AdminModule } from './admin/admin.module';
     UsersModule,
     CoinflipModule,
     CrashModule,
+    LotteryModule,
+    JackpotModule,
     BlackjackModule,
     ChatModule,
     LeaderboardModule,
