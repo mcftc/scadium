@@ -15,7 +15,7 @@ import {
   isBlackjack,
 } from '@scadium/fair';
 import type { Card } from '@scadium/shared';
-import { BLACKJACK } from '@scadium/shared';
+import { BLACKJACK, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
@@ -249,6 +249,7 @@ export class BlackjackService {
       where: { id: state.userId },
       data: {
         playBalanceLamports: { increment: payout },
+        scadiumBalance: { increment: bet * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
         totalWagered: { increment: bet },
         totalWon: won ? { increment: profit } : undefined,
         totalLost: result === 'lose' ? { increment: bet } : undefined,

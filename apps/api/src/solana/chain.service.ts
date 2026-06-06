@@ -35,6 +35,8 @@ export class ChainService implements OnModuleInit {
     return this.programId?.toBase58() ?? null;
   }
 
+  private scadMint: PublicKey | null = null;
+
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
@@ -53,6 +55,8 @@ export class ChainService implements OnModuleInit {
       this.programId = new PublicKey(programId);
       const raw = JSON.parse(readFileSync(cosignerPath, 'utf8')) as number[];
       this.cosigner = Keypair.fromSecretKey(Uint8Array.from(raw));
+      const scadMint = this.config.get<string>('SCAD_MINT');
+      this.scadMint = scadMint ? new PublicKey(scadMint) : null;
       this.enabled = true;
       this.logger.log(
         `On-chain settlement enabled — program ${programId}, cosigner ${this.cosigner.publicKey.toBase58()}`,
@@ -136,9 +140,92 @@ export class ChainService implements OnModuleInit {
       return null;
     }
   }
+
+  // ------------------------------------------------------------ rewards
+
+  /**
+   * Cosigner-signed $SCAD claim from the rewards treasury. `period` must be
+   * unique per (user, kind) — it seeds the on-chain ClaimRecord PDA that
+   * blocks double-claims. Returns the tx signature or null (disabled/error).
+   */
+  async claimReward(params: {
+    walletAddress: string;
+    kind: 'wagerReward' | 'cashback' | 'dailyCase' | 'airdrop';
+    period: bigint;
+    amountScadBase: bigint;
+  }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner || !this.scadMint) return null;
+    try {
+      const user = new PublicKey(params.walletAddress);
+      const kindIndex = REWARD_KIND_INDEX[params.kind];
+      const periodLe = u64le(params.period);
+
+      const house = this.housePda();
+      const claimRecord = PublicKey.findProgramAddressSync(
+        [Buffer.from('claim'), user.toBuffer(), Buffer.from([kindIndex]), periodLe],
+        this.programId!,
+      )[0];
+      const treasuryAta = ata(this.scadMint, house);
+      const userAta = ata(this.scadMint, user);
+
+      const data = Buffer.concat([
+        anchorDiscriminator('claim_reward'),
+        Buffer.from([kindIndex]),
+        periodLe,
+        u64le(params.amountScadBase),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.programId!,
+        keys: [
+          { pubkey: house, isSigner: false, isWritable: false },
+          { pubkey: claimRecord, isSigner: false, isWritable: true },
+          { pubkey: user, isSigner: false, isWritable: false },
+          { pubkey: treasuryAta, isSigner: false, isWritable: true },
+          { pubkey: userAta, isSigner: false, isWritable: true },
+          { pubkey: this.scadMint, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      const tx = new Transaction().add(ix);
+      const sig = await sendAndConfirmTransaction(this.connection, tx, [this.cosigner], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+      return sig;
+    } catch (e) {
+      this.logger.error(
+        `claim_reward failed for ${params.walletAddress} ${params.kind}/${params.period}: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
 }
 
 // ------------------------------------------------------------------ utils
+
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
+);
+
+/** Associated token account address for (mint, owner). */
+function ata(mint: PublicKey, owner: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  )[0];
+}
+
+const REWARD_KIND_INDEX: Record<string, number> = {
+  wagerReward: 0,
+  cashback: 1,
+  dailyCase: 2,
+  airdrop: 3,
+};
 
 const GAME_INDEX: Record<string, number> = {
   crash: 0,

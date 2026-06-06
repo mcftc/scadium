@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
-import { CRASH } from '@scadium/shared';
+import { CRASH, SCAD } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { CrashGateway } from './crash.gateway';
@@ -272,6 +272,8 @@ export class CrashEngine implements OnModuleInit {
           where: { id: bet.userId },
           data: {
             playBalanceLamports: { increment: won ? payout : BigInt(0) },
+            // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
+            scadiumBalance: { increment: bet.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
             totalWagered: { increment: bet.amountLamports },
             totalWon: { increment: won ? netProfit : BigInt(0) },
             totalLost: { increment: !won ? bet.amountLamports : BigInt(0) },

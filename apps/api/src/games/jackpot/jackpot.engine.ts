@@ -5,7 +5,7 @@ import {
   generateServerSeed,
   jackpotWinningTicket,
 } from '@scadium/fair';
-import { JACKPOT } from '@scadium/shared';
+import { JACKPOT, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
@@ -251,6 +251,9 @@ export class JackpotEngine implements OnModuleInit {
           where: { id: userId },
           data: {
             playBalanceLamports: { increment: credited },
+            scadiumBalance: {
+              increment: info.amount * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
+            },
             totalWagered: { increment: info.amount },
             totalWon: { increment: profit > BigInt(0) ? profit : BigInt(0) },
             totalLost: { increment: profit < BigInt(0) ? -profit : BigInt(0) },

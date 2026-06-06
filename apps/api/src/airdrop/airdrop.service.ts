@@ -1,26 +1,20 @@
-import {
-  Injectable,
-  BadRequestException,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-
-const DAILY_CASE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+import { RewardsService } from '../rewards/rewards.service';
 
 /**
- * Airdrop + daily case. Since we're not yet on-chain, the "airdrop" is a
- * play-money credit to the user's balance. Once Solana programs ship
- * this becomes a vault-funded token transfer.
+ * Hourly airdrop eligibility + daily case endpoints. The daily case is a
+ * $SCAD reward claim (Phase C) — opening delegates to RewardsService which
+ * handles the DB cooldown (User.lastDailyCaseAt), the RewardClaim row and
+ * the on-chain claim_reward transfer.
  */
 @Injectable()
 export class AirdropService {
-  private readonly logger = new Logger(AirdropService.name);
-  // Track last case claim per user in memory for simplicity. Moves to a
-  // DB column when we care about cross-instance consistency.
-  private readonly lastCaseClaim = new Map<string, number>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rewards: RewardsService,
+  ) {}
 
   async nextDropInfo() {
     // Next hour-boundary
@@ -54,50 +48,13 @@ export class AirdropService {
   }
 
   async openDailyCase(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found');
-
-    const last = this.lastCaseClaim.get(userId) ?? 0;
-    const now = Date.now();
-    if (now - last < DAILY_CASE_INTERVAL_MS) {
-      const availableAt = new Date(last + DAILY_CASE_INTERVAL_MS).toISOString();
-      throw new BadRequestException(`Daily case already opened. Next: ${availableAt}`);
-    }
-
-    // Weighted reward table: mostly small, rare jackpot
-    const roll = Math.random();
-    let rewardLamports = BigInt(0);
-    let tier = '';
-    if (roll < 0.001) {
-      rewardLamports = BigInt(1_000_000_000); // 1 SOL — 0.1%
-      tier = 'legendary';
-    } else if (roll < 0.01) {
-      rewardLamports = BigInt(100_000_000); // 0.1 SOL — 1%
-      tier = 'epic';
-    } else if (roll < 0.1) {
-      rewardLamports = BigInt(10_000_000); // 0.01 SOL — 10%
-      tier = 'rare';
-    } else {
-      rewardLamports = BigInt(1_000_000); // 0.001 SOL — ~89%
-      tier = 'common';
-    }
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { playBalanceLamports: { increment: rewardLamports } },
-    });
-    this.lastCaseClaim.set(userId, now);
-
-    return {
-      tier,
-      rewardLamports: rewardLamports.toString(),
-      nextAvailableAt: new Date(now + DAILY_CASE_INTERVAL_MS).toISOString(),
-    };
+    return this.rewards.openDailyCase(userId);
   }
 
   async caseStatus(userId: string) {
-    const last = this.lastCaseClaim.get(userId) ?? 0;
-    const nextAt = last + DAILY_CASE_INTERVAL_MS;
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const last = user?.lastDailyCaseAt?.getTime() ?? 0;
+    const nextAt = last + 24 * 60 * 60 * 1000;
     const available = Date.now() >= nextAt;
     return {
       available,

@@ -12,7 +12,7 @@ import {
   commitServerSeed,
   coinflipResult,
 } from '@scadium/fair';
-import { COINFLIP } from '@scadium/shared';
+import { COINFLIP, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { CoinflipGateway } from './coinflip.gateway';
@@ -171,6 +171,9 @@ export class CoinflipService {
         where: { id: winnerId },
         data: {
           playBalanceLamports: { increment: winnerPayout },
+          scadiumBalance: {
+            increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
+          },
           totalWon: { increment: winnerPayout - game.amountLamports },
           totalWagered: { increment: game.amountLamports },
           gamesPlayed: { increment: 1 },
@@ -189,6 +192,9 @@ export class CoinflipService {
       await tx.user.update({
         where: { id: loserId },
         data: {
+          scadiumBalance: {
+            increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
+          },
           totalLost: { increment: game.amountLamports },
           totalWagered: { increment: game.amountLamports },
           gamesPlayed: { increment: 1 },

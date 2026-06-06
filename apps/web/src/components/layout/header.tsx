@@ -7,6 +7,7 @@ import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
 import { ConnectButton } from '@/components/wallet/connect-button';
 import { BalancePill } from '@/components/wallet/balance-pill';
+import { RewardsDropdown } from '@/components/rewards/rewards-dropdown';
 import { cn } from '@/lib/cn';
 
 const gameNavItems = [
@@ -85,6 +86,7 @@ export function Header() {
               <span className="text-[10px] font-mono text-foreground-muted">$SCADIUM</span>
               <span className="text-[10px] font-bold">$0.0305</span>
             </div>
+            <RewardsDropdown />
             <BalancePill />
             <ConnectButton />
           </div>

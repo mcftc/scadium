@@ -135,6 +135,29 @@ export const REWARDS = {
   SCADIUM_PER_SOL_WAGERED: 128,
 } as const;
 
+// ---------- $SCAD token (whitepaper-modeled) ----------
+// All SCAD amounts in code are BASE UNITS (9 decimals) unless noted.
+// Conversions stay lamport-friendly: 1 SOL wagered (1e9 lamports) earns
+// 128 SCAD (128e9 base units) → base units = lamports × PER_LAMPORT rates.
+export const SCAD = {
+  DECIMALS: 9,
+  TOTAL_SUPPLY: 217_755_972, // whole tokens
+  ALLOC_TEAM: 0.1,
+  ALLOC_REWARDS: 0.4,
+  ALLOC_USERS: 0.5,
+  /** SCAD base units earned per lamport wagered (= 128 SCAD / SOL). */
+  WAGER_REWARD_PER_LAMPORT: 128,
+  /** SCAD base units of cashback per lamport NET lost (= 32 SCAD / SOL). */
+  CASHBACK_PER_LAMPORT_LOST: 32,
+  /** Daily case prize table — SCAD base units, weighted roll. */
+  CASE_TIERS: [
+    { tier: 'legendary', chance: 0.001, scadBase: 100_000_000_000_000 }, // 100k SCAD
+    { tier: 'epic', chance: 0.01, scadBase: 10_000_000_000_000 }, // 10k
+    { tier: 'rare', chance: 0.1, scadBase: 1_000_000_000_000 }, // 1k
+    { tier: 'common', chance: 1, scadBase: 100_000_000_000 }, // 100
+  ],
+} as const;
+
 // ---------- Affiliate ----------
 export const AFFILIATE = {
   TIER_THRESHOLDS_LAMPORTS: [

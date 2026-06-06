@@ -17,6 +17,7 @@ import { AirdropModule } from './airdrop/airdrop.module';
 import { AffiliatesModule } from './affiliates/affiliates.module';
 import { AdminModule } from './admin/admin.module';
 import { SolanaModule } from './solana/solana.module';
+import { RewardsModule } from './rewards/rewards.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SolanaModule } from './solana/solana.module';
     ChatModule,
     LeaderboardModule,
     AirdropModule,
+    RewardsModule,
     AffiliatesModule,
     AdminModule,
   ],
