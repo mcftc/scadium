@@ -129,7 +129,10 @@ export class ChainService implements OnModuleInit {
           { pubkey: this.housePda(), isSigner: false, isWritable: false },
           { pubkey: this.houseVaultPda(), isSigner: false, isWritable: true },
           { pubkey: this.userVaultPda(user), isSigner: false, isWritable: true },
-          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+          { pubkey: user, isSigner: false, isWritable: false },
+          // Cosigner pays rent when init_if_needed creates a fresh vault.
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data,
       });

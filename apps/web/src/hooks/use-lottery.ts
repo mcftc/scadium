@@ -162,6 +162,34 @@ export function useUsdtBalance(snap: LotterySnapshot | null) {
   });
 }
 
+/** Wager-loyalty free tickets: 1 per 1 SOL wagered across all games. */
+export function useFreeTickets() {
+  const token = useAuthStore((s) => s.accessToken);
+  return useQuery({
+    queryKey: ['lottery', 'free-tickets'],
+    enabled: !!token,
+    queryFn: () =>
+      api<{ available: number; progressLamports: string; perWagerLamports: string }>(
+        '/lottery/free-tickets',
+        { token },
+      ),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useUseFreeTicket() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { mainNumbers: number[]; bonusNumber: number }) =>
+      api('/lottery/ticket/free', { method: 'POST', body: params, token }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lottery', 'my-tickets'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'free-tickets'] });
+    },
+  });
+}
+
 export function useUsdtFaucet() {
   const token = useAuthStore((s) => s.accessToken);
   const qc = useQueryClient();

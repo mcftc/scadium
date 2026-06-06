@@ -7,7 +7,14 @@ import { Button } from '@/components/ui/button';
 import { ConnectButton } from '@/components/wallet/connect-button';
 import { useAuthStore } from '@/store/auth-store';
 import { formatUsd } from '@/lib/format';
-import { useLottery, useBuyTicket, useUsdtBalance, useUsdtFaucet } from '@/hooks/use-lottery';
+import {
+  useLottery,
+  useBuyTicket,
+  useUsdtBalance,
+  useUsdtFaucet,
+  useFreeTickets,
+  useUseFreeTicket,
+} from '@/hooks/use-lottery';
 import { NumberPicker } from './number-picker';
 import { PrizeTable } from './prize-table';
 import { MyTickets } from './my-tickets';
@@ -21,6 +28,8 @@ export function LotteryGame() {
   const buyTicket = useBuyTicket(snap);
   const usdtBalance = useUsdtBalance(snap);
   const faucet = useUsdtFaucet();
+  const freeTickets = useFreeTickets();
+  const useFree = useUseFreeTicket();
 
   const [main, setMain] = useState<number[]>([]);
   const [bonus, setBonus] = useState<number | null>(null);
@@ -131,14 +140,46 @@ export function LotteryGame() {
           </div>
 
           {token ? (
-            <Button onClick={submit} size="lg" className="w-full" disabled={!ready || buyTicket.isPending}>
-              <Ticket className="h-5 w-5" />
-              {buyTicket.isPending
-                ? 'Buying…'
-                : ready
-                  ? `Buy ticket · ${formatUsd(priceUsd)} USDT`
-                  : `Pick ${mainCount} + bonus`}
-            </Button>
+            <div className="space-y-2">
+              <Button
+                onClick={submit}
+                size="lg"
+                className="w-full"
+                disabled={!ready || buyTicket.isPending || useFree.isPending}
+              >
+                <Ticket className="h-5 w-5" />
+                {buyTicket.isPending
+                  ? 'Buying…'
+                  : ready
+                    ? `Buy ticket · ${formatUsd(priceUsd)} USDT`
+                    : `Pick ${mainCount} + bonus`}
+              </Button>
+              {(freeTickets.data?.available ?? 0) > 0 && (
+                <button
+                  type="button"
+                  disabled={!ready || useFree.isPending || buyTicket.isPending}
+                  onClick={async () => {
+                    if (!ready) return;
+                    setError(null);
+                    try {
+                      await useFree.mutateAsync({ mainNumbers: main, bonusNumber: bonus! });
+                      setMain([]);
+                      setBonus(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Failed to use free ticket');
+                    }
+                  }}
+                  className="w-full py-2.5 rounded-xl border border-primary-400/50 bg-primary-400/10 text-primary-300 text-sm font-bold disabled:opacity-50 hover:bg-primary-400/20 transition-colors"
+                >
+                  {useFree.isPending
+                    ? 'Using…'
+                    : `Use FREE ticket (${freeTickets.data!.available} earned)`}
+                </button>
+              )}
+              <p className="text-[10px] text-foreground-muted text-center">
+                Earn 1 free ticket for every 1 SOL wagered across all games.
+              </p>
+            </div>
           ) : (
             <div className="[&>button]:w-full">
               <ConnectButton />

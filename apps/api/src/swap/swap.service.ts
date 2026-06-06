@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Connection,
@@ -198,6 +198,16 @@ export class SwapService implements OnModuleInit {
         createdAt: r.createdAt.toISOString(),
       })),
     };
+  }
+
+  async assertAdmin(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (user?.role !== 'admin') {
+      throw new ForbiddenException('Admin access required');
+    }
   }
 
   // ----------------------------------------------------- buy & burn job

@@ -85,6 +85,12 @@ pub mod scadium_vault {
 
     /// Cosigner-signed settlement receipt. Nets stake vs payout between the
     /// user vault and the house vault and emits the on-chain bet record.
+    /// The BetSettled event is the receipt of record — it always carries the
+    /// full declared stake/payout. Lamport movement is BEST-EFFORT against
+    /// the user's vault: play-money players (who never deposited) get their
+    /// vault auto-created (rent paid by the cosigner) and a zero-transfer
+    /// receipt, while funded players settle for real. Wins always pay in
+    /// full from the house vault.
     pub fn settle_bet(
         ctx: Context<SettleBet>,
         bet_id: [u8; 16],
@@ -99,6 +105,17 @@ pub mod scadium_vault {
             ctx.accounts.cosigner.key(),
             house.cosigner,
             VaultError::NotCosigner
+        );
+
+        // First touch (init_if_needed) — bind the vault to its owner.
+        if ctx.accounts.user_vault.owner == Pubkey::default() {
+            ctx.accounts.user_vault.owner = ctx.accounts.user.key();
+            ctx.accounts.user_vault.bump = ctx.bumps.user_vault;
+        }
+        require_keys_eq!(
+            ctx.accounts.user_vault.owner,
+            ctx.accounts.user.key(),
+            VaultError::NotVaultOwner
         );
 
         let user_vault_info = ctx.accounts.user_vault.to_account_info();
@@ -117,14 +134,15 @@ pub mod scadium_vault {
                 ctx.accounts.user_vault.add_lamports(net)?;
             }
         } else {
-            // House collects the net loss.
+            // House collects the net loss — clamped to what the vault holds
+            // above rent, so unfunded (play-money) bets still get a receipt.
             let net = stake - payout;
-            require!(
-                user_vault_info.lamports().saturating_sub(user_rent_min) >= net,
-                VaultError::InsufficientFunds
-            );
-            ctx.accounts.user_vault.sub_lamports(net)?;
-            ctx.accounts.house_vault.add_lamports(net)?;
+            let available = user_vault_info.lamports().saturating_sub(user_rent_min);
+            let collect = net.min(available);
+            if collect > 0 {
+                ctx.accounts.user_vault.sub_lamports(collect)?;
+                ctx.accounts.house_vault.add_lamports(collect)?;
+            }
         }
 
         emit!(BetSettled {
@@ -304,9 +322,19 @@ pub struct SettleBet<'info> {
     /// CHECK: house lamport vault PDA.
     #[account(mut, seeds = [b"house_vault"], bump = house.vault_bump)]
     pub house_vault: UncheckedAccount<'info>,
-    #[account(mut)]
+    #[account(
+        init_if_needed,
+        payer = cosigner,
+        space = UserVault::SIZE,
+        seeds = [b"user_vault", user.key().as_ref()],
+        bump
+    )]
     pub user_vault: Account<'info, UserVault>,
+    /// CHECK: vault owner — seed + event field only.
+    pub user: UncheckedAccount<'info>,
+    #[account(mut)]
     pub cosigner: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

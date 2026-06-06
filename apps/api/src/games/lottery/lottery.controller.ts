@@ -59,6 +59,26 @@ export class LotteryController {
     return this.lottery.confirmTicket({ userId: user.userId, signature: dto.signature });
   }
 
+  @Get('free-tickets')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Earned free tickets (1 per 1 SOL wagered across all games)' })
+  freeTickets(@CurrentUser() user: AuthContextLike) {
+    return this.lottery.freeTicketStatus(user.userId);
+  }
+
+  @Post('ticket/free')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Spend one earned free ticket on your picks' })
+  useFreeTicket(@CurrentUser() user: AuthContextLike, @Body() dto: BuyTicketDto) {
+    return this.lottery.useFreeTicket({
+      userId: user.userId,
+      mainNumbers: dto.mainNumbers,
+      bonusNumber: dto.bonusNumber,
+    });
+  }
+
   @Post('faucet')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
@@ -68,9 +88,11 @@ export class LotteryController {
   }
 
   @Post('draw/run')
-  @ApiOperation({ summary: 'Dev/demo: resolve the current draw immediately' })
-  async runDraw() {
-    await this.lottery.forceDraw();
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Admin: resolve the current draw immediately' })
+  async runDraw(@CurrentUser() user: AuthContextLike) {
+    await this.lottery.forceDraw(user.userId);
     return this.lottery.snapshot();
   }
 }

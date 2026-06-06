@@ -1,5 +1,8 @@
-import { Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import type { AuthContext } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { SwapService } from './swap.service';
 
 @ApiTags('swap')
@@ -26,8 +29,11 @@ export class SwapController {
   }
 
   @Post('burns/run')
-  @ApiOperation({ summary: 'Trigger the buy-and-burn job now (normally on a 10-min timer)' })
-  async runBurn() {
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Admin: trigger the buy-and-burn job now (normally on a 10-min timer)' })
+  async runBurn(@CurrentUser() ctx: AuthContext) {
+    await this.swap.assertAdmin(ctx.userId);
     await this.swap.runBuyAndBurn();
     return this.swap.recentBurns(1);
   }

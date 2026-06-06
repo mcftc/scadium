@@ -16,7 +16,7 @@ export function PrizeTable({ snap }: { snap: LotterySnapshot | null }) {
     { label: '5 main numbers', value: p ? `${formatUsd(p.second)} USDT` : '—' },
     { label: '4 main numbers', value: p ? `${formatUsd(p.third)} USDT` : '—' },
     { label: '3 main numbers', value: p ? `${formatUsd(p.fourth)} USDT` : '—' },
-    { label: 'No matches at all', value: 'Free ticket → next draw', free: true },
+    { label: 'Loyalty — every 1 SOL wagered', value: '1 FREE ticket', free: true },
   ];
 
   return (

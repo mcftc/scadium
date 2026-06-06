@@ -26,8 +26,17 @@ export class LotteryService {
     return this.engine.snapshot();
   }
 
-  forceDraw() {
+  async forceDraw(userId: string) {
+    await this.assertAdmin(userId);
     return this.engine.forceDraw();
+  }
+
+  private async assertAdmin(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (user?.role !== 'admin') throw new ForbiddenException('Admin access required');
   }
 
   /**
@@ -84,6 +93,65 @@ export class LotteryService {
       mainNumbers: ticket.mainNumbers,
       bonusNumber: ticket.bonusNumber,
       txSignature: params.signature,
+    };
+  }
+
+  /**
+   * Wager-loyalty free tickets: every 1 SOL of lifetime wager (any game)
+   * earns one. Consuming a ticket advances the watermark by 1 SOL.
+   */
+  async freeTicketStatus(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const per = BigInt(LOTTERY.FREE_TICKET_PER_WAGER_LAMPORTS);
+    const available = Number((user.totalWagered - user.freeTicketBaselineWagered) / per);
+    const progress = Number((user.totalWagered - user.freeTicketBaselineWagered) % per);
+    return {
+      available: Math.max(0, available),
+      progressLamports: progress.toString(),
+      perWagerLamports: per.toString(),
+    };
+  }
+
+  /** Spend one earned free ticket on the caller's picks (no USDT moves). */
+  async useFreeTicket(params: { userId: string; mainNumbers: number[]; bonusNumber: number }) {
+    const distinct = new Set(params.mainNumbers);
+    if (distinct.size !== LOTTERY.MAIN_COUNT) {
+      throw new BadRequestException('Main numbers must be 5 distinct values');
+    }
+    const open = this.engine.getOpenDraw();
+    if (!open) throw new BadRequestException('No open draw');
+
+    const per = BigInt(LOTTERY.FREE_TICKET_PER_WAGER_LAMPORTS);
+    const ticket = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: params.userId } });
+      if (!user) throw new NotFoundException('User not found');
+      if (user.banned) throw new ForbiddenException('Account banned');
+      if (user.totalWagered - user.freeTicketBaselineWagered < per) {
+        throw new BadRequestException('No free tickets earned yet — wager 1 SOL to earn one');
+      }
+      await tx.user.update({
+        where: { id: params.userId },
+        data: { freeTicketBaselineWagered: { increment: per } },
+      });
+      return tx.lotteryTicket.create({
+        data: {
+          drawId: open.id,
+          userId: params.userId,
+          mainNumbers: [...params.mainNumbers].sort((a, b) => a - b),
+          bonusNumber: params.bonusNumber,
+          costLamports: BigInt(0),
+          free: true,
+        },
+      });
+    });
+    await this.engine.onTicketSold(BigInt(0));
+    return {
+      id: ticket.id,
+      drawId: ticket.drawId,
+      mainNumbers: ticket.mainNumbers,
+      bonusNumber: ticket.bonusNumber,
+      free: true,
     };
   }
 

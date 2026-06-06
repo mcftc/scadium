@@ -76,8 +76,7 @@ export const LOTTERY = {
   /**
    * bc.game fixed-prize model (house lottery, paid in USDT):
    * the bonus number only matters for the grand prize; 4 or 3 main
-   * matches pay regardless of bonus; ZERO matches (no main, no bonus)
-   * earns a free ticket in the next draw.
+   * matches pay regardless of bonus.
    */
   PRIZES_USD: {
     grand: 100_000, // 5 main + bonus
@@ -85,17 +84,18 @@ export const LOTTERY = {
     third: 20, // 4 main
     fourth: 1, // 3 main
   },
+  /** Loyalty: every 1 SOL wagered across ANY game earns 1 free ticket. */
+  FREE_TICKET_PER_WAGER_LAMPORTS: LAMPORTS_PER_SOL,
 } as const;
 
 export type LotteryTier = 'grand' | 'second' | 'third' | 'fourth' | 'free' | 'none';
 
-/** bc.game tier for a ticket given its match counts. */
+/** bc.game-style tier for a ticket given its match counts. */
 export function lotteryTier(matchedMain: number, matchedBonus: number): LotteryTier {
   if (matchedMain === 5 && matchedBonus === 1) return 'grand';
   if (matchedMain === 5) return 'second';
   if (matchedMain === 4) return 'third';
   if (matchedMain === 3) return 'fourth';
-  if (matchedMain === 0 && matchedBonus === 0) return 'free';
   return 'none';
 }
 

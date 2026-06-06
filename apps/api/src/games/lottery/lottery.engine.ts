@@ -60,7 +60,7 @@ interface LastResult {
  * sha256(serverSeed) commitment ON-CHAIN (commit_draw) → sell USER-signed
  * 0.1-USDT tickets → at draw time reveal the seed on-chain (the program
  * asserts the commitment) → fixed USD prizes paid in USDT from the lottery
- * treasury (pay_prize) → zero-match tickets re-enter the next draw free.
+ * treasury (pay_prize). Free tickets are a wager-loyalty reward (1/SOL).
  */
 @Injectable()
 export class LotteryEngine implements OnModuleInit {
@@ -126,7 +126,7 @@ export class LotteryEngine implements OnModuleInit {
         mainMax: LOTTERY.MAIN_MAX,
         bonusMax: LOTTERY.BONUS_MAX,
         prizesUsd: LOTTERY.PRIZES_USD,
-        freeTicketOnZeroMatch: true,
+        freeTicketPerSolWagered: true,
       },
       lastResult: this.lastResult,
     };
@@ -187,9 +187,6 @@ export class LotteryEngine implements OnModuleInit {
       commitTxSignature,
     };
 
-    // Carry over free tickets earned in the previous draw (zero-match rule).
-    await this.seedFreeTickets(draw.id);
-
     this.gateway.emitDrawOpen({
       drawId: draw.id,
       serverSeedHash: seed.serverSeedHash,
@@ -213,33 +210,6 @@ export class LotteryEngine implements OnModuleInit {
     await this.drawAndSettle();
   }
 
-  /** bc.game rule: zero-match tickets re-enter the next draw on the house. */
-  private async seedFreeTickets(newDrawId: string): Promise<void> {
-    const pending = await this.prisma.lotteryTicket.findMany({
-      where: { tier: 'free', free: false },
-    });
-    if (pending.length === 0) return;
-    for (const t of pending) {
-      await this.prisma.lotteryTicket.create({
-        data: {
-          drawId: newDrawId,
-          userId: t.userId,
-          mainNumbers: t.mainNumbers,
-          bonusNumber: t.bonusNumber,
-          costLamports: BigInt(0),
-          free: true,
-        },
-      });
-      // Mark the source ticket as converted so it can't spawn again.
-      await this.prisma.lotteryTicket.update({ where: { id: t.id }, data: { free: true } });
-      this.current.ticketCount += 1;
-    }
-    await this.prisma.lotteryDraw.update({
-      where: { id: newDrawId },
-      data: { ticketCount: this.current.ticketCount },
-    });
-    this.logger.log(`${pending.length} free ticket(s) carried into draw ${newDrawId}`);
-  }
 
   private async drawAndSettle(): Promise<void> {
     this.current.status = 'drawn';
@@ -264,7 +234,7 @@ export class LotteryEngine implements OnModuleInit {
     });
 
     let winnersCount = 0;
-    let freeTickets = 0;
+    const freeTickets = 0; // zero-match rule removed — free tickets now come from wager loyalty
     const ops: Promise<unknown>[] = [];
     const prizeJobs: {
       ticketId: string;
@@ -284,7 +254,6 @@ export class LotteryEngine implements OnModuleInit {
       const prizeUsdtBase = lotteryPrizeUsdtBase(tier);
       const won = prizeUsdtBase > BigInt(0);
       if (won) winnersCount += 1;
-      if (tier === 'free') freeTickets += 1;
 
       // Ledger equivalents in lamports (real prizes move in USDT on-chain).
       const payoutLamportsEq =
