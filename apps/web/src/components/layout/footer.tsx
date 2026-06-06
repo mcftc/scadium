@@ -17,7 +17,9 @@ const footerSections = [
       { href: '/leaderboard', label: 'Leaderboard' },
       { href: '/affiliates', label: 'Affiliates' },
       { href: '/airdrop', label: 'Airdrop' },
-      { href: '/token', label: '$SCADIUM' },
+      { href: '/token', label: '$SCAD' },
+      { href: '/trade', label: 'Buy & Sell' },
+      { href: '/whitepaper', label: 'Whitepaper' },
     ],
   },
   {

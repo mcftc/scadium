@@ -123,6 +123,20 @@ export class UsersService {
       },
       scadiumBalance: user.scadiumBalance.toString(),
       playBalanceLamports: user.playBalanceLamports.toString(),
+      ...xpInfo(user.totalWagered),
     };
   }
+}
+
+/**
+ * XP/level (solpump-style) derived purely from lifetime wager — no extra
+ * column to maintain. 1 SOL wagered = 10,000 XP; the cumulative threshold
+ * for level L is 100·L², so levels come quickly at first and stretch out.
+ */
+function xpInfo(totalWageredLamports: bigint) {
+  const xp = Number(totalWageredLamports / BigInt(100_000)); // 1e9 lamports → 10,000 XP
+  const level = Math.floor(Math.sqrt(xp / 100));
+  const currentFloor = 100 * level * level;
+  const nextAt = 100 * (level + 1) * (level + 1);
+  return { xp, level, xpCurrentLevelFloor: currentFloor, xpNextLevelAt: nextAt };
 }

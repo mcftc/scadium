@@ -73,9 +73,9 @@ export class CrashService {
     }
   }
 
-  cashOut(userId: string) {
+  cashOut(userId: string, percent = 100) {
     try {
-      return this.engine.cashOut(userId);
+      return this.engine.cashOut(userId, percent);
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Cashout rejected');
     }

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { useCrashActions, type CrashSnapshot } from '@/hooks/use-crash';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
@@ -20,6 +19,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   const { placeBet, cashOut } = useCrashActions();
   const [sol, setSol] = useState('0.1');
   const [autoCashout, setAutoCashout] = useState('2.0');
+  const [cashoutPct, setCashoutPct] = useState(100);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +50,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
     setError(null);
     setBusy(true);
     try {
-      await cashOut();
+      await cashOut(cashoutPct);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Cashout failed');
     } finally {
@@ -139,23 +139,60 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
       </div>
 
       {canCashout ? (
-        /* Green cashout button like solpump */
-        <button
-          type="button"
-          onClick={onCashout}
-          disabled={busy}
-          className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-          Cash out at {state?.multiplier.toFixed(2)}× ·{' '}
-          {formatSol(
-            (
-              (BigInt(myBet!.amountLamports) * BigInt(Math.floor((state?.multiplier ?? 1) * 100))) /
-              BigInt(100)
-            ).toString(),
-            3,
-          )}
-        </button>
+        <div className="space-y-3">
+          {/* Progressive cashout — take part of the position, let the rest ride */}
+          <div>
+            <div className="flex items-center justify-between text-xs uppercase tracking-wider text-foreground-muted mb-2">
+              <span>Progressive cashout</span>
+              <span className="font-mono text-foreground">{cashoutPct}%</span>
+            </div>
+            <input
+              type="range"
+              min={10}
+              max={100}
+              step={5}
+              value={cashoutPct}
+              onChange={(e) => setCashoutPct(Number(e.target.value))}
+              className="w-full accent-emerald-500"
+            />
+            <div className="mt-1.5 flex gap-1">
+              {[10, 25, 50, 100].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setCashoutPct(p)}
+                  className={cn(
+                    'flex-1 py-1 text-[10px] font-bold rounded-lg border transition-colors',
+                    cashoutPct === p
+                      ? 'border-emerald-400/60 bg-emerald-400/10 text-emerald-300'
+                      : 'border-border text-foreground-muted hover:border-emerald-400/30',
+                  )}
+                >
+                  {p === 100 ? 'MAX' : `${p}%`}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Green cashout button like solpump */}
+          <button
+            type="button"
+            onClick={onCashout}
+            disabled={busy}
+            className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
+            Cash out {cashoutPct < 100 ? `${cashoutPct}% ` : ''}at {state?.multiplier.toFixed(2)}×
+            ·{' '}
+            {formatSol(
+              (
+                (((BigInt(myBet!.amountLamports) * BigInt(cashoutPct)) / BigInt(100)) *
+                  BigInt(Math.floor((state?.multiplier ?? 1) * 100))) /
+                BigInt(100)
+              ).toString(),
+              3,
+            )}
+          </button>
+        </div>
       ) : (
         <button
           type="button"

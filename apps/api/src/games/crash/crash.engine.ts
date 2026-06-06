@@ -12,9 +12,14 @@ interface LiveBet {
   userId: string;
   username: string | null;
   walletAddress: string;
+  /** REMAINING stake still riding (shrinks on partial cashouts). */
   amountLamports: bigint;
+  /** Original stake — the wager for ledger/aggregates. */
+  originalAmountLamports: bigint;
+  /** Payout accumulated across (partial) cashouts this round. */
+  payoutLamports: bigint;
   autoCashout: number | null;
-  cashedOutAt: number | null; // multiplier at which user cashed out
+  cashedOutAt: number | null; // multiplier of the FINAL (full) exit
 }
 
 interface Round {
@@ -100,6 +105,8 @@ export class CrashEngine implements OnModuleInit {
       username: params.username,
       walletAddress: params.walletAddress,
       amountLamports: params.amountLamports,
+      originalAmountLamports: params.amountLamports,
+      payoutLamports: BigInt(0),
       autoCashout: params.autoCashout,
       cashedOutAt: null,
     });
@@ -107,25 +114,41 @@ export class CrashEngine implements OnModuleInit {
     return { ok: true, roundId: this.current.id };
   }
 
-  cashOut(userId: string): { payoutLamports: bigint; multiplier: number } {
+  /**
+   * Cash out `percent` (10..100) of the REMAINING position at the current
+   * multiplier — solpump's "Progressive Cashout". 100% (default) exits the
+   * round; partials keep the rest riding.
+   */
+  cashOut(userId: string, percent = 100): { payoutLamports: bigint; multiplier: number; remainingLamports: bigint } {
     if (this.current.phase !== 'running') {
       throw new Error('Cash out only allowed while running');
     }
+    const pct = Math.min(100, Math.max(1, Math.floor(percent)));
     const bet = this.current.bets.get(userId);
     if (!bet) throw new Error('No bet to cash out');
-    if (bet.cashedOutAt !== null) throw new Error('Already cashed out');
+    if (bet.cashedOutAt !== null || bet.amountLamports === BigInt(0)) {
+      throw new Error('Already cashed out');
+    }
 
     const m = this.currentMultiplier();
     if (m >= this.current.bustPoint) throw new Error('Too late — round already busting');
 
-    bet.cashedOutAt = m;
-    const payout = (bet.amountLamports * BigInt(Math.floor(m * 100))) / BigInt(100);
+    const portion =
+      pct >= 100 ? bet.amountLamports : (bet.amountLamports * BigInt(pct)) / BigInt(100);
+    if (portion <= BigInt(0)) throw new Error('Position too small to split');
+
+    const payout = (portion * BigInt(Math.floor(m * 100))) / BigInt(100);
+    bet.amountLamports -= portion;
+    bet.payoutLamports += payout;
+    if (bet.amountLamports === BigInt(0)) bet.cashedOutAt = m; // fully out
+
     this.gateway.emitCashedOut(this.current.id, {
       userId,
       multiplier: m,
       payoutLamports: payout.toString(),
+      remainingLamports: bet.amountLamports.toString(),
     });
-    return { payoutLamports: payout, multiplier: m };
+    return { payoutLamports: payout, multiplier: m, remainingLamports: bet.amountLamports };
   }
 
   // ---------- Internal loop ----------
@@ -203,9 +226,14 @@ export class CrashEngine implements OnModuleInit {
     const tick = () => {
       const m = this.currentMultiplier();
 
-      // Auto-cashouts
+      // Auto-cashouts (full exit of whatever is still riding)
       for (const bet of this.current.bets.values()) {
-        if (bet.cashedOutAt === null && bet.autoCashout !== null && m >= bet.autoCashout) {
+        if (
+          bet.cashedOutAt === null &&
+          bet.amountLamports > BigInt(0) &&
+          bet.autoCashout !== null &&
+          m >= bet.autoCashout
+        ) {
           try {
             this.cashOut(bet.userId);
           } catch {
@@ -261,22 +289,23 @@ export class CrashEngine implements OnModuleInit {
   private async settleRound(): Promise<void> {
     const ops: Promise<unknown>[] = [];
     for (const bet of this.current.bets.values()) {
-      const won = bet.cashedOutAt !== null;
-      const payout = won
-        ? (bet.amountLamports * BigInt(Math.floor(bet.cashedOutAt! * 100))) / BigInt(100)
-        : BigInt(0);
-      const netProfit = won ? payout - bet.amountLamports : -bet.amountLamports;
+      // Progressive cashout: payouts accumulated across partial exits; any
+      // stake still riding at bust is lost. won = walked away with anything.
+      const stake = bet.originalAmountLamports;
+      const payout = bet.payoutLamports;
+      const won = payout > BigInt(0);
+      const netProfit = payout - stake;
 
       ops.push(
         this.prisma.user.update({
           where: { id: bet.userId },
           data: {
-            playBalanceLamports: { increment: won ? payout : BigInt(0) },
+            playBalanceLamports: { increment: payout },
             // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
-            scadiumBalance: { increment: bet.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
-            totalWagered: { increment: bet.amountLamports },
-            totalWon: { increment: won ? netProfit : BigInt(0) },
-            totalLost: { increment: !won ? bet.amountLamports : BigInt(0) },
+            scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
+            totalWagered: { increment: stake },
+            totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
+            totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
             gamesPlayed: { increment: 1 },
           },
         }),
@@ -287,7 +316,7 @@ export class CrashEngine implements OnModuleInit {
           data: {
             roundId: this.current.id,
             userId: bet.userId,
-            amountLamports: bet.amountLamports,
+            amountLamports: stake,
             autoCashoutMultiplier: bet.autoCashout,
             cashoutMultiplier: bet.cashedOutAt,
             payoutLamports: payout,
@@ -305,15 +334,19 @@ export class CrashEngine implements OnModuleInit {
             id: betId,
             userId: bet.userId,
             gameType: 'crash',
-            amountLamports: bet.amountLamports,
+            amountLamports: stake,
             payoutLamports: payout,
-            multiplier: bet.cashedOutAt ?? this.current.bustPoint,
+            multiplier:
+              stake > BigInt(0) && payout > BigInt(0)
+                ? Number(payout) / Number(stake)
+                : bet.cashedOutAt ?? this.current.bustPoint,
             status: won ? 'won' : 'lost',
             seedId: this.current.seedId,
             nonce: this.current.nonce,
             resultJson: {
               bustPoint: this.current.bustPoint,
               cashedOutAt: bet.cashedOutAt,
+              partialPayouts: payout.toString(),
             },
           },
         }),
@@ -328,7 +361,7 @@ export class CrashEngine implements OnModuleInit {
             betId,
             walletAddress: bet.walletAddress,
             game: 'crash',
-            stakeLamports: bet.amountLamports,
+            stakeLamports: stake,
             payoutLamports: payout,
             multiplier: bet.cashedOutAt ?? this.current.bustPoint,
           })

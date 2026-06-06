@@ -1,9 +1,18 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { CrashService } from './crash.service';
 import { PlaceCrashBetDto } from './dto/place-crash-bet.dto';
+
+class CashOutDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  percent?: number;
+}
 
 @ApiTags('crash')
 @Controller('crash')
@@ -31,9 +40,18 @@ export class CrashController {
   @Post('cashout')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Cash out immediately at the current multiplier' })
-  cashOut(@CurrentUser() user: AuthContextLike) {
-    const { payoutLamports, multiplier } = this.crash.cashOut(user.userId);
-    return { payoutLamports: payoutLamports.toString(), multiplier };
+  @ApiOperation({
+    summary: 'Cash out at the current multiplier — optionally a percentage (progressive)',
+  })
+  cashOut(@CurrentUser() user: AuthContextLike, @Body() dto: CashOutDto) {
+    const { payoutLamports, multiplier, remainingLamports } = this.crash.cashOut(
+      user.userId,
+      dto?.percent ?? 100,
+    );
+    return {
+      payoutLamports: payoutLamports.toString(),
+      multiplier,
+      remainingLamports: remainingLamports.toString(),
+    };
   }
 }

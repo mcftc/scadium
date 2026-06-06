@@ -114,13 +114,29 @@ export function useCrash() {
 
     sock.on(
       'crash:cashed-out',
-      ({ userId, multiplier }: { userId: string; multiplier: number }) => {
+      ({
+        userId,
+        multiplier,
+        remainingLamports,
+      }: {
+        userId: string;
+        multiplier: number;
+        remainingLamports?: string;
+      }) => {
+        // Progressive cashouts: only mark fully-out when nothing is riding.
+        const remaining = remainingLamports ?? '0';
         setState((s) =>
           s
             ? {
                 ...s,
                 bets: s.bets.map((b) =>
-                  b.userId === userId ? { ...b, cashedOutAt: multiplier } : b,
+                  b.userId === userId
+                    ? {
+                        ...b,
+                        amountLamports: remaining,
+                        cashedOutAt: remaining === '0' ? multiplier : b.cashedOutAt,
+                      }
+                    : b,
                 ),
               }
             : s,
@@ -155,13 +171,21 @@ export function useCrashActions() {
     },
     [token, queryClient],
   );
-  const cashOut = useCallback(async () => {
-    const res = await api<{ payoutLamports: string; multiplier: number }>('/crash/cashout', {
-      method: 'POST',
-      token,
-    });
-    void queryClient.invalidateQueries({ queryKey: ['me'] });
-    return res;
-  }, [token, queryClient]);
+  const cashOut = useCallback(
+    async (percent = 100) => {
+      const res = await api<{
+        payoutLamports: string;
+        multiplier: number;
+        remainingLamports: string;
+      }>('/crash/cashout', {
+        method: 'POST',
+        body: percent < 100 ? { percent } : {},
+        token,
+      });
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      return res;
+    },
+    [token, queryClient],
+  );
   return { placeBet, cashOut };
 }

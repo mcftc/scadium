@@ -67,6 +67,8 @@ export class CrashGateway {
     userId: string;
     multiplier: number;
     payoutLamports: string;
+    /** Stake still riding after this (possibly partial) cashout. */
+    remainingLamports: string;
   }) {
     this.server.emit('crash:cashed-out', { roundId, ...payload });
   }

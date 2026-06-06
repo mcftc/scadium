@@ -2,9 +2,10 @@ import { Header } from '@/components/layout/header';
 import { Footer } from '@/components/layout/footer';
 import { Container } from '@/components/ui/container';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Flame, Coins, TrendingUp, Gift } from 'lucide-react';
+import { Flame } from 'lucide-react';
+import { TokenDashboard } from './token-dashboard';
 
-export const metadata = { title: '$SCADIUM Token' };
+export const metadata = { title: '$SCAD Token' };
 
 export default function TokenPage() {
   return (
@@ -19,7 +20,7 @@ export default function TokenPage() {
                 <span className="text-xs font-medium text-foreground-muted">Native token</span>
               </div>
               <h1 className="text-5xl md:text-7xl font-bold">
-                <span className="text-gradient">$SCADIUM</span>
+                <span className="text-gradient">$SCAD</span>
               </h1>
               <p className="mt-4 text-foreground-muted max-w-xl mx-auto text-lg">
                 Earn by playing. Buy-and-burn funded by site profit. No presale, no team
@@ -27,21 +28,16 @@ export default function TokenPage() {
               </p>
             </div>
 
-            <div className="grid md:grid-cols-4 gap-4 max-w-4xl mx-auto mb-8">
-              <StatCard icon={Coins} label="Price" value="$0.0305" />
-              <StatCard icon={TrendingUp} label="Market cap" value="$3.05M" />
-              <StatCard icon={Gift} label="Holders" value="12,480" />
-              <StatCard icon={Flame} label="Burned" value="127k" />
-            </div>
+            <TokenDashboard />
 
-            <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto mt-6">
               <Card>
                 <CardHeader>
                   <CardTitle>Tokenomics</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <TokenRow label="Retroactive airdrop" pct={50} />
-                  <TokenRow label="Future airdrops" pct={40} />
+                  <TokenRow label="Existing users" pct={50} />
+                  <TokenRow label="Future rewards" pct={40} />
                   <TokenRow label="Team &amp; development" pct={10} />
                 </CardContent>
               </Card>
@@ -77,7 +73,7 @@ export default function TokenPage() {
                   </p>
                   <div className="mt-4 flex items-center gap-2 text-xs text-foreground-muted">
                     <Flame className="h-4 w-4 text-primary-400" />
-                    Last burn: 2,487 $SCADIUM · 6 hours ago
+                    Every burn is an on-chain transaction — see the live feed above.
                   </div>
                 </CardContent>
               </Card>
@@ -90,29 +86,6 @@ export default function TokenPage() {
   );
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs uppercase tracking-wider text-foreground-muted">
-            {label}
-          </span>
-          <Icon className="h-4 w-4 text-primary-400" />
-        </div>
-        <div className="mt-2 text-2xl font-bold">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function TokenRow({ label, pct }: { label: string; pct: number }) {
   return (

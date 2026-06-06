@@ -32,6 +32,7 @@ export function ProfileContent() {
 
   return (
     <div className="space-y-6">
+      <LevelBar />
       <StatsGrid />
 
       <div className="grid md:grid-cols-3 gap-6">
@@ -126,6 +127,37 @@ export function ProfileContent() {
       </div>
 
       <BetHistory />
+    </div>
+  );
+}
+
+/** solpump-style XP/level bar — XP derives from lifetime wager (10k XP/SOL). */
+function LevelBar() {
+  const { data: me } = useMe();
+  if (!me) return null;
+  const span = me.xpNextLevelAt - me.xpCurrentLevelFloor;
+  const into = me.xp - me.xpCurrentLevelFloor;
+  const pct = span > 0 ? Math.min(100, (into / span) * 100) : 0;
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4 flex items-center gap-4">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-primary font-black text-lg">
+        {me.level}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between text-xs mb-1.5">
+          <span className="font-semibold">Level {me.level}</span>
+          <span className="font-mono text-foreground-muted">
+            {me.xp.toLocaleString()} / {me.xpNextLevelAt.toLocaleString()} XP
+          </span>
+        </div>
+        <div className="h-2 rounded-full bg-surface-elevated overflow-hidden">
+          <div className="h-full bg-gradient-primary transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="hidden sm:block text-right shrink-0">
+        <div className="text-[10px] uppercase tracking-wider text-foreground-muted">Next</div>
+        <div className="text-sm font-bold">Lv {me.level + 1}</div>
+      </div>
     </div>
   );
 }

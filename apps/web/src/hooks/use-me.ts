@@ -23,6 +23,10 @@ export interface MeResponse {
   };
   scadiumBalance: string;
   playBalanceLamports: string;
+  xp: number;
+  level: number;
+  xpCurrentLevelFloor: number;
+  xpNextLevelAt: number;
 }
 
 export interface BetRow {
