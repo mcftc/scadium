@@ -27,7 +27,7 @@ export interface MeResponse {
 
 export interface BetRow {
   id: string;
-  gameType: 'crash' | 'coinflip' | 'blackjack';
+  gameType: 'crash' | 'coinflip' | 'blackjack' | 'lottery' | 'jackpot';
   amountLamports: string;
   payoutLamports: string;
   multiplier: number | null;

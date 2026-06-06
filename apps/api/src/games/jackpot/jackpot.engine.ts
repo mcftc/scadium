@@ -6,7 +6,9 @@ import {
   jackpotWinningTicket,
 } from '@scadium/fair';
 import { JACKPOT } from '@scadium/shared';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChainService } from '../../solana/chain.service';
 import { JackpotGateway } from './jackpot.gateway';
 
 interface CurrentRound {
@@ -55,6 +57,7 @@ export class JackpotEngine implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: JackpotGateway,
+    private readonly chain: ChainService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -157,7 +160,7 @@ export class JackpotEngine implements OnModuleInit {
     const entries = await this.prisma.jackpotEntry.findMany({
       where: { roundId },
       orderBy: { createdAt: 'asc' },
-      include: { user: { select: { id: true, username: true } } },
+      include: { user: { select: { id: true, username: true, walletAddress: true } } },
     });
 
     const distinctPlayers = new Set(entries.map((e) => e.userId));
@@ -215,14 +218,30 @@ export class JackpotEngine implements OnModuleInit {
       (total * BigInt(Math.round((1 - JACKPOT.HOUSE_EDGE) * 1000))) / BigInt(1000);
 
     // Per-user contribution totals for ledger aggregates + Bet rows.
-    const byUser = new Map<string, { amount: bigint; username: string | null }>();
+    const byUser = new Map<
+      string,
+      { amount: bigint; username: string | null; walletAddress: string }
+    >();
     for (const e of entries) {
-      const cur = byUser.get(e.userId) ?? { amount: BigInt(0), username: e.user.username };
+      const cur =
+        byUser.get(e.userId) ??
+        ({
+          amount: BigInt(0),
+          username: e.user.username,
+          walletAddress: e.user.walletAddress,
+        } as { amount: bigint; username: string | null; walletAddress: string });
       cur.amount += e.amountLamports;
       byUser.set(e.userId, cur);
     }
 
     const ops: Promise<unknown>[] = [];
+    const settleJobs: {
+      betId: string;
+      walletAddress: string;
+      stake: bigint;
+      payout: bigint;
+      multiplier: number;
+    }[] = [];
     for (const [userId, info] of byUser) {
       const won = userId === winner.userId;
       const credited = won ? payout : BigInt(0);
@@ -239,9 +258,11 @@ export class JackpotEngine implements OnModuleInit {
           },
         }),
       );
+      const betId = randomUUID();
       ops.push(
         this.prisma.bet.create({
           data: {
+            id: betId,
             userId,
             gameType: 'jackpot',
             amountLamports: info.amount,
@@ -254,6 +275,14 @@ export class JackpotEngine implements OnModuleInit {
           },
         }),
       );
+
+      settleJobs.push({
+        betId,
+        walletAddress: info.walletAddress,
+        stake: info.amount,
+        payout: credited,
+        multiplier: info.amount > BigInt(0) ? Number(credited) / Number(info.amount) : 0,
+      });
     }
     ops.push(
       this.prisma.jackpotRound.update({
@@ -273,6 +302,33 @@ export class JackpotEngine implements OnModuleInit {
       await Promise.all(ops);
     } catch (e) {
       this.logger.error(`Jackpot settle failed: ${e instanceof Error ? e.message : e}`);
+    }
+
+    // On-chain settlement receipts AFTER the bet rows exist (fire-and-forget,
+    // no-op when disabled — never blocks the round loop).
+    if (this.chain.enabled) {
+      for (const job of settleJobs) {
+        void this.chain
+          .settleBet({
+            betId: job.betId,
+            walletAddress: job.walletAddress,
+            game: 'jackpot',
+            stakeLamports: job.stake,
+            payoutLamports: job.payout,
+            multiplier: job.multiplier,
+          })
+          .then(async (sig) => {
+            if (sig) {
+              await this.prisma.bet.update({
+                where: { id: job.betId },
+                data: { txSignature: sig },
+              });
+            }
+          })
+          .catch((e: unknown) =>
+            this.logger.error(`on-chain settle failed for ${job.betId}: ${String(e)}`),
+          );
+      }
     }
 
     const winnerName = winner.user.username;

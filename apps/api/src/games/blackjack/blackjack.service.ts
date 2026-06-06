@@ -16,7 +16,9 @@ import {
 } from '@scadium/fair';
 import type { Card } from '@scadium/shared';
 import { BLACKJACK } from '@scadium/shared';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChainService } from '../../solana/chain.service';
 
 type HandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
 
@@ -59,7 +61,10 @@ export class BlackjackService {
   private readonly logger = new Logger(BlackjackService.name);
   private readonly active = new Map<string, RoundState>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chain: ChainService,
+  ) {}
 
   getActive(userId: string) {
     const s = this.active.get(userId);
@@ -240,7 +245,7 @@ export class BlackjackService {
     // Update ledger + Bet row
     const won = result === 'win' || result === 'blackjack';
     const profit = payout - bet;
-    await this.prisma.user.update({
+    const settledUser = await this.prisma.user.update({
       where: { id: state.userId },
       data: {
         playBalanceLamports: { increment: payout },
@@ -250,8 +255,10 @@ export class BlackjackService {
         gamesPlayed: { increment: 1 },
       },
     });
+    const betId = randomUUID();
     await this.prisma.bet.create({
       data: {
+        id: betId,
         userId: state.userId,
         gameType: 'blackjack',
         amountLamports: bet,
@@ -276,6 +283,29 @@ export class BlackjackService {
         },
       },
     });
+
+    // Fire-and-forget on-chain settlement receipt (no-op when disabled).
+    if (this.chain.enabled) {
+      const mult =
+        result === 'blackjack' ? 2.5 : result === 'win' ? 2.0 : result === 'push' ? 1.0 : 0;
+      void this.chain
+        .settleBet({
+          betId,
+          walletAddress: settledUser.walletAddress,
+          game: 'blackjack',
+          stakeLamports: bet,
+          payoutLamports: payout,
+          multiplier: mult,
+        })
+        .then(async (sig) => {
+          if (sig) {
+            await this.prisma.bet.update({ where: { id: betId }, data: { txSignature: sig } });
+          }
+        })
+        .catch((e: unknown) =>
+          this.logger.error(`on-chain settle failed for ${betId}: ${String(e)}`),
+        );
+    }
 
     // Clear from in-memory active map after a short delay so the client can
     // read the final state before it vanishes.

@@ -1,17 +1,19 @@
 'use client';
 
-import { ExternalLink, TrendingUp, Coins, Spade } from 'lucide-react';
+import { ExternalLink, TrendingUp, Coins, Spade, Ticket, Trophy, CircleHelp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useMyBets, type BetRow } from '@/hooks/use-me';
 import { formatSol, formatDate, formatMultiplier } from '@/lib/format';
 import { env } from '@/config/env';
 import { cn } from '@/lib/cn';
 
-const gameIcon = {
+const gameIcon: Record<string, typeof TrendingUp> = {
   crash: TrendingUp,
   coinflip: Coins,
   blackjack: Spade,
-} as const;
+  lottery: Ticket,
+  jackpot: Trophy,
+};
 
 /**
  * Bet history table rendered from /me/bets. Cursor pagination hook is
@@ -71,7 +73,7 @@ export function BetHistory() {
 }
 
 function BetRowCell({ bet }: { bet: BetRow }) {
-  const Icon = gameIcon[bet.gameType];
+  const Icon = gameIcon[bet.gameType] ?? CircleHelp;
   const won = bet.status === 'won';
   const statusColor =
     bet.status === 'won'

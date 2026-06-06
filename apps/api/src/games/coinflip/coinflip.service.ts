@@ -13,6 +13,8 @@ import {
   coinflipResult,
 } from '@scadium/fair';
 import { COINFLIP } from '@scadium/shared';
+import { randomUUID } from 'node:crypto';
+import { ChainService } from '../../solana/chain.service';
 import { CoinflipGateway } from './coinflip.gateway';
 
 type Side = 'heads' | 'tails';
@@ -34,6 +36,7 @@ export class CoinflipService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: CoinflipGateway,
+    private readonly chain: ChainService,
   ) {}
 
   // ------------ Queries ------------
@@ -116,7 +119,7 @@ export class CoinflipService {
   }
 
   async join(params: { userId: string; gameId: string }) {
-    return this.prisma.$transaction(async (tx) => {
+    const settled = await this.prisma.$transaction(async (tx) => {
       const game = await tx.coinflipGame.findUnique({
         where: { id: params.gameId },
         include: {
@@ -192,10 +195,15 @@ export class CoinflipService {
         },
       });
 
-      // Record two Bet rows so bet history shows both sides
+      // Record two Bet rows so bet history shows both sides. Ids are
+      // pre-generated so the post-commit on-chain settlement receipts can
+      // reference them without re-querying.
+      const creatorBetId = randomUUID();
+      const joinerBetId = randomUUID();
       await tx.bet.createMany({
         data: [
           {
+            id: creatorBetId,
             userId: game.creatorId,
             gameType: 'coinflip',
             amountLamports: game.amountLamports,
@@ -207,6 +215,7 @@ export class CoinflipService {
             resultJson: { side: game.creatorSide, result, won: creatorWins },
           },
           {
+            id: joinerBetId,
             userId: params.userId,
             gameType: 'coinflip',
             amountLamports: game.amountLamports,
@@ -252,8 +261,53 @@ export class CoinflipService {
 
       const dto = this.serialize(updated);
       this.gateway.emitResolved(dto);
-      return dto;
+      return {
+        dto,
+        stake: game.amountLamports,
+        settles: [
+          {
+            betId: creatorBetId,
+            walletAddress: updated.creator!.walletAddress,
+            payout: creatorWins ? winnerPayout : BigInt(0),
+            multiplier: creatorWins ? COINFLIP.PAYOUT_MULTIPLIER : 0,
+          },
+          {
+            betId: joinerBetId,
+            walletAddress: updated.joiner!.walletAddress,
+            payout: creatorWins ? BigInt(0) : winnerPayout,
+            multiplier: creatorWins ? 0 : COINFLIP.PAYOUT_MULTIPLIER,
+          },
+        ],
+      };
     });
+
+    // On-chain settlement receipts fire AFTER the ledger transaction commits
+    // (fire-and-forget — never blocks the response; no-op when disabled).
+    if (this.chain.enabled) {
+      for (const s of settled.settles) {
+        void this.chain
+          .settleBet({
+            betId: s.betId,
+            walletAddress: s.walletAddress,
+            game: 'coinflip',
+            stakeLamports: settled.stake,
+            payoutLamports: s.payout,
+            multiplier: s.multiplier,
+          })
+          .then(async (sig) => {
+            if (sig) {
+              await this.prisma.bet.update({
+                where: { id: s.betId },
+                data: { txSignature: sig },
+              });
+            }
+          })
+          .catch((e: unknown) =>
+            this.logger.error(`on-chain settle failed for ${s.betId}: ${String(e)}`),
+          );
+      }
+    }
+    return settled.dto;
   }
 
   async cancel(params: { userId: string; gameId: string }) {
