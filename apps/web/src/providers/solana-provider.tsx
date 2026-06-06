@@ -14,6 +14,7 @@ import {
   UnsafeBurnerWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { env } from '@/config/env';
+import { WalletSessionGuard } from '@/components/wallet/wallet-session-guard';
 
 /**
  * Wraps the app with the Solana wallet-adapter providers.
@@ -51,6 +52,7 @@ export function SolanaProvider({ children }: { children: ReactNode }) {
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
+        <WalletSessionGuard />
         {children}
       </WalletProvider>
     </ConnectionProvider>

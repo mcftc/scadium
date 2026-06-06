@@ -81,11 +81,14 @@ export function Header() {
 
           {/* Right: Token ticker + Connect */}
           <div className="flex shrink-0 items-center gap-3">
-            <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap">
+            <Link
+              href="/trade"
+              className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap hover:border-primary-400/50 transition-colors"
+            >
               <div className="h-1.5 w-1.5 rounded-full bg-gradient-primary animate-pulse-glow" />
-              <span className="text-[10px] font-mono text-foreground-muted">$SCADIUM</span>
-              <span className="text-[10px] font-bold">$0.0305</span>
-            </div>
+              <span className="text-[10px] font-mono text-foreground-muted">$SCAD</span>
+              <span className="text-[10px] font-bold">Trade</span>
+            </Link>
             <RewardsDropdown />
             <BalancePill />
             <ConnectButton />

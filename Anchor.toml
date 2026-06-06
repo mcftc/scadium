@@ -5,17 +5,17 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
+scadium_swap = "9Fog7cFRQiPfszYu1ioFdqQDwmmTd6SZpkyb8hyo13dU"
 scadium_vault = "DSQJ8FX8JGhB2nKPGVM2ptWZydskNmp8629C8HXTvrqr"
-
-[registry]
-url = "https://api.apr.dev"
 
 [provider]
 cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
+[workspace]
+members = ["programs/scadium_vault", "programs/scadium_swap"]
+
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.anchor.json -t 1000000 tests/**/*.ts"
 
-[workspace]
-members = ["programs/scadium_vault"]
+[hooks]

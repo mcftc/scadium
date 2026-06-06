@@ -405,6 +405,18 @@ enum RewardKind {
   airdrop
 }
 
+// Buy-and-burn ledger (Phase D): 20% of NGR swapped SOL→SCAD then burned.
+model TokenBurn {
+  id           String   @id @default(uuid()) @db.Uuid
+  scadBurned   BigInt // SCAD base units
+  solSpent     BigInt // lamports swapped in
+  swapSignature String?
+  burnSignature String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // ==================== AFFILIATE ====================
 
 model Referral {
