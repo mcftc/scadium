@@ -60,39 +60,58 @@ export const LOTTERY = {
   MAIN_MAX: 36, // from 1..36
   BONUS_COUNT: 1, // plus 1 bonus ("power") number
   BONUS_MAX: 10, // from 1..10
-  TICKET_PRICE_USD: 0.1, // $0.10 USDT per ticket (canonical price)
-  // Ledger debits/credits run on the SOL play-money balance, so the lamport
-  // cost is derived from the USD price at the fixed demo rate above.
+  TICKET_PRICE_USD: 0.1, // $0.10 per ticket (canonical price)
+  // Tickets are paid in USDT (SPL, 6 decimals like the real one) — this is
+  // the on-chain transfer amount per ticket.
+  USDT_DECIMALS: 6,
+  TICKET_PRICE_USDT_BASE: 100_000, // 0.1 × 10^6
+  // Lamport-equivalent of the ticket price at the demo USD rate — used ONLY
+  // for the unified Bet ledger / aggregates (real money moves in USDT).
   TICKET_PRICE_LAMPORTS: Math.round((0.1 / USD_PER_SOL) * LAMPORTS_PER_SOL),
   MAX_TICKETS_PER_DRAW: 50, // per user, per draw
-  // Draws resolve at fixed wall-clock times — 04:00 and 16:00 every day, i.e.
-  // once every 12 hours. Hours are expressed in local time and converted to
-  // UTC via the offset below (Europe/Istanbul = UTC+3, no DST, so a fixed
-  // offset is exact). See `nextLotteryDrawAt`.
-  DRAW_HOURS_LOCAL: [4, 16] as readonly number[],
+  // bc.game cadence: a draw every 8 hours (3/day) at fixed wall-clock times.
+  // Hours are local (Europe/Istanbul = UTC+3, no DST). See `nextLotteryDrawAt`.
+  DRAW_HOURS_LOCAL: [4, 12, 20] as readonly number[],
   DRAW_TZ_OFFSET_MINUTES: 180, // UTC+3
-  HOUSE_EDGE: 0.05,
   /**
-   * Fixed-odds prize table keyed by `${matchedMain}+${matchedBonus}`.
-   * Payout = TICKET_PRICE_LAMPORTS * multiplier. Tiers not listed pay 0.
+   * bc.game fixed-prize model (house lottery, paid in USDT):
+   * the bonus number only matters for the grand prize; 4 or 3 main
+   * matches pay regardless of bonus; ZERO matches (no main, no bonus)
+   * earns a free ticket in the next draw.
    */
-  PRIZES: {
-    '5+1': 1_000_000, // jackpot
-    '5+0': 50_000,
-    '4+1': 5_000,
-    '4+0': 400,
-    '3+1': 150,
-    '3+0': 20,
-    '2+1': 8,
-    '2+0': 2,
-    '1+1': 3,
-    '0+1': 1, // bonus-only — returns the stake
-  } as Record<string, number>,
+  PRIZES_USD: {
+    grand: 100_000, // 5 main + bonus
+    second: 3_000, // 5 main
+    third: 20, // 4 main
+    fourth: 1, // 3 main
+  },
 } as const;
 
-/** Fixed-odds payout multiplier for a lottery ticket given its match counts. */
-export function lotteryPrizeMultiplier(matchedMain: number, matchedBonus: number): number {
-  return LOTTERY.PRIZES[`${matchedMain}+${matchedBonus}`] ?? 0;
+export type LotteryTier = 'grand' | 'second' | 'third' | 'fourth' | 'free' | 'none';
+
+/** bc.game tier for a ticket given its match counts. */
+export function lotteryTier(matchedMain: number, matchedBonus: number): LotteryTier {
+  if (matchedMain === 5 && matchedBonus === 1) return 'grand';
+  if (matchedMain === 5) return 'second';
+  if (matchedMain === 4) return 'third';
+  if (matchedMain === 3) return 'fourth';
+  if (matchedMain === 0 && matchedBonus === 0) return 'free';
+  return 'none';
+}
+
+/** Prize in USDT base units (6 decimals) for a tier; 0 for free/none. */
+export function lotteryPrizeUsdtBase(tier: LotteryTier): bigint {
+  const usd =
+    tier === 'grand'
+      ? LOTTERY.PRIZES_USD.grand
+      : tier === 'second'
+        ? LOTTERY.PRIZES_USD.second
+        : tier === 'third'
+          ? LOTTERY.PRIZES_USD.third
+          : tier === 'fourth'
+            ? LOTTERY.PRIZES_USD.fourth
+            : 0;
+  return BigInt(usd) * BigInt(10 ** LOTTERY.USDT_DECIMALS);
 }
 
 /**

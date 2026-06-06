@@ -244,6 +244,10 @@ model CoinflipGame {
 
 model LotteryDraw {
   id           String            @id @default(uuid()) @db.Uuid
+  // Monotonic on-chain draw index (PDA seed). Null for legacy off-chain draws.
+  drawIndex    BigInt?           @unique
+  commitTxSignature String?
+  revealTxSignature String?
   seedId       String            @db.Uuid
   seed         Seed              @relation(fields: [seedId], references: [id])
   nonce        Int               @default(0)
@@ -275,6 +279,14 @@ model LotteryTicket {
   matchedBonus   Int         @default(0)
   payoutLamports BigInt      @default(0)
   won            Boolean     @default(false)
+  // On-chain era (Phase E): purchase tx (user-signed USDT transfer), prize
+  // payout tx, bc.game tier, USDT amounts, and the free-ticket flag
+  // (zero-match tickets re-enter the next draw on the house).
+  txSignature    String?     @unique
+  prizeTxSignature String?
+  tier           String?
+  payoutUsdtBase BigInt      @default(0)
+  free           Boolean     @default(false)
   createdAt      DateTime    @default(now())
 
   @@index([drawId])

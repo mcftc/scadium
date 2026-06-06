@@ -1,9 +1,16 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsString, Length } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { LotteryService } from './lottery.service';
 import { BuyTicketDto } from './dto/buy-ticket.dto';
+
+class ConfirmTicketDto {
+  @IsString()
+  @Length(64, 96)
+  signature!: string;
+}
 
 @ApiTags('lottery')
 @Controller('lottery')
@@ -40,5 +47,30 @@ export class LotteryController {
       mainNumbers: dto.mainNumbers,
       bonusNumber: dto.bonusNumber,
     });
+  }
+
+  @Post('confirm')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Register an on-chain ticket purchase (user-signed buy_ticket tx signature)',
+  })
+  confirm(@CurrentUser() user: AuthContextLike, @Body() dto: ConfirmTicketDto) {
+    return this.lottery.confirmTicket({ userId: user.userId, signature: dto.signature });
+  }
+
+  @Post('faucet')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Devnet: receive 10 demo USDT for ticket purchases' })
+  faucet(@CurrentUser() user: AuthContextLike) {
+    return this.lottery.usdtFaucet(user.userId);
+  }
+
+  @Post('draw/run')
+  @ApiOperation({ summary: 'Dev/demo: resolve the current draw immediately' })
+  async runDraw() {
+    await this.lottery.forceDraw();
+    return this.lottery.snapshot();
   }
 }

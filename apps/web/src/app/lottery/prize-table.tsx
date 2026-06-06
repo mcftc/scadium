@@ -3,54 +3,45 @@
 import { formatUsd } from '@/lib/format';
 import type { LotterySnapshot } from '@/hooks/use-lottery';
 
-// Display order: best tier first.
-const TIERS: { key: string; label: string }[] = [
-  { key: '5+1', label: '5 + Bonus' },
-  { key: '5+0', label: '5' },
-  { key: '4+1', label: '4 + Bonus' },
-  { key: '4+0', label: '4' },
-  { key: '3+1', label: '3 + Bonus' },
-  { key: '3+0', label: '3' },
-  { key: '2+1', label: '2 + Bonus' },
-  { key: '2+0', label: '2' },
-  { key: '1+1', label: '1 + Bonus' },
-  { key: '0+1', label: 'Bonus only' },
-];
-
 /**
- * Prize tiers. The multipliers + ticket price come from the live API snapshot
- * (single source of truth lives in `@scadium/shared`, consumed server-side),
- * so the browser bundle never imports cross-package runtime values.
+ * bc.game-style fixed-prize tiers, paid in USDT. The bonus number only
+ * matters for the grand prize; 4 or 3 main matches pay regardless of bonus;
+ * matching NOTHING wins a free ticket in the next draw. Values come from
+ * the live API snapshot (no cross-package runtime imports in the bundle).
  */
 export function PrizeTable({ snap }: { snap: LotterySnapshot | null }) {
-  const prizes = snap?.config.prizes ?? {};
-  const priceUsd = snap?.ticketPriceUsd ?? 0;
+  const p = snap?.config.prizesUsd;
+  const rows: { label: string; value: string; grand?: boolean; free?: boolean }[] = [
+    { label: '5 + Bonus — Grand Prize', value: p ? `${formatUsd(p.grand)} USDT` : '—', grand: true },
+    { label: '5 main numbers', value: p ? `${formatUsd(p.second)} USDT` : '—' },
+    { label: '4 main numbers', value: p ? `${formatUsd(p.third)} USDT` : '—' },
+    { label: '3 main numbers', value: p ? `${formatUsd(p.fourth)} USDT` : '—' },
+    { label: 'No matches at all', value: 'Free ticket → next draw', free: true },
+  ];
 
   return (
     <div className="space-y-1.5">
-      {TIERS.map(({ key, label }) => {
-        const mult = prizes[key] ?? 0;
-        const payoutUsd = mult * priceUsd;
-        const jackpot = key === '5+1';
-        return (
-          <div
-            key={key}
-            className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-surface-elevated/50"
+      {rows.map((r) => (
+        <div
+          key={r.label}
+          className="flex items-center justify-between text-xs px-3 py-1.5 rounded-lg bg-surface-elevated/50"
+        >
+          <span className={r.grand ? 'font-bold text-gradient' : 'text-foreground-muted'}>
+            {r.label}
+          </span>
+          <span
+            className={
+              r.grand
+                ? 'font-mono text-amber-400 font-bold'
+                : r.free
+                  ? 'text-primary-300 text-[11px] font-semibold'
+                  : 'font-mono text-foreground/80'
+            }
           >
-            <span className={jackpot ? 'font-bold text-gradient' : 'text-foreground-muted'}>
-              {label}
-            </span>
-            <span className="flex items-center gap-2 font-mono">
-              <span className={jackpot ? 'text-amber-400 font-bold' : 'text-foreground/80'}>
-                {mult.toLocaleString()}×
-              </span>
-              <span className="text-foreground-muted/60 tabular-nums w-24 text-right">
-                {formatUsd(payoutUsd)} USDT
-              </span>
-            </span>
-          </div>
-        );
-      })}
+            {r.value}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

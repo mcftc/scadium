@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { LOTTERY } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
 
 /**
@@ -18,10 +19,84 @@ export class LotteryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: LotteryEngine,
+    private readonly chain: ChainService,
   ) {}
 
   snapshot() {
     return this.engine.snapshot();
+  }
+
+  forceDraw() {
+    return this.engine.forceDraw();
+  }
+
+  /**
+   * On-chain purchase confirmation (Phase E): the web buys via a USER-signed
+   * buy_ticket transaction, then posts the signature here. We fetch the tx,
+   * decode the TicketBought event, and only then persist the ticket — the
+   * chain is the source of truth, the API cannot be tricked into recording
+   * a ticket that wasn't paid for.
+   */
+  async confirmTicket(params: { userId: string; signature: string }) {
+    if (!this.chain.lotteryEnabled) {
+      throw new BadRequestException('On-chain lottery is not enabled');
+    }
+    const open = this.engine.getOpenDraw();
+    if (!open) throw new BadRequestException('No open draw');
+
+    const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.banned) throw new ForbiddenException('Account banned');
+
+    const event = await this.chain.verifyTicketTx(params.signature);
+    if (!event) throw new BadRequestException('Transaction not found or not a ticket purchase');
+    if (event.buyer !== user.walletAddress) {
+      throw new BadRequestException('Ticket was bought by a different wallet');
+    }
+    if (event.drawIndex !== open.drawIndex) {
+      throw new BadRequestException('Ticket belongs to a different draw');
+    }
+
+    const existing = await this.prisma.lotteryTicket.count({
+      where: { drawId: open.id, userId: params.userId },
+    });
+    if (existing >= LOTTERY.MAX_TICKETS_PER_DRAW) {
+      throw new BadRequestException(`Max ${LOTTERY.MAX_TICKETS_PER_DRAW} tickets per draw`);
+    }
+
+    const price = BigInt(LOTTERY.TICKET_PRICE_LAMPORTS);
+    // @unique on txSignature makes replaying the same signature impossible.
+    const ticket = await this.prisma.lotteryTicket.create({
+      data: {
+        drawId: open.id,
+        userId: params.userId,
+        mainNumbers: [...event.main].sort((a, b) => a - b),
+        bonusNumber: event.bonus,
+        costLamports: price,
+        txSignature: params.signature,
+      },
+    });
+    await this.engine.onTicketSold(price);
+
+    return {
+      id: ticket.id,
+      drawId: ticket.drawId,
+      mainNumbers: ticket.mainNumbers,
+      bonusNumber: ticket.bonusNumber,
+      txSignature: params.signature,
+    };
+  }
+
+  /** Devnet convenience: top the caller up with 10 demo USDT. */
+  async usdtFaucet(userId: string) {
+    if (!this.chain.lotteryEnabled) {
+      throw new BadRequestException('On-chain lottery is not enabled');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const sig = await this.chain.usdtFaucet(user.walletAddress, BigInt(10_000_000)); // 10 USDT
+    if (!sig) throw new BadRequestException('Faucet transfer failed');
+    return { signature: sig, amountUsdtBase: '10000000' };
   }
 
   async buyTicket(params: { userId: string; mainNumbers: number[]; bonusNumber: number }) {
@@ -98,6 +173,11 @@ export class LotteryService {
       matchedMain: t.matchedMain,
       matchedBonus: t.matchedBonus,
       payoutLamports: t.payoutLamports.toString(),
+      payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+      tier: t.tier,
+      free: t.free,
+      txSignature: t.txSignature,
+      prizeTxSignature: t.prizeTxSignature,
       won: t.won,
       drawStatus: t.draw.status,
       drawMain: t.draw.mainNumbers,
@@ -115,6 +195,9 @@ export class LotteryService {
     });
     return draws.map((d) => ({
       id: d.id,
+      drawIndex: d.drawIndex?.toString() ?? null,
+      commitTxSignature: d.commitTxSignature,
+      revealTxSignature: d.revealTxSignature,
       mainNumbers: d.mainNumbers,
       bonusNumber: d.bonusNumber,
       ticketCount: d.ticketCount,

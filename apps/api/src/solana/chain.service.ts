@@ -57,6 +57,10 @@ export class ChainService implements OnModuleInit {
       this.cosigner = Keypair.fromSecretKey(Uint8Array.from(raw));
       const scadMint = this.config.get<string>('SCAD_MINT');
       this.scadMint = scadMint ? new PublicKey(scadMint) : null;
+      const lotteryProgramId = this.config.get<string>('LOTTERY_PROGRAM_ID');
+      this.lotteryProgramId = lotteryProgramId ? new PublicKey(lotteryProgramId) : null;
+      const usdtMint = this.config.get<string>('USDT_MINT');
+      this.usdtMint = usdtMint ? new PublicKey(usdtMint) : null;
       this.enabled = true;
       this.logger.log(
         `On-chain settlement enabled — program ${programId}, cosigner ${this.cosigner.publicKey.toBase58()}`,
@@ -139,6 +143,227 @@ export class ChainService implements OnModuleInit {
       this.logger.error(`settle_bet failed for bet ${params.betId}: ${(e as Error).message}`);
       return null;
     }
+  }
+
+  // ------------------------------------------------------------ lottery
+
+  private lotteryProgramId: PublicKey | null = null;
+  private usdtMint: PublicKey | null = null;
+
+  get lotteryEnabled(): boolean {
+    return this.enabled && !!this.lotteryProgramId && !!this.usdtMint;
+  }
+  get lotteryProgramIdBase58(): string | null {
+    return this.lotteryProgramId?.toBase58() ?? null;
+  }
+  get usdtMintBase58(): string | null {
+    return this.usdtMint?.toBase58() ?? null;
+  }
+
+  lotteryConfigPda(): PublicKey {
+    return PublicKey.findProgramAddressSync([Buffer.from('lottery')], this.lotteryProgramId!)[0];
+  }
+  lotteryDrawPda(index: bigint): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from('draw'), u64le(index)],
+      this.lotteryProgramId!,
+    )[0];
+  }
+
+  /** Publish the seed commitment on-chain before sales open. */
+  async lotteryCommitDraw(params: {
+    drawIndex: bigint;
+    serverSeedHashHex: string; // 64-char hex
+    clientSeedHex: string; // 32-char hex (16 bytes) — padded to 32 bytes
+    drawAtMs: number;
+  }): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner) return null;
+    try {
+      const clientSeed = Buffer.alloc(32);
+      Buffer.from(params.clientSeedHex, 'utf8').copy(clientSeed); // utf8, zero-padded
+      const data = Buffer.concat([
+        anchorDiscriminator('commit_draw'),
+        u64le(params.drawIndex),
+        Buffer.from(params.serverSeedHashHex, 'hex'),
+        clientSeed,
+        i64le(BigInt(Math.floor(params.drawAtMs / 1000))),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.lotteryProgramId!,
+        keys: [
+          { pubkey: this.lotteryConfigPda(), isSigner: false, isWritable: false },
+          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: true },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(`commit_draw ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Reveal the seed; the program asserts sha256(seed)==commitment. */
+  async lotteryRevealDraw(params: {
+    drawIndex: bigint;
+    serverSeedHex: string; // 64-char hex → 64 utf8 bytes on-chain
+    main: number[];
+    bonus: number;
+  }): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner) return null;
+    try {
+      const data = Buffer.concat([
+        anchorDiscriminator('reveal_draw'),
+        u64le(params.drawIndex),
+        Buffer.from(params.serverSeedHex, 'utf8'),
+        Buffer.from(params.main),
+        Buffer.from([params.bonus]),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.lotteryProgramId!,
+        keys: [
+          { pubkey: this.lotteryConfigPda(), isSigner: false, isWritable: false },
+          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: true },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(`reveal_draw ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Pay a fixed-tier USDT prize from the lottery treasury. */
+  async lotteryPayPrize(params: {
+    drawIndex: bigint;
+    walletAddress: string;
+    amountUsdtBase: bigint;
+    tier: number;
+  }): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner) return null;
+    try {
+      const winner = new PublicKey(params.walletAddress);
+      const config = this.lotteryConfigPda();
+      const data = Buffer.concat([
+        anchorDiscriminator('pay_prize'),
+        u64le(params.drawIndex),
+        u64le(params.amountUsdtBase),
+        Buffer.from([params.tier]),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.lotteryProgramId!,
+        keys: [
+          { pubkey: config, isSigner: false, isWritable: false },
+          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
+          { pubkey: winner, isSigner: false, isWritable: false },
+          { pubkey: ata(this.usdtMint!, config), isSigner: false, isWritable: true },
+          { pubkey: ata(this.usdtMint!, winner), isSigner: false, isWritable: true },
+          { pubkey: this.usdtMint!, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(`pay_prize ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Devnet faucet: cosigner transfers demo USDT to a user. */
+  async usdtFaucet(walletAddress: string, amountBase: bigint): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner) return null;
+    try {
+      const to = new PublicKey(walletAddress);
+      const fromAta = ata(this.usdtMint!, this.cosigner.publicKey);
+      const toAta = ata(this.usdtMint!, to);
+      const ixs: TransactionInstruction[] = [];
+      const exists = await this.connection.getAccountInfo(toAta);
+      if (!exists) {
+        // Create the recipient ATA (payer = cosigner).
+        ixs.push(
+          new TransactionInstruction({
+            programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+            keys: [
+              { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+              { pubkey: toAta, isSigner: false, isWritable: true },
+              { pubkey: to, isSigner: false, isWritable: false },
+              { pubkey: this.usdtMint!, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+              { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            ],
+            data: Buffer.from([0]), // Create
+          }),
+        );
+      }
+      // SPL Token Transfer (ix index 3): [3, amount u64le]
+      ixs.push(
+        new TransactionInstruction({
+          programId: TOKEN_PROGRAM_ID,
+          keys: [
+            { pubkey: fromAta, isSigner: false, isWritable: true },
+            { pubkey: toAta, isSigner: false, isWritable: true },
+            { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+          ],
+          data: Buffer.concat([Buffer.from([3]), u64le(amountBase)]),
+        }),
+      );
+      const tx = new Transaction().add(...ixs);
+      return await sendAndConfirmTransaction(this.connection, tx, [this.cosigner], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+    } catch (e) {
+      this.logger.error(`usdt faucet failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Fetch + verify a buy_ticket tx: returns the TicketBought event fields. */
+  async verifyTicketTx(signature: string): Promise<{
+    drawIndex: bigint;
+    buyer: string;
+    main: number[];
+    bonus: number;
+  } | null> {
+    if (!this.lotteryEnabled) return null;
+    try {
+      const tx = await this.connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx?.meta || tx.meta.err) return null;
+      const disc = createHash('sha256').update('event:TicketBought').digest().subarray(0, 8);
+      for (const log of tx.meta.logMessages ?? []) {
+        if (!log.startsWith('Program data: ')) continue;
+        const buf = Buffer.from(log.slice('Program data: '.length), 'base64');
+        if (buf.length < 8 + 8 + 32 + 5 + 1 || !buf.subarray(0, 8).equals(disc)) continue;
+        const drawIndex = buf.readBigUInt64LE(8);
+        const buyer = new PublicKey(buf.subarray(16, 48)).toBase58();
+        const main = Array.from(buf.subarray(48, 53));
+        const bonus = buf[53]!;
+        return { drawIndex, buyer, main, bonus };
+      }
+      return null;
+    } catch (e) {
+      this.logger.error(`verifyTicketTx failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  private async send(ix: TransactionInstruction): Promise<string> {
+    const tx = new Transaction().add(ix);
+    return sendAndConfirmTransaction(this.connection, tx, [this.cosigner!], {
+      commitment: 'confirmed',
+      maxRetries: 3,
+    });
   }
 
   // ------------------------------------------------------------ rewards
@@ -242,6 +467,12 @@ function anchorDiscriminator(name: string): Buffer {
 
 function uuidToBytes(uuid: string): Buffer {
   return Buffer.from(uuid.replace(/-/g, ''), 'hex'); // 16 bytes
+}
+
+function i64le(v: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigInt64LE(v);
+  return b;
 }
 
 function u64le(v: bigint): Buffer {

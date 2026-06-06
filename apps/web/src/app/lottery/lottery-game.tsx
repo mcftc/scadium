@@ -5,10 +5,9 @@ import { Ticket, Clock, Shuffle, Trophy, Users } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ConnectButton } from '@/components/wallet/connect-button';
-import { useMe } from '@/hooks/use-me';
 import { useAuthStore } from '@/store/auth-store';
 import { formatUsd } from '@/lib/format';
-import { useLottery, useBuyTicket } from '@/hooks/use-lottery';
+import { useLottery, useBuyTicket, useUsdtBalance, useUsdtFaucet } from '@/hooks/use-lottery';
 import { NumberPicker } from './number-picker';
 import { PrizeTable } from './prize-table';
 import { MyTickets } from './my-tickets';
@@ -18,9 +17,10 @@ import { LotteryBalls } from './lottery-balls';
 
 export function LotteryGame() {
   const snap = useLottery();
-  const { data: me } = useMe();
   const token = useAuthStore((s) => s.accessToken);
-  const buyTicket = useBuyTicket();
+  const buyTicket = useBuyTicket(snap);
+  const usdtBalance = useUsdtBalance(snap);
+  const faucet = useUsdtFaucet();
 
   const [main, setMain] = useState<number[]>([]);
   const [bonus, setBonus] = useState<number | null>(null);
@@ -63,12 +63,8 @@ export function LotteryGame() {
   }
 
   const priceUsd = snap?.ticketPriceUsd ?? 0;
-  // Derive a USD-per-lamport rate from the snapshot so play-money balances (in
-  // lamports) can be shown in USDT terms on the lottery screen.
-  const usdPerLamport =
-    snap && Number(snap.ticketPriceLamports) > 0
-      ? snap.ticketPriceUsd / Number(snap.ticketPriceLamports)
-      : 0;
+  const onChain = !!snap?.chain.enabled;
+  const usdtBal = usdtBalance.data ? Number(BigInt(usdtBalance.data)) / 1e6 : null;
 
   return (
     <div className="grid lg:grid-cols-[1fr_340px] gap-4">
@@ -116,12 +112,22 @@ export function LotteryGame() {
             <div className="text-xs text-foreground-muted">
               Ticket price{' '}
               <span className="font-mono text-foreground">{formatUsd(priceUsd)} USDT</span>
-              {me && (
+              {onChain && usdtBal != null && (
                 <span className="ml-2 text-foreground-muted/70">
-                  · balance {formatUsd(Number(me.playBalanceLamports) * usdPerLamport)} USDT
+                  · balance <span className="font-mono">{formatUsd(usdtBal)} USDT</span>
                 </span>
               )}
             </div>
+            {onChain && token && (usdtBal ?? 0) < priceUsd && (
+              <button
+                type="button"
+                onClick={() => faucet.mutate()}
+                disabled={faucet.isPending}
+                className="text-xs font-semibold text-primary-400 hover:text-primary-300 disabled:opacity-50"
+              >
+                {faucet.isPending ? 'Sending…' : 'Get 10 USDT (devnet)'}
+              </button>
+            )}
           </div>
 
           {token ? (
@@ -147,7 +153,7 @@ export function LotteryGame() {
           </h3>
           <PrizeTable snap={snap} />
           <p className="mt-3 text-[11px] text-foreground-muted">
-            Fixed-odds payouts: <span className="font-mono">payout = ticket × multiplier</span>.
+            Fixed USDT prizes, bc.game rules — the bonus only matters for the grand prize.
             Every draw is provably fair — numbers are committed before tickets open.
           </p>
         </Card>
