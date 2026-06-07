@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, type Transaction } from '@solana/web3.js';
 import { api } from '@/lib/api-client';
-import { buildBuyTicketTx } from '@/lib/lottery';
+import { buildBuyTicketTx, buildBuyTicketsTx } from '@/lib/lottery';
 import { ata } from '@/lib/swap';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
@@ -18,6 +18,7 @@ export interface LotteryLastResult {
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
+  slotHash: string; // hex — third entropy input, needed by the verifier
   winnersCount: number;
   drawnAt: number;
 }
@@ -42,6 +43,11 @@ export interface LotterySnapshot {
     bonusMax: number;
     prizesUsd: { grand: number; second: number; third: number; fourth: number };
     freeTicketOnZeroMatch: boolean;
+    // Bulk purchase tuning (server-driven — the client bundle can't import
+    // runtime values from @scadium/shared).
+    ticketPresets?: number[];
+    batchTicketsPerTx?: number;
+    maxBulkPerSubmit?: number;
   };
   lastResult: LotteryLastResult | null;
 }
@@ -73,6 +79,7 @@ export interface LotteryDrawRow {
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
+  slotHash: string | null;
 }
 
 /** Live current-draw state, seeded from REST and patched over Socket.io. */
@@ -136,6 +143,109 @@ export function useBuyTicket(snap: LotterySnapshot | null) {
         return api('/lottery/confirm', { method: 'POST', body: { signature }, token });
       }
       return api('/lottery/ticket', { method: 'POST', body: params, token });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'my-tickets'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'usdt'] });
+    },
+  });
+}
+
+export interface TicketPicks {
+  mainNumbers: number[];
+  bonusNumber: number;
+}
+
+/**
+ * Bulk quick-pick purchase (20/50/100 at once — no per-draw cap, bc.game
+ * parity). On-chain mode chunks the picks into `buy_tickets` batch
+ * transactions (BATCH_TICKETS_PER_TX picks each, ONE USDT transfer per tx),
+ * signs them all in a single wallet approval (signAllTransactions), sends
+ * them, then registers each signature with /lottery/confirm — the API
+ * records every ticket carried by the tx. Play-money mode just loops the
+ * /lottery/ticket endpoint. `onProgress` fires per confirmed chunk so the
+ * UI can render "Buying 24/100…".
+ */
+export function useBuyBulkTickets(snap: LotterySnapshot | null) {
+  const token = useAuthStore((s) => s.accessToken);
+  const { connection } = useConnection();
+  const { publicKey, signAllTransactions, sendTransaction } = useWallet();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      tickets,
+      onProgress,
+    }: {
+      tickets: TicketPicks[];
+      onProgress?: (done: number) => void;
+    }) => {
+      let done = 0;
+
+      if (snap?.chain.enabled && snap.chain.programId && snap.chain.usdtMint && publicKey) {
+        const programId = new PublicKey(snap.chain.programId);
+        const usdtMint = new PublicKey(snap.chain.usdtMint);
+        const latest = await connection.getLatestBlockhash();
+
+        const perTx = snap.config.batchTicketsPerTx ?? 12;
+        const chunks: TicketPicks[][] = [];
+        for (let i = 0; i < tickets.length; i += perTx) {
+          chunks.push(tickets.slice(i, i + perTx));
+        }
+        const txs = chunks.map((chunk) => {
+          const tx = buildBuyTicketsTx(
+            programId,
+            usdtMint,
+            publicKey,
+            BigInt(snap.drawIndex),
+            chunk.map((t) => ({
+              main: [...t.mainNumbers].sort((a, b) => a - b),
+              bonus: t.bonusNumber,
+            })),
+          );
+          tx.feePayer = publicKey;
+          tx.recentBlockhash = latest.blockhash;
+          return tx;
+        });
+
+        // One wallet approval for the whole batch when the adapter supports it.
+        let signatures: string[];
+        if (signAllTransactions) {
+          const signed: Transaction[] = await signAllTransactions(txs);
+          signatures = [];
+          for (const tx of signed) {
+            signatures.push(await connection.sendRawTransaction(tx.serialize()));
+          }
+        } else {
+          signatures = [];
+          for (const tx of txs) {
+            signatures.push(await sendTransaction(tx, connection));
+          }
+        }
+
+        const results = [];
+        for (let i = 0; i < signatures.length; i++) {
+          const signature = signatures[i]!;
+          await connection.confirmTransaction({ signature, ...latest }, 'confirmed');
+          const res = await api<{ count: number }>('/lottery/confirm', {
+            method: 'POST',
+            body: { signature },
+            token,
+          });
+          done += res.count ?? chunks[i]!.length;
+          onProgress?.(done);
+          results.push(res);
+        }
+        return results;
+      }
+
+      // Play-money fallback (chain disabled).
+      const results = [];
+      for (const t of tickets) {
+        results.push(await api('/lottery/ticket', { method: 'POST', body: t, token }));
+        onProgress?.(++done);
+      }
+      return results;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['me'] });

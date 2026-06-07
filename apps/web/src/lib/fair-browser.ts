@@ -88,27 +88,66 @@ export async function blackjackDeal(
   return cards;
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.trim().toLowerCase().replace(/^0x/, '');
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', data as BufferSource));
+}
+
 /**
- * Matches @scadium/fair `lotteryDraw`. Picks 5 distinct main numbers (1..36)
- * plus one bonus (1..10) via a seeded Fisher-Yates draw — identical to the
- * server so the /fairness verifier can reproduce any lottery result.
+ * Matches @scadium/fair `lotteryDraw` — sha256-based derivation that mixes a
+ * Solana slot hash into the committed seed pair (byte layout documented in
+ * packages/fair/src/lottery.ts; golden-vector locked against the on-chain
+ * program). `slotHashHex` is the 32-byte slot hash shown on the draw / in the
+ * reveal transaction. `clientSeed` is zero-padded to the on-chain 32-byte form.
  */
 export async function lotteryDraw(
   serverSeed: string,
   clientSeed: string,
+  slotHashHex: string,
   nonce: number,
 ): Promise<{ main: number[]; bonus: number }> {
+  const enc = new TextEncoder();
+  const clientSeed32 = new Uint8Array(32);
+  clientSeed32.set(enc.encode(clientSeed).slice(0, 32));
+  const slotHash = hexToBytes(slotHashHex);
+  if (slotHash.length !== 32) throw new Error('slot hash must be 32 bytes (64 hex chars)');
+  const nonceLe = new Uint8Array(4);
+  new DataView(nonceLe.buffer).setUint32(0, nonce >>> 0, true);
+
+  const entropy = await sha256Bytes(
+    concatBytes(enc.encode(serverSeed), slotHash, clientSeed32, nonceLe),
+  );
+
+  const roll = async (tag: number[]): Promise<bigint> => {
+    const h = await sha256Bytes(concatBytes(entropy, Uint8Array.from(tag)));
+    return new DataView(h.buffer, h.byteOffset, 8).getBigUint64(0, false);
+  };
+
   const pool = Array.from({ length: 36 }, (_, i) => i + 1);
   const main: number[] = [];
   for (let i = 0; i < 5; i++) {
-    const hash = await hmacSha256Hex(serverSeed, `${clientSeed}:${nonce}:m${i}`);
-    const r = parseInt(hash.slice(0, 13), 16) % pool.length;
+    const r = Number((await roll([0x6d, i])) % BigInt(pool.length));
     main.push(pool[r]!);
     pool.splice(r, 1);
   }
   main.sort((a, b) => a - b);
-  const hashB = await hmacSha256Hex(serverSeed, `${clientSeed}:${nonce}:b`);
-  const bonus = (parseInt(hashB.slice(0, 13), 16) % 10) + 1;
+  const bonus = Number((await roll([0x62])) % 10n) + 1;
   return { main, bonus };
 }
 

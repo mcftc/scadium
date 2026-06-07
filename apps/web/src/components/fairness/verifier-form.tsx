@@ -32,6 +32,7 @@ export function VerifierForm() {
   const [clientSeed, setClientSeed] = useState('');
   const [nonce, setNonce] = useState('0');
   const [commitHash, setCommitHash] = useState('');
+  const [slotHash, setSlotHash] = useState(''); // lottery only — draw-time entropy
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,15 +42,18 @@ export function VerifierForm() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const g = q.get('game');
-    if (g === 'crash' || g === 'coinflip' || g === 'blackjack') setGame(g);
+    if (g === 'crash' || g === 'coinflip' || g === 'blackjack' || g === 'lottery' || g === 'jackpot')
+      setGame(g);
     const ss = q.get('serverSeed');
     const cs = q.get('clientSeed');
     const n = q.get('nonce');
     const commit = q.get('commit');
+    const sh = q.get('slotHash');
     if (ss) setServerSeed(ss);
     if (cs) setClientSeed(cs);
     if (n) setNonce(n);
     if (commit) setCommitHash(commit);
+    if (sh) setSlotHash(sh);
   }, []);
 
   async function compute() {
@@ -73,7 +77,10 @@ export function VerifierForm() {
         const r = await coinflipResult(serverSeed, clientSeed, nonceNum);
         output = r;
       } else if (game === 'lottery') {
-        const { main, bonus } = await lotteryDraw(serverSeed, clientSeed, nonceNum);
+        if (!slotHash.trim()) {
+          throw new Error('Lottery needs the draw’s slot hash (64 hex chars) — shown on the lottery page after each draw');
+        }
+        const { main, bonus } = await lotteryDraw(serverSeed, clientSeed, slotHash.trim(), nonceNum);
         output = `${main.join('  ')}   +${bonus}`;
       } else if (game === 'jackpot') {
         const roll = await jackpotRoll(serverSeed, clientSeed, nonceNum);
@@ -142,6 +149,15 @@ export function VerifierForm() {
         placeholder="0"
         mono
       />
+      {game === 'lottery' && (
+        <TextField
+          label="Slot hash (draw-time entropy — from the draw / reveal tx)"
+          value={slotHash}
+          onChange={setSlotHash}
+          placeholder="64-char hex"
+          mono
+        />
+      )}
       <TextField
         label="Server seed hash (optional — verifies the commitment)"
         value={commitHash}

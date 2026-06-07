@@ -68,7 +68,10 @@ export const LOTTERY = {
   // Lamport-equivalent of the ticket price at the demo USD rate — used ONLY
   // for the unified Bet ledger / aggregates (real money moves in USDT).
   TICKET_PRICE_LAMPORTS: Math.round((0.1 / USD_PER_SOL) * LAMPORTS_PER_SOL),
-  MAX_TICKETS_PER_DRAW: 50, // per user, per draw
+  // No per-user ticket cap (bc.game parity). Purchases are batched on-chain:
+  BATCH_TICKETS_PER_TX: 12, // picks per buy_tickets tx (CU headroom; program caps at 20)
+  MAX_BATCH_TICKETS_PER_SUBMIT: 200, // UI soft guard per Add Bet click
+  TICKET_COUNT_PRESETS: [20, 50, 100] as readonly number[],
   // bc.game cadence: a draw every 8 hours (3/day) at fixed wall-clock times.
   // Hours are local (Europe/Istanbul = UTC+3, no DST). See `nextLotteryDrawAt`.
   DRAW_HOURS_LOCAL: [4, 12, 20] as readonly number[],

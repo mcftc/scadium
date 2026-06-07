@@ -10,10 +10,12 @@ import { formatUsd } from '@/lib/format';
 import {
   useLottery,
   useBuyTicket,
+  useBuyBulkTickets,
   useUsdtBalance,
   useUsdtFaucet,
   useFreeTickets,
   useUseFreeTicket,
+  type TicketPicks,
 } from '@/hooks/use-lottery';
 import { NumberPicker } from './number-picker';
 import { PrizeTable } from './prize-table';
@@ -26,6 +28,7 @@ export function LotteryGame() {
   const snap = useLottery();
   const token = useAuthStore((s) => s.accessToken);
   const buyTicket = useBuyTicket(snap);
+  const buyBulk = useBuyBulkTickets(snap);
   const usdtBalance = useUsdtBalance(snap);
   const faucet = useUsdtFaucet();
   const freeTickets = useFreeTickets();
@@ -34,6 +37,7 @@ export function LotteryGame() {
   const [main, setMain] = useState<number[]>([]);
   const [bonus, setBonus] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const mainCount = snap?.config.mainCount ?? 5;
   const mainMax = snap?.config.mainMax ?? 36;
@@ -47,16 +51,65 @@ export function LotteryGame() {
     );
   }
 
-  function quickPick() {
-    setError(null);
+  function randomPicks(): TicketPicks {
     const pool = Array.from({ length: mainMax }, (_, i) => i + 1);
     const picks: number[] = [];
     for (let i = 0; i < mainCount; i++) {
       const idx = Math.floor(Math.random() * pool.length);
       picks.push(pool.splice(idx, 1)[0]!);
     }
-    setMain(picks.sort((a, b) => a - b));
-    setBonus(Math.floor(Math.random() * bonusMax) + 1);
+    return {
+      mainNumbers: picks.sort((a, b) => a - b),
+      bonusNumber: Math.floor(Math.random() * bonusMax) + 1,
+    };
+  }
+
+  function quickPick() {
+    setError(null);
+    const t = randomPicks();
+    setMain(t.mainNumbers);
+    setBonus(t.bonusNumber);
+  }
+
+  /**
+   * Bulk auto-pick purchase: N distinct random tickets in one go (combos
+   * deduped within the batch). No per-draw cap — the only guard is a UI
+   * sanity limit per click.
+   */
+  async function buyBulkTickets(count: number) {
+    setError(null);
+    const maxBulk = snap?.config.maxBulkPerSubmit ?? 200;
+    if (count > maxBulk) {
+      setError(`Max ${maxBulk} tickets per purchase`);
+      return;
+    }
+    const seen = new Set<string>();
+    const tickets: TicketPicks[] = [];
+    while (tickets.length < count) {
+      const t = randomPicks();
+      const key = `${t.mainNumbers.join(',')}:${t.bonusNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tickets.push(t);
+    }
+    const totalUsd = count * priceUsd;
+    if (onChain && usdtBal != null && usdtBal < totalUsd) {
+      setError(
+        `Insufficient USDT — ${count} tickets cost ${formatUsd(totalUsd)} USDT, you have ${formatUsd(usdtBal)}`,
+      );
+      return;
+    }
+    setBulkProgress({ done: 0, total: count });
+    try {
+      await buyBulk.mutateAsync({
+        tickets,
+        onProgress: (done) => setBulkProgress({ done, total: count }),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Bulk purchase failed');
+    } finally {
+      setBulkProgress(null);
+    }
   }
 
   async function submit() {
@@ -145,7 +198,7 @@ export function LotteryGame() {
                 onClick={submit}
                 size="lg"
                 className="w-full"
-                disabled={!ready || buyTicket.isPending || useFree.isPending}
+                disabled={!ready || buyTicket.isPending || useFree.isPending || buyBulk.isPending}
               >
                 <Ticket className="h-5 w-5" />
                 {buyTicket.isPending
@@ -154,10 +207,55 @@ export function LotteryGame() {
                     ? `Buy ticket · ${formatUsd(priceUsd)} USDT`
                     : `Pick ${mainCount} + bonus`}
               </Button>
+
+              {/* Bulk auto-pick: N random tickets in one go, one wallet approval. */}
+              <div className="flex items-center gap-2 pt-1">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] uppercase tracking-wider text-foreground-muted">
+                  or auto-pick in bulk
+                </span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              {bulkProgress ? (
+                <div className="w-full rounded-xl border border-primary-400/40 bg-primary-400/10 px-3 py-2.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-primary-300">
+                    <span className="flex items-center gap-1.5">
+                      <Shuffle className="h-3.5 w-3.5 animate-pulse" />
+                      Buying {bulkProgress.done}/{bulkProgress.total} tickets…
+                    </span>
+                    <span className="font-mono">
+                      {Math.round((bulkProgress.done / bulkProgress.total) * 100)}%
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 rounded-full bg-surface overflow-hidden">
+                    <div
+                      className="h-full bg-primary-400 transition-all duration-200"
+                      style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {(snap?.config.ticketPresets ?? [20, 50, 100]).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      disabled={buyBulk.isPending || buyTicket.isPending || useFree.isPending}
+                      onClick={() => buyBulkTickets(n)}
+                      className="rounded-xl border border-border bg-surface-elevated px-2 py-2.5 text-center transition-colors hover:border-primary-400/50 hover:bg-surface disabled:opacity-50"
+                    >
+                      <div className="text-sm font-bold">{n}× tickets</div>
+                      <div className="text-[10px] text-foreground-muted font-mono">
+                        {formatUsd(n * priceUsd)} USDT
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
               {(freeTickets.data?.available ?? 0) > 0 && (
                 <button
                   type="button"
-                  disabled={!ready || useFree.isPending || buyTicket.isPending}
+                  disabled={!ready || useFree.isPending || buyTicket.isPending || buyBulk.isPending}
                   onClick={async () => {
                     if (!ready) return;
                     setError(null);

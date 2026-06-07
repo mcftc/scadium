@@ -23,7 +23,8 @@ export function RecentDraws() {
         const verifyHref =
           `/fairness?game=lottery&clientSeed=${encodeURIComponent(d.clientSeed)}` +
           `&nonce=${d.nonce}&commit=${d.serverSeedHash}` +
-          (d.serverSeed ? `&serverSeed=${d.serverSeed}` : '');
+          (d.serverSeed ? `&serverSeed=${d.serverSeed}` : '') +
+          (d.slotHash ? `&slotHash=${d.slotHash}` : '');
         return (
           <div
             key={d.id}

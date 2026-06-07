@@ -258,6 +258,9 @@ model LotteryDraw {
   // Result (null until drawn): 5 main numbers (1..36) + 1 bonus (1..10)
   mainNumbers  Int[]
   bonusNumber  Int?
+  // Hex of the 32-byte slot hash mixed into the draw entropy (null until
+  // drawn; synthetic sha256(seed:clientSeed) when the chain is disabled).
+  slotHash     String?
   potLamports  BigInt            @default(0)
   ticketCount  Int               @default(0)
   drawAt       DateTime // when this draw is scheduled to resolve
@@ -285,13 +288,17 @@ model LotteryTicket {
   // On-chain era (Phase E): purchase tx (user-signed USDT transfer), prize
   // payout tx, bc.game tier, USDT amounts, and the free-ticket flag
   // (zero-match tickets re-enter the next draw on the house).
-  txSignature    String?     @unique
+  // A bulk buy_tickets tx records N tickets under one signature — txIndex is
+  // the ticket's position in the batch; (txSignature, txIndex) blocks replays.
+  txSignature    String?
+  txIndex        Int         @default(0)
   prizeTxSignature String?
   tier           String?
   payoutUsdtBase BigInt      @default(0)
   free           Boolean     @default(false)
   createdAt      DateTime    @default(now())
 
+  @@unique([txSignature, txIndex])
   @@index([drawId])
   @@index([userId, createdAt])
 }

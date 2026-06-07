@@ -57,42 +57,49 @@ export class LotteryService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    const event = await this.chain.verifyTicketTx(params.signature);
-    if (!event) throw new BadRequestException('Transaction not found or not a ticket purchase');
-    if (event.buyer !== user.walletAddress) {
-      throw new BadRequestException('Ticket was bought by a different wallet');
+    // One tx can carry many tickets (`buy_tickets` batch) — one event each.
+    const events = await this.chain.verifyTicketTx(params.signature);
+    if (events.length === 0) {
+      throw new BadRequestException('Transaction not found or not a ticket purchase');
     }
-    if (event.drawIndex !== open.drawIndex) {
-      throw new BadRequestException('Ticket belongs to a different draw');
-    }
-
-    const existing = await this.prisma.lotteryTicket.count({
-      where: { drawId: open.id, userId: params.userId },
-    });
-    if (existing >= LOTTERY.MAX_TICKETS_PER_DRAW) {
-      throw new BadRequestException(`Max ${LOTTERY.MAX_TICKETS_PER_DRAW} tickets per draw`);
+    for (const event of events) {
+      if (event.buyer !== user.walletAddress) {
+        throw new BadRequestException('Ticket was bought by a different wallet');
+      }
+      if (event.drawIndex !== open.drawIndex) {
+        throw new BadRequestException('Ticket belongs to a different draw');
+      }
     }
 
     const price = BigInt(LOTTERY.TICKET_PRICE_LAMPORTS);
-    // @unique on txSignature makes replaying the same signature impossible.
-    const ticket = await this.prisma.lotteryTicket.create({
-      data: {
-        drawId: open.id,
-        userId: params.userId,
-        mainNumbers: [...event.main].sort((a, b) => a - b),
-        bonusNumber: event.bonus,
-        costLamports: price,
-        txSignature: params.signature,
-      },
-    });
-    await this.engine.onTicketSold(price);
+    // @@unique([txSignature, txIndex]) makes replaying a signature impossible —
+    // createMany throws on the duplicate key before anything is recorded.
+    const tickets = await this.prisma.$transaction(
+      events.map((event, txIndex) =>
+        this.prisma.lotteryTicket.create({
+          data: {
+            drawId: open.id,
+            userId: params.userId,
+            mainNumbers: [...event.main].sort((a, b) => a - b),
+            bonusNumber: event.bonus,
+            costLamports: price,
+            txSignature: params.signature,
+            txIndex,
+          },
+        }),
+      ),
+    );
+    await this.engine.onTicketSold(price, tickets.length);
 
     return {
-      id: ticket.id,
-      drawId: ticket.drawId,
-      mainNumbers: ticket.mainNumbers,
-      bonusNumber: ticket.bonusNumber,
       txSignature: params.signature,
+      count: tickets.length,
+      tickets: tickets.map((t) => ({
+        id: t.id,
+        drawId: t.drawId,
+        mainNumbers: t.mainNumbers,
+        bonusNumber: t.bonusNumber,
+      })),
     };
   }
 
@@ -168,6 +175,13 @@ export class LotteryService {
   }
 
   async buyTicket(params: { userId: string; mainNumbers: number[]; bonusNumber: number }) {
+    // When the on-chain lottery is live, the play-money path is closed —
+    // tickets must be real wallet-signed USDT purchases (POST /confirm).
+    if (this.chain.lotteryEnabled) {
+      throw new BadRequestException(
+        'Tickets are bought on-chain with USDT — sign the purchase with your wallet',
+      );
+    }
     const { mainNumbers, bonusNumber } = params;
 
     // Validate the picks beyond what the DTO checks (distinctness).
@@ -188,13 +202,6 @@ export class LotteryService {
     if (user.banned) throw new ForbiddenException('Account banned');
     if (user.playBalanceLamports < price) {
       throw new BadRequestException('Insufficient balance');
-    }
-
-    const existing = await this.prisma.lotteryTicket.count({
-      where: { drawId: open.id, userId: params.userId },
-    });
-    if (existing >= LOTTERY.MAX_TICKETS_PER_DRAW) {
-      throw new BadRequestException(`Max ${LOTTERY.MAX_TICKETS_PER_DRAW} tickets per draw`);
     }
 
     // Debit + create the ticket atomically.
@@ -275,6 +282,7 @@ export class LotteryService {
       serverSeedHash: d.seed.serverSeedHash,
       clientSeed: d.seed.clientSeed,
       nonce: d.nonce,
+      slotHash: d.slotHash,
     }));
   }
 }

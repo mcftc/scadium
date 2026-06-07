@@ -4,6 +4,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SYSVAR_SLOT_HASHES_PUBKEY,
   SystemProgram,
   Transaction,
   TransactionInstruction,
@@ -208,32 +209,53 @@ export class ChainService implements OnModuleInit {
     }
   }
 
-  /** Reveal the seed; the program asserts sha256(seed)==commitment. */
+  /**
+   * Reveal the seed. The PROGRAM asserts sha256(seed)==commitment, mixes in
+   * the newest SlotHashes entry, and derives the winning numbers itself —
+   * we read them back from the Draw account afterwards (chain is the source
+   * of truth; the API no longer dictates the numbers).
+   */
   async lotteryRevealDraw(params: {
     drawIndex: bigint;
     serverSeedHex: string; // 64-char hex → 64 utf8 bytes on-chain
+  }): Promise<{
+    signature: string;
     main: number[];
     bonus: number;
-  }): Promise<string | null> {
+    slotHashHex: string;
+    finalEntropyHex: string;
+  } | null> {
     if (!this.lotteryEnabled || !this.cosigner) return null;
     try {
       const data = Buffer.concat([
         anchorDiscriminator('reveal_draw'),
         u64le(params.drawIndex),
         Buffer.from(params.serverSeedHex, 'utf8'),
-        Buffer.from(params.main),
-        Buffer.from([params.bonus]),
       ]);
+      const drawPda = this.lotteryDrawPda(params.drawIndex);
       const ix = new TransactionInstruction({
         programId: this.lotteryProgramId!,
         keys: [
           { pubkey: this.lotteryConfigPda(), isSigner: false, isWritable: false },
-          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: true },
+          { pubkey: drawPda, isSigner: false, isWritable: true },
           { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+          { pubkey: SYSVAR_SLOT_HASHES_PUBKEY, isSigner: false, isWritable: false },
         ],
         data,
       });
-      return await this.send(ix);
+      const signature = await this.send(ix);
+
+      // Draw layout after the 8-byte discriminator (programs/scadium_lottery):
+      // index u64 | seed_hash 32 | client_seed 32 | revealed_seed 64 |
+      // slot u64 | slot_hash 32 | final_entropy 32 | main 5 | bonus 1 | …
+      const info = await this.connection.getAccountInfo(drawPda, 'confirmed');
+      if (!info) throw new Error('Draw account missing after reveal');
+      const buf = info.data;
+      const slotHashHex = buf.subarray(152, 184).toString('hex');
+      const finalEntropyHex = buf.subarray(184, 216).toString('hex');
+      const main = Array.from(buf.subarray(216, 221));
+      const bonus = buf[221]!;
+      return { signature, main, bonus, slotHashHex, finalEntropyHex };
     } catch (e) {
       this.logger.error(`reveal_draw ${params.drawIndex} failed: ${(e as Error).message}`);
       return null;
@@ -330,34 +352,42 @@ export class ChainService implements OnModuleInit {
   }
 
   /** Fetch + verify a buy_ticket tx: returns the TicketBought event fields. */
-  async verifyTicketTx(signature: string): Promise<{
-    drawIndex: bigint;
-    buyer: string;
-    main: number[];
-    bonus: number;
-  } | null> {
-    if (!this.lotteryEnabled) return null;
+  /**
+   * All TicketBought events in a purchase tx — `buy_ticket` emits one,
+   * `buy_tickets` (bulk) one per pick. Order matches the on-chain batch.
+   */
+  async verifyTicketTx(signature: string): Promise<
+    {
+      drawIndex: bigint;
+      buyer: string;
+      main: number[];
+      bonus: number;
+    }[]
+  > {
+    if (!this.lotteryEnabled) return [];
     try {
       const tx = await this.connection.getTransaction(signature, {
         commitment: 'confirmed',
         maxSupportedTransactionVersion: 0,
       });
-      if (!tx?.meta || tx.meta.err) return null;
+      if (!tx?.meta || tx.meta.err) return [];
       const disc = createHash('sha256').update('event:TicketBought').digest().subarray(0, 8);
+      const events: { drawIndex: bigint; buyer: string; main: number[]; bonus: number }[] = [];
       for (const log of tx.meta.logMessages ?? []) {
         if (!log.startsWith('Program data: ')) continue;
         const buf = Buffer.from(log.slice('Program data: '.length), 'base64');
         if (buf.length < 8 + 8 + 32 + 5 + 1 || !buf.subarray(0, 8).equals(disc)) continue;
-        const drawIndex = buf.readBigUInt64LE(8);
-        const buyer = new PublicKey(buf.subarray(16, 48)).toBase58();
-        const main = Array.from(buf.subarray(48, 53));
-        const bonus = buf[53]!;
-        return { drawIndex, buyer, main, bonus };
+        events.push({
+          drawIndex: buf.readBigUInt64LE(8),
+          buyer: new PublicKey(buf.subarray(16, 48)).toBase58(),
+          main: Array.from(buf.subarray(48, 53)),
+          bonus: buf[53]!,
+        });
       }
-      return null;
+      return events;
     } catch (e) {
       this.logger.error(`verifyTicketTx failed: ${(e as Error).message}`);
-      return null;
+      return [];
     }
   }
 

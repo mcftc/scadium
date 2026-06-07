@@ -5,7 +5,8 @@ import {
   generateServerSeed,
   lotteryDraw,
   lotteryMatches,
-  type LotteryResult,
+  padClientSeed32,
+  syntheticSlotHash,
 } from '@scadium/fair';
 import {
   LAMPORTS_PER_SOL,
@@ -30,7 +31,8 @@ interface CurrentDraw {
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
-  result: LotteryResult; // committed up-front, revealed at draw time
+  // NOTE: the result CANNOT be known here — it depends on a slot hash that
+  // does not exist until draw time (that's the point of the new derivation).
   drawAt: number; // epoch ms when this draw resolves
   status: 'open' | 'drawn';
   ticketCount: number;
@@ -47,6 +49,7 @@ interface LastResult {
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
+  slotHash: string; // hex — third entropy input, needed by the verifier
   winnersCount: number;
   freeTickets: number;
   revealTxSignature: string | null;
@@ -87,10 +90,10 @@ export class LotteryEngine implements OnModuleInit {
     return { id: this.current.id, drawIndex: this.current.drawIndex, drawAt: this.current.drawAt };
   }
 
-  /** Register a freshly-persisted ticket in the live tallies. */
-  async onTicketSold(costLamports: bigint): Promise<void> {
-    this.current.ticketCount += 1;
-    this.current.potLamports += costLamports;
+  /** Register freshly-persisted tickets in the live tallies (`count` for bulk buys). */
+  async onTicketSold(costLamports: bigint, count = 1): Promise<void> {
+    this.current.ticketCount += count;
+    this.current.potLamports += costLamports * BigInt(count);
     await this.prisma.lotteryDraw.update({
       where: { id: this.current.id },
       data: { ticketCount: this.current.ticketCount, potLamports: this.current.potLamports },
@@ -127,6 +130,11 @@ export class LotteryEngine implements OnModuleInit {
         bonusMax: LOTTERY.BONUS_MAX,
         prizesUsd: LOTTERY.PRIZES_USD,
         freeTicketPerSolWagered: true,
+        // Bulk purchase tuning — served here because the web bundle can't
+        // import runtime values from @scadium/shared (webpack interop).
+        ticketPresets: LOTTERY.TICKET_COUNT_PRESETS,
+        batchTicketsPerTx: LOTTERY.BATCH_TICKETS_PER_TX,
+        maxBulkPerSubmit: LOTTERY.MAX_BATCH_TICKETS_PER_SUBMIT,
       },
       lastResult: this.lastResult,
     };
@@ -138,7 +146,6 @@ export class LotteryEngine implements OnModuleInit {
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
-    const result = lotteryDraw(serverSeed, clientSeed, nonce);
 
     const seed = await this.prisma.seed.create({
       data: { serverSeed, serverSeedHash: commitServerSeed(serverSeed), clientSeed, nonce },
@@ -179,7 +186,6 @@ export class LotteryEngine implements OnModuleInit {
       serverSeedHash: seed.serverSeedHash,
       clientSeed,
       nonce,
-      result,
       drawAt,
       status: 'open',
       ticketCount: 0,
@@ -213,19 +219,46 @@ export class LotteryEngine implements OnModuleInit {
 
   private async drawAndSettle(): Promise<void> {
     this.current.status = 'drawn';
-    const { main, bonus } = this.current.result;
     const drawIndex = this.current.drawIndex;
+    const { serverSeed, clientSeed, nonce } = this.current;
 
     // Reveal on-chain first — the program asserts sha256(seed) == commitment,
-    // pinning the numbers before any payout moves.
+    // mixes in the newest slot hash, and derives the winning numbers ITSELF.
+    // We adopt the chain's numbers. Off-chain (or if the reveal fails) we
+    // fall back to a documented synthetic slot hash so the draw still settles.
     let revealTxSignature: string | null = null;
-    if (this.chain.lotteryEnabled) {
-      revealTxSignature = await this.chain.lotteryRevealDraw({
-        drawIndex,
-        serverSeedHex: this.current.serverSeed,
-        main,
-        bonus,
-      });
+    let slotHashHex: string;
+    let main: number[];
+    let bonus: number;
+
+    const reveal = this.chain.lotteryEnabled
+      ? await this.chain.lotteryRevealDraw({ drawIndex, serverSeedHex: serverSeed })
+      : null;
+    if (reveal) {
+      ({ main, bonus } = reveal);
+      revealTxSignature = reveal.signature;
+      slotHashHex = reveal.slotHashHex;
+      // Lockstep cross-check: the TS derivation must reproduce the program's
+      // numbers from the same inputs — divergence means a layout bug.
+      const local = lotteryDraw(
+        serverSeed,
+        padClientSeed32(clientSeed),
+        Buffer.from(slotHashHex, 'hex'),
+        nonce,
+      );
+      if (local.main.join(',') !== main.join(',') || local.bonus !== bonus) {
+        this.logger.error(
+          `Draw #${drawIndex}: on-chain numbers [${main.join(',')}]+${bonus} diverge from local ` +
+            `derivation [${local.main.join(',')}]+${local.bonus} — check the golden vector!`,
+        );
+      }
+    } else {
+      if (this.chain.lotteryEnabled) {
+        this.logger.error(`Draw #${drawIndex}: on-chain reveal failed — settling synthetically`);
+      }
+      const synthetic = syntheticSlotHash(serverSeed, clientSeed);
+      slotHashHex = synthetic.toString('hex');
+      ({ main, bonus } = lotteryDraw(serverSeed, padClientSeed32(clientSeed), synthetic, nonce));
     }
 
     const tickets = await this.prisma.lotteryTicket.findMany({
@@ -333,6 +366,7 @@ export class LotteryEngine implements OnModuleInit {
           status: 'drawn',
           mainNumbers: main,
           bonusNumber: bonus,
+          slotHash: slotHashHex,
           drawnAt: new Date(),
           revealTxSignature,
         },
@@ -382,6 +416,7 @@ export class LotteryEngine implements OnModuleInit {
       serverSeedHash: this.current.serverSeedHash,
       clientSeed: this.current.clientSeed,
       nonce: this.current.nonce,
+      slotHash: slotHashHex,
       winnersCount,
       freeTickets,
       revealTxSignature,

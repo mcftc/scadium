@@ -5,17 +5,20 @@ import { ShieldCheck, ExternalLink, Lock, Unlock } from 'lucide-react';
 import type { LotterySnapshot } from '@/hooks/use-lottery';
 
 /**
- * Provably-fair disclosure for the current lottery draw. The winning numbers
- * are committed (sha256(serverSeed)) the instant the draw opens and only the
- * commitment is public while tickets sell — the seed for the *previous* draw is
- * revealed so anyone can reproduce its result in the /fairness verifier.
+ * Provably-fair disclosure for the current lottery draw. The server seed is
+ * committed (sha256(serverSeed)) the instant the draw opens; the winning
+ * numbers additionally mix in a Solana slot hash that does not exist until
+ * draw time — so they CANNOT be known (or chosen) while tickets sell. The
+ * seed + slot hash for the *previous* draw are revealed so anyone can
+ * reproduce its result in the /fairness verifier.
  */
 export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
   if (!snap) return null;
   const last = snap.lastResult;
   const verifyHref = last
     ? `/fairness?game=lottery&clientSeed=${encodeURIComponent(last.clientSeed)}` +
-      `&nonce=${last.nonce}&commit=${last.serverSeedHash}&serverSeed=${last.serverSeed}`
+      `&nonce=${last.nonce}&commit=${last.serverSeedHash}&serverSeed=${last.serverSeed}` +
+      `&slotHash=${last.slotHash}`
     : '/fairness';
 
   return (
@@ -41,6 +44,7 @@ export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
             Previous draw revealed
           </div>
           <SeedRow label="Server seed (revealed)" value={last.serverSeed} />
+          <SeedRow label="Slot hash (draw-time entropy)" value={last.slotHash} />
           <Link
             href={verifyHref}
             className="flex items-center justify-center gap-1.5 w-full rounded-lg border border-primary-400/40 bg-primary-400/10 py-2 text-xs font-semibold text-primary-400 hover:bg-primary-400/20 transition-colors"
