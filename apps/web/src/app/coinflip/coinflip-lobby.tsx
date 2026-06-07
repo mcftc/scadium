@@ -1,21 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { CreateFlipForm } from './create-flip-form';
 import { OpenFlipsList } from './open-flips-list';
 import { RecentFlipsList } from './recent-flips-list';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { Button } from '@/components/ui/button';
-import { Wallet, Plus } from 'lucide-react';
-import { ChatPanel } from '@/components/chat/chat-panel';
+import { Plus } from 'lucide-react';
 
 /**
- * Solpump-inspired coinflip layout:
- * - Chat LEFT sidebar
- * - Center: title bar with stats + "Create Flip" CTA + tabs + game rows
- * - No separate column for create form — it's a modal/inline expansion
+ * solpump coinflip layout: title bar with stats + "Create Flip" CTA + tabs +
+ * game rows. Chat lives in the global left rail (AppShell).
  */
 export function CoinflipLobby() {
   const { isAuthenticated } = useWalletAuth();
@@ -24,16 +21,9 @@ export function CoinflipLobby() {
   const [showCreate, setShowCreate] = useState(false);
 
   return (
-    <div className="flex gap-4 -mx-4 sm:-mx-6 lg:-mx-8">
-      {/* LEFT: Chat */}
-      <div className="hidden lg:block w-[300px] shrink-0 pl-4 sm:pl-6 lg:pl-8">
-        <div className="sticky top-20 h-[calc(100vh-6rem)] rounded-2xl border border-border bg-surface/60 backdrop-blur-xl overflow-hidden">
-          <ChatPanel defaultOpen />
-        </div>
-      </div>
-
+    <div className="flex gap-4">
       {/* CENTER: Main content */}
-      <div className="flex-1 min-w-0 pr-4 sm:pr-6 lg:pr-8">
+      <div className="flex-1 min-w-0">
         {/* Header bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>

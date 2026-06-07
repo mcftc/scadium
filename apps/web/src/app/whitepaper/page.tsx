@@ -1,6 +1,4 @@
 import Link from 'next/link';
-import { Header } from '@/components/layout/header';
-import { Footer } from '@/components/layout/footer';
 import { Container } from '@/components/ui/container';
 
 export const metadata = { title: '$SCAD Whitepaper' };
@@ -12,11 +10,8 @@ export const metadata = { title: '$SCAD Whitepaper' };
  */
 export default function WhitepaperPage() {
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header />
-      <main className="flex-1">
-        <Container>
-          <div className="py-12 max-w-3xl mx-auto">
+    <Container>
+      <div className="py-12 max-w-3xl mx-auto">
             <h1 className="text-4xl md:text-5xl font-bold mb-10 text-center">
               <span className="text-gradient">$SCAD Whitepaper</span>
             </h1>
@@ -117,10 +112,7 @@ export default function WhitepaperPage() {
               </p>
             </Section>
           </div>
-        </Container>
-      </main>
-      <Footer />
-    </div>
+    </Container>
   );
 }
 

@@ -390,6 +390,19 @@ model AirdropEvent {
   claims AirdropClaim[]
 }
 
+// Accumulating pool for the CURRENT hour (solpump left-rail airdrop widget).
+// Survives API restarts because tips debit real play balances. One row per
+// hour (`period` = YYYYMMDDHH UTC); flipped to distributed by the engine.
+model AirdropPool {
+  id           String   @id @default(uuid()) @db.Uuid
+  period       String   @unique
+  baseLamports BigInt   @default(0)
+  tipLamports  BigInt   @default(0)
+  tipsCount    Int      @default(0)
+  distributed  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
 model AirdropClaim {
   id             String       @id @default(uuid()) @db.Uuid
   eventId        String       @db.Uuid

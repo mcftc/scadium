@@ -127,7 +127,13 @@ function ChatRow({ msg }: { msg: ChatMessage }) {
   const name = msg.user.username ?? shortAddress(msg.user.walletAddress);
   return (
     <div className="group px-2 py-1.5 rounded-lg hover:bg-surface-elevated/50">
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-baseline gap-1.5">
+        {/* solpump-style level badge */}
+        {msg.user.level !== undefined && (
+          <span className="shrink-0 rounded bg-surface-elevated px-1 py-px text-[9px] font-mono font-bold text-primary-300">
+            {msg.user.level}
+          </span>
+        )}
         <span
           className={cn(
             'text-xs font-semibold truncate',

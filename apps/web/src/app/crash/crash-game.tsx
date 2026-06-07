@@ -2,7 +2,6 @@
 
 import { Users } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { ChatPanel } from '@/components/chat/chat-panel';
 import { CrashCurve } from './crash-curve';
 import { CrashBetPanel } from './crash-bet-panel';
 import { CrashPlayersList } from './crash-players-list';
@@ -11,22 +10,14 @@ import { CrashFairness } from './crash-fairness';
 import { useCrash } from '@/hooks/use-crash';
 
 /**
- * Solpump-inspired layout: chat LEFT, game center (full immersion), bet
- * panel + players RIGHT. The crash visualization takes the lion's share
- * of the viewport for maximum visual impact.
+ * solpump layout: game center (full immersion), bet panel + players RIGHT.
+ * Chat lives in the global left rail (AppShell), not in this component.
  */
 export function CrashGame() {
   const { state } = useCrash();
 
   return (
-    <div className="flex gap-4 -mx-4 sm:-mx-6 lg:-mx-8">
-      {/* LEFT: Chat */}
-      <div className="hidden lg:block w-[300px] shrink-0 pl-4 sm:pl-6 lg:pl-8">
-        <div className="sticky top-20 h-[calc(100vh-6rem)] rounded-2xl border border-border bg-surface/60 backdrop-blur-xl overflow-hidden">
-          <ChatPanel defaultOpen />
-        </div>
-      </div>
-
+    <div className="flex gap-4">
       {/* CENTER: Game area */}
       <div className="flex-1 min-w-0 space-y-3">
         <CrashHistory history={state?.history ?? []} />

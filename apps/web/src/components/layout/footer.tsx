@@ -9,33 +9,39 @@ const footerSections = [
       { href: '/crash', label: 'Crash' },
       { href: '/coinflip', label: 'Coinflip' },
       { href: '/blackjack', label: 'Blackjack' },
+      { href: '/jackpot', label: 'Jackpot' },
+      { href: '/lottery', label: 'Lottery' },
     ],
   },
   {
-    title: 'Platform',
+    title: 'Features',
     links: [
-      { href: '/leaderboard', label: 'Leaderboard' },
       { href: '/affiliates', label: 'Affiliates' },
-      { href: '/airdrop', label: 'Airdrop' },
+      { href: '/profile', label: 'Statistics' },
+      { href: '/profile', label: 'Settings' },
       { href: '/token', label: '$SCAD' },
-      { href: '/trade', label: 'Buy & Sell' },
       { href: '/whitepaper', label: 'Whitepaper' },
+      { href: '/trade', label: 'Terminal' },
     ],
   },
   {
-    title: 'Trust',
+    title: 'Rewards',
     links: [
-      { href: '/fairness', label: 'Provably Fair' },
-      { href: '/faq', label: 'FAQ' },
-      { href: '/about', label: 'About' },
+      { href: '/airdrop', label: 'Daily Case' },
+      { href: '/airdrop', label: 'Airdrop' },
+      { href: '/leaderboard', label: 'Leaderboard' },
+      { href: '/fairness', label: 'Fairness' },
     ],
   },
   {
-    title: 'Legal',
+    title: 'Info',
     links: [
-      { href: '/tos', label: 'Terms of Service' },
-      { href: '/privacy', label: 'Privacy' },
+      { href: '/faq', label: 'Help' },
+      { href: '/tos', label: 'TOS' },
+      { href: '/about', label: 'About Us' },
       { href: '/aml', label: 'AML Policy' },
+      { href: '/privacy', label: 'Privacy' },
+      { href: '/faq', label: 'FAQ' },
     ],
   },
 ];
@@ -58,7 +64,7 @@ export function Footer() {
               </h4>
               <ul className="space-y-2">
                 {section.links.map((link) => (
-                  <li key={link.href}>
+                  <li key={link.label}>
                     <Link
                       href={link.href}
                       className="text-sm text-foreground hover:text-primary-400 transition-colors"

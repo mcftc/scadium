@@ -1,5 +1,3 @@
-import { Header } from '@/components/layout/header';
-import { Footer } from '@/components/layout/footer';
 import { Container } from '@/components/ui/container';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Flame } from 'lucide-react';
@@ -9,11 +7,8 @@ export const metadata = { title: '$SCAD Token' };
 
 export default function TokenPage() {
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header />
-      <main className="flex-1">
-        <Container>
-          <div className="py-12">
+    <Container>
+      <div className="py-12">
             <div className="mb-10 text-center">
               <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-surface border border-primary-400/30 mb-6">
                 <div className="h-1.5 w-1.5 rounded-full bg-primary-400 animate-pulse-glow" />
@@ -79,10 +74,7 @@ export default function TokenPage() {
               </Card>
             </div>
           </div>
-        </Container>
-      </main>
-      <Footer />
-    </div>
+    </Container>
   );
 }
 

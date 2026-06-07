@@ -1,5 +1,3 @@
-import { Header } from '@/components/layout/header';
-import { Footer } from '@/components/layout/footer';
 import { Container } from '@/components/ui/container';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerifierForm } from '@/components/fairness/verifier-form';
@@ -8,11 +6,8 @@ export const metadata = { title: 'Provably Fair' };
 
 export default function FairnessPage() {
   return (
-    <div className="flex min-h-screen flex-col">
-      <Header />
-      <main className="flex-1">
-        <Container>
-          <div className="py-12 max-w-3xl mx-auto">
+    <Container>
+      <div className="py-12 max-w-3xl mx-auto">
             <h1 className="text-4xl md:text-5xl font-bold mb-4">
               Provably <span className="text-gradient">fair</span>
             </h1>
@@ -84,9 +79,6 @@ return floor((100 * e - h) / (e - h)) / 100`}
               </CardContent>
             </Card>
           </div>
-        </Container>
-      </main>
-      <Footer />
-    </div>
+    </Container>
   );
 }

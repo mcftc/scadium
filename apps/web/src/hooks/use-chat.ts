@@ -14,6 +14,7 @@ export interface ChatMessage {
     username: string | null;
     walletAddress: string;
     role: 'user' | 'moderator' | 'admin';
+    level?: number;
   };
 }
 

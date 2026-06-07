@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Loader2, User } from 'lucide-react';
 import { Card as UICard } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ChatPanel } from '@/components/chat/chat-panel';
 import { CardFace } from './card-face';
 import {
   useBlackjackActive,
@@ -46,16 +45,9 @@ export function BlackjackTable() {
   const hasHand = !!state && state.phase !== 'settled';
 
   return (
-    <div className="flex gap-4 -mx-4 sm:-mx-6 lg:-mx-8">
-      {/* LEFT: Chat */}
-      <div className="hidden lg:block w-[300px] shrink-0 pl-4 sm:pl-6 lg:pl-8">
-        <div className="sticky top-20 h-[calc(100vh-6rem)] rounded-2xl border border-border bg-surface/60 backdrop-blur-xl overflow-hidden">
-          <ChatPanel defaultOpen />
-        </div>
-      </div>
-
-      {/* CENTER: Table */}
-      <div className="flex-1 min-w-0 pr-4 sm:pr-6 lg:pr-8 space-y-4">
+    <div className="flex gap-4">
+      {/* CENTER: Table — chat lives in the global left rail (AppShell). */}
+      <div className="flex-1 min-w-0 space-y-4">
         <div className="text-center mb-2">
           <h1 className="text-2xl font-black tracking-tight">SOLANA BLACKJACK</h1>
         </div>

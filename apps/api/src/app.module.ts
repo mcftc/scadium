@@ -19,6 +19,7 @@ import { AdminModule } from './admin/admin.module';
 import { SolanaModule } from './solana/solana.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { SwapModule } from './swap/swap.module';
+import { PlatformModule } from './platform/platform.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { SwapModule } from './swap/swap.module';
     SwapModule,
     AffiliatesModule,
     AdminModule,
+    PlatformModule,
   ],
   controllers: [HealthController],
 })

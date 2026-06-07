@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CHAT } from '@scadium/shared';
+import { xpInfo } from '../users/users.service';
 
 /**
  * Persistent chat backing store. The gateway delegates all moderation,
@@ -28,7 +29,15 @@ export class ChatService {
       orderBy: { createdAt: 'desc' },
       take: Math.min(Math.max(limit, 1), 200),
       include: {
-        user: { select: { id: true, username: true, walletAddress: true, role: true } },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            walletAddress: true,
+            role: true,
+            totalWagered: true,
+          },
+        },
       },
     });
     return rows.reverse().map((m) => this.serialize(m));
@@ -54,7 +63,15 @@ export class ChatService {
     const row = await this.prisma.chatMessage.create({
       data: { userId: params.userId, body },
       include: {
-        user: { select: { id: true, username: true, walletAddress: true, role: true } },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            walletAddress: true,
+            role: true,
+            totalWagered: true,
+          },
+        },
       },
     });
 
@@ -98,6 +115,7 @@ export class ChatService {
       username: string | null;
       walletAddress: string;
       role: 'user' | 'moderator' | 'admin';
+      totalWagered: bigint;
     };
   }) {
     return {
@@ -109,6 +127,8 @@ export class ChatService {
         username: row.user.username,
         walletAddress: row.user.walletAddress,
         role: row.user.role,
+        // solpump-style level badge next to the name.
+        level: xpInfo(row.user.totalWagered).level,
       },
     };
   }

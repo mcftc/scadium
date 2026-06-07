@@ -72,6 +72,11 @@ export class BlackjackService {
     return this.serialize(s);
   }
 
+  /** Number of hands currently in play — header "Games" dropdown live counter. */
+  activeCount(): number {
+    return this.active.size;
+  }
+
   async start(params: { userId: string; amountLamports: bigint }) {
     if (
       params.amountLamports < BigInt(BLACKJACK.MIN_BET_LAMPORTS) ||
