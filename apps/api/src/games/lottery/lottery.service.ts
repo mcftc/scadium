@@ -232,9 +232,23 @@ export class LotteryService {
     };
   }
 
-  async myTickets(userId: string, limit = 20) {
+  /**
+   * bc.game-style "game number": the draw's wall-clock time (UTC+3, same zone
+   * as the draw schedule) formatted as YYYYMMDDHHMMSS. Computed server-side —
+   * the web bundle can't import runtime values from @scadium/shared.
+   */
+  private gameNumber(drawAt: Date): string {
+    const local = new Date(drawAt.getTime() + LOTTERY.DRAW_TZ_OFFSET_MINUTES * 60_000);
+    const p = (n: number, w = 2) => String(n).padStart(w, '0');
+    return (
+      `${local.getUTCFullYear()}${p(local.getUTCMonth() + 1)}${p(local.getUTCDate())}` +
+      `${p(local.getUTCHours())}${p(local.getUTCMinutes())}${p(local.getUTCSeconds())}`
+    );
+  }
+
+  async myTickets(userId: string, limit = 20, wonOnly = false) {
     const tickets = await this.prisma.lotteryTicket.findMany({
-      where: { userId },
+      where: { userId, ...(wonOnly ? { won: true } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: { draw: true },
@@ -242,6 +256,7 @@ export class LotteryService {
     return tickets.map((t) => ({
       id: t.id,
       drawId: t.drawId,
+      gameNumber: this.gameNumber(t.draw.drawAt),
       mainNumbers: t.mainNumbers,
       bonusNumber: t.bonusNumber,
       costLamports: t.costLamports.toString(),
@@ -261,6 +276,113 @@ export class LotteryService {
     }));
   }
 
+  /** Per-user lifetime lottery stats for the My Bets header cards. */
+  async myStats(userId: string) {
+    const [totalTickets, winningTickets, prizeSum] = await Promise.all([
+      this.prisma.lotteryTicket.count({ where: { userId } }),
+      this.prisma.lotteryTicket.count({ where: { userId, won: true } }),
+      this.prisma.lotteryTicket.aggregate({
+        where: { userId },
+        _sum: { payoutUsdtBase: true },
+      }),
+    ]);
+    return {
+      totalTickets,
+      winningTickets,
+      totalPrizeUsd:
+        Number(prizeSum._sum.payoutUsdtBase ?? BigInt(0)) / 10 ** LOTTERY.USDT_DECIMALS,
+    };
+  }
+
+  /**
+   * bc.game Results tab: one round's winning numbers, sale/winner tallies and
+   * the public winners list (player display follows the leaderboard precedent:
+   * username or truncated wallet). Public endpoint — the server seed is only
+   * exposed once the draw has been revealed.
+   */
+  async drawResults(drawIndex: bigint, winnersLimit = 50) {
+    const draw = await this.prisma.lotteryDraw.findUnique({
+      where: { drawIndex },
+      include: { seed: true },
+    });
+    if (!draw) throw new NotFoundException('Draw not found');
+
+    const drawn = draw.status === 'drawn';
+    const [winnersCount, winners] = await Promise.all([
+      this.prisma.lotteryTicket.count({ where: { drawId: draw.id, won: true } }),
+      this.prisma.lotteryTicket.findMany({
+        where: { drawId: draw.id, won: true },
+        orderBy: { payoutUsdtBase: 'desc' },
+        take: winnersLimit,
+        include: {
+          user: { select: { username: true, walletAddress: true, avatarUrl: true } },
+        },
+      }),
+    ]);
+
+    return {
+      drawId: draw.id,
+      drawIndex: draw.drawIndex?.toString() ?? null,
+      gameNumber: this.gameNumber(draw.drawAt),
+      status: draw.status,
+      drawAt: draw.drawAt.toISOString(),
+      drawnAt: draw.drawnAt?.toISOString() ?? null,
+      mainNumbers: draw.mainNumbers,
+      bonusNumber: draw.bonusNumber,
+      ticketCount: draw.ticketCount,
+      potLamports: draw.potLamports.toString(),
+      commitTxSignature: draw.commitTxSignature,
+      revealTxSignature: draw.revealTxSignature,
+      serverSeed: drawn ? draw.seed.serverSeed : null,
+      serverSeedHash: draw.seed.serverSeedHash,
+      clientSeed: draw.seed.clientSeed,
+      nonce: draw.nonce,
+      slotHash: draw.slotHash,
+      winnersCount,
+      winners: winners.map((t) => ({
+        player: {
+          username: t.user.username,
+          walletAddress: t.user.walletAddress,
+          avatarUrl: t.user.avatarUrl,
+        },
+        mainNumbers: t.mainNumbers,
+        bonusNumber: t.bonusNumber,
+        matchedMain: t.matchedMain,
+        matchedBonus: t.matchedBonus,
+        tier: t.tier,
+        payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+      })),
+    };
+  }
+
+  /** bc.game Jackpot Winners tab: historical grand-prize winners. */
+  async jackpotWinners(limit = 50) {
+    const tickets = await this.prisma.lotteryTicket.findMany({
+      where: { tier: 'grand' },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        user: { select: { username: true, walletAddress: true, avatarUrl: true } },
+        draw: true,
+      },
+    });
+    return tickets.map((t) => ({
+      drawIndex: t.draw.drawIndex?.toString() ?? null,
+      gameNumber: this.gameNumber(t.draw.drawAt),
+      drawnAt: t.draw.drawnAt?.toISOString() ?? null,
+      player: {
+        username: t.user.username,
+        walletAddress: t.user.walletAddress,
+        avatarUrl: t.user.avatarUrl,
+      },
+      mainNumbers: t.mainNumbers,
+      bonusNumber: t.bonusNumber,
+      matchedMain: t.matchedMain,
+      matchedBonus: t.matchedBonus,
+      payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+    }));
+  }
+
   async recentDraws(limit = 10) {
     const draws = await this.prisma.lotteryDraw.findMany({
       where: { status: 'drawn' },
@@ -271,6 +393,7 @@ export class LotteryService {
     return draws.map((d) => ({
       id: d.id,
       drawIndex: d.drawIndex?.toString() ?? null,
+      gameNumber: this.gameNumber(d.drawAt),
       commitTxSignature: d.commitTxSignature,
       revealTxSignature: d.revealTxSignature,
       mainNumbers: d.mainNumbers,

@@ -52,6 +52,7 @@ interface LastResult {
   slotHash: string; // hex — third entropy input, needed by the verifier
   winnersCount: number;
   freeTickets: number;
+  topPrizeUsd: number; // biggest single-ticket payout of the round (header banner)
   revealTxSignature: string | null;
   drawnAt: number;
 }
@@ -118,6 +119,12 @@ export class LotteryEngine implements OnModuleInit {
       potLamports: this.current.potLamports.toString(),
       ticketPriceUsd: LOTTERY.TICKET_PRICE_USD,
       ticketPriceUsdtBase: LOTTERY.TICKET_PRICE_USDT_BASE.toString(),
+      // bc.game header: "Latest Winning Prize" — biggest payout of the last
+      // settled round, or the grand prize when nobody has won yet.
+      latestWinningPrizeUsd:
+        this.lastResult && this.lastResult.topPrizeUsd > 0
+          ? this.lastResult.topPrizeUsd
+          : LOTTERY.PRIZES_USD.grand,
       commitTxSignature: this.current.commitTxSignature,
       chain: {
         enabled: this.chain.lotteryEnabled,
@@ -134,7 +141,7 @@ export class LotteryEngine implements OnModuleInit {
         // import runtime values from @scadium/shared (webpack interop).
         ticketPresets: LOTTERY.TICKET_COUNT_PRESETS,
         batchTicketsPerTx: LOTTERY.BATCH_TICKETS_PER_TX,
-        maxBulkPerSubmit: LOTTERY.MAX_BATCH_TICKETS_PER_SUBMIT,
+        maxManualRows: LOTTERY.MAX_MANUAL_ROWS,
       },
       lastResult: this.lastResult,
     };
@@ -267,6 +274,7 @@ export class LotteryEngine implements OnModuleInit {
     });
 
     let winnersCount = 0;
+    let topPrizeUsdtBase = BigInt(0);
     const freeTickets = 0; // zero-match rule removed — free tickets now come from wager loyalty
     const ops: Promise<unknown>[] = [];
     const prizeJobs: {
@@ -287,6 +295,7 @@ export class LotteryEngine implements OnModuleInit {
       const prizeUsdtBase = lotteryPrizeUsdtBase(tier);
       const won = prizeUsdtBase > BigInt(0);
       if (won) winnersCount += 1;
+      if (prizeUsdtBase > topPrizeUsdtBase) topPrizeUsdtBase = prizeUsdtBase;
 
       // Ledger equivalents in lamports (real prizes move in USDT on-chain).
       const payoutLamportsEq =
@@ -419,6 +428,7 @@ export class LotteryEngine implements OnModuleInit {
       slotHash: slotHashHex,
       winnersCount,
       freeTickets,
+      topPrizeUsd: Number(topPrizeUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
       revealTxSignature,
       drawnAt: Date.now(),
     };

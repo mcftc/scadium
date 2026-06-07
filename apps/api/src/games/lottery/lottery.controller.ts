@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsString, Length } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -26,15 +35,44 @@ export class LotteryController {
   @Get('recent')
   @ApiOperation({ summary: 'Recent resolved draws with revealed seeds' })
   recent(@Query('limit') limit?: string) {
-    return this.lottery.recentDraws(limit ? Math.min(50, Number(limit)) : 10);
+    return this.lottery.recentDraws(limit ? Math.min(100, Number(limit)) : 10);
+  }
+
+  @Get('draws/:drawIndex/results')
+  @ApiOperation({ summary: 'One round: winning numbers, tallies and the public winners list' })
+  drawResults(@Param('drawIndex') drawIndex: string) {
+    if (!/^\d+$/.test(drawIndex)) throw new BadRequestException('Invalid draw index');
+    return this.lottery.drawResults(BigInt(drawIndex));
+  }
+
+  @Get('jackpot-winners')
+  @ApiOperation({ summary: 'Historical grand-prize (jackpot) winners' })
+  jackpotWinners(@Query('limit') limit?: string) {
+    return this.lottery.jackpotWinners(limit ? Math.min(100, Number(limit)) : 50);
+  }
+
+  @Get('my-stats')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'The caller’s lifetime lottery stats (My Bets cards)' })
+  myStats(@CurrentUser() user: AuthContextLike) {
+    return this.lottery.myStats(user.userId);
   }
 
   @Get('my-tickets')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'The caller’s recent lottery tickets' })
-  myTickets(@CurrentUser() user: AuthContextLike, @Query('limit') limit?: string) {
-    return this.lottery.myTickets(user.userId, limit ? Math.min(50, Number(limit)) : 20);
+  myTickets(
+    @CurrentUser() user: AuthContextLike,
+    @Query('limit') limit?: string,
+    @Query('won') won?: string,
+  ) {
+    return this.lottery.myTickets(
+      user.userId,
+      limit ? Math.min(50, Number(limit)) : 20,
+      won === 'true',
+    );
   }
 
   @Post('ticket')

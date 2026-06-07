@@ -5,13 +5,15 @@ import { formatUsd } from '@/lib/format';
 import { LotteryBalls } from './lottery-balls';
 import { cn } from '@/lib/cn';
 
-export function MyTickets({ priceUsd }: { priceUsd: number }) {
+/** Caller's tickets; `onlyOpen` narrows to the current (undrawn) draw. */
+export function MyTickets({ onlyOpen = false }: { onlyOpen?: boolean }) {
   const { data, isLoading } = useMyLotteryTickets();
 
   if (isLoading) {
     return <div className="py-6 text-center text-xs text-foreground-muted">Loading…</div>;
   }
-  if (!data || data.length === 0) {
+  const tickets = (data ?? []).filter((t) => !onlyOpen || t.drawStatus === 'open');
+  if (tickets.length === 0) {
     return (
       <div className="py-6 text-center text-xs text-foreground-muted">
         No tickets yet. Pick your numbers and enter the draw.
@@ -21,9 +23,9 @@ export function MyTickets({ priceUsd }: { priceUsd: number }) {
 
   return (
     <div className="space-y-2">
-      {data.map((t) => {
+      {tickets.map((t) => {
         const settled = t.drawStatus === 'drawn';
-        const won = settled && t.won && BigInt(t.payoutLamports) > BigInt(0);
+        const won = settled && t.won && t.payoutUsd > 0;
         return (
           <div
             key={t.id}
@@ -49,11 +51,7 @@ export function MyTickets({ priceUsd }: { priceUsd: number }) {
                   <span className="text-foreground-muted">pending</span>
                 ) : won ? (
                   <span className="text-success font-semibold">
-                    +
-                    {formatUsd(
-                      (Number(t.payoutLamports) / Number(t.costLamports || 1)) * priceUsd,
-                    )}{' '}
-                    USDT
+                    +{formatUsd(t.payoutUsd)} USDT
                   </span>
                 ) : (
                   <span className="text-foreground-muted">no win</span>

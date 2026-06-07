@@ -1,11 +1,11 @@
 import { Header } from '@/components/layout/header';
 import { GameFooter } from '@/components/layout/game-footer';
 import { Container } from '@/components/ui/container';
-import { LotteryGame } from './lottery-game';
+import { MyBets } from './my-bets';
 
-export const metadata = { title: 'Lottery' };
+export const metadata = { title: 'My Lottery Bets' };
 
-export default function LotteryPage() {
+export default function MyLotteryBetsPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
@@ -14,14 +14,11 @@ export default function LotteryPage() {
           <div className="py-6">
             <div className="mb-5">
               <h1 className="text-2xl md:text-3xl font-bold">
-                <span className="text-gradient">Lottery</span>{' '}
-                <span className="text-foreground-muted text-base font-normal">5 of 36 + 1 of 10</span>
+                <span className="text-gradient">My Bets</span>{' '}
+                <span className="text-foreground-muted text-base font-normal">Lottery</span>
               </h1>
-              <p className="text-sm text-foreground-muted mt-1">
-                Provably-fair draws every 8 hours — 04:00, 12:00 &amp; 20:00. Match more numbers, win more.
-              </p>
             </div>
-            <LotteryGame />
+            <MyBets />
           </div>
         </Container>
       </main>

@@ -35,6 +35,7 @@ export interface LotterySnapshot {
   potLamports: string;
   ticketPriceUsd: number;
   ticketPriceUsdtBase: string;
+  latestWinningPrizeUsd: number;
   commitTxSignature: string | null;
   chain: { enabled: boolean; programId: string | null; usdtMint: string | null };
   config: {
@@ -47,7 +48,7 @@ export interface LotterySnapshot {
     // runtime values from @scadium/shared).
     ticketPresets?: number[];
     batchTicketsPerTx?: number;
-    maxBulkPerSubmit?: number;
+    maxManualRows?: number;
   };
   lastResult: LotteryLastResult | null;
 }
@@ -55,12 +56,16 @@ export interface LotterySnapshot {
 export interface MyLotteryTicket {
   id: string;
   drawId: string;
+  gameNumber: string;
   mainNumbers: number[];
   bonusNumber: number;
   costLamports: string;
   matchedMain: number;
   matchedBonus: number;
   payoutLamports: string;
+  payoutUsd: number;
+  tier: string | null;
+  free: boolean;
   won: boolean;
   drawStatus: 'open' | 'drawn';
   drawMain: number[];
@@ -68,8 +73,66 @@ export interface MyLotteryTicket {
   createdAt: string;
 }
 
+export interface LotteryPlayer {
+  username: string | null;
+  walletAddress: string;
+  avatarUrl: string | null;
+}
+
+export interface DrawWinner {
+  player: LotteryPlayer;
+  mainNumbers: number[];
+  bonusNumber: number;
+  matchedMain: number;
+  matchedBonus: number;
+  tier: string | null;
+  payoutUsd: number;
+}
+
+export interface DrawResults {
+  drawId: string;
+  drawIndex: string | null;
+  gameNumber: string;
+  status: 'open' | 'drawn';
+  drawAt: string;
+  drawnAt: string | null;
+  mainNumbers: number[];
+  bonusNumber: number | null;
+  ticketCount: number;
+  potLamports: string;
+  commitTxSignature: string | null;
+  revealTxSignature: string | null;
+  serverSeed: string | null;
+  serverSeedHash: string;
+  clientSeed: string;
+  nonce: number;
+  slotHash: string | null;
+  winnersCount: number;
+  winners: DrawWinner[];
+}
+
+export interface JackpotWinnerRow {
+  drawIndex: string | null;
+  gameNumber: string;
+  drawnAt: string | null;
+  player: LotteryPlayer;
+  mainNumbers: number[];
+  bonusNumber: number;
+  matchedMain: number;
+  matchedBonus: number;
+  payoutUsd: number;
+}
+
+export interface MyLotteryStats {
+  totalTickets: number;
+  winningTickets: number;
+  totalPrizeUsd: number;
+}
+
 export interface LotteryDrawRow {
   id: string;
+  drawIndex: string | null;
+  gameNumber: string;
   mainNumbers: number[];
   bonusNumber: number | null;
   ticketCount: number;
@@ -101,6 +164,9 @@ export function useLottery() {
       refetch();
       qc.invalidateQueries({ queryKey: ['lottery', 'my-tickets'] });
       qc.invalidateQueries({ queryKey: ['lottery', 'recent'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'results'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'jackpot-winners'] });
+      qc.invalidateQueries({ queryKey: ['lottery', 'my-stats'] });
       qc.invalidateQueries({ queryKey: ['me'] });
     };
     socket.on('lottery:draw-open', refetch);
@@ -309,19 +375,52 @@ export function useUsdtFaucet() {
   });
 }
 
-export function useMyLotteryTickets() {
+export function useMyLotteryTickets(limit = 20, wonOnly = false) {
   const token = useAuthStore((s) => s.accessToken);
   return useQuery({
-    queryKey: ['lottery', 'my-tickets'],
+    queryKey: ['lottery', 'my-tickets', limit, wonOnly],
     enabled: !!token,
-    queryFn: () => api<MyLotteryTicket[]>('/lottery/my-tickets', { token }),
+    queryFn: () =>
+      api<MyLotteryTicket[]>(
+        `/lottery/my-tickets?limit=${limit}${wonOnly ? '&won=true' : ''}`,
+        { token },
+      ),
   });
 }
 
-export function useRecentDraws() {
+export function useRecentDraws(limit = 10) {
   return useQuery({
-    queryKey: ['lottery', 'recent'],
-    queryFn: () => api<LotteryDrawRow[]>('/lottery/recent'),
+    queryKey: ['lottery', 'recent', limit],
+    queryFn: () => api<LotteryDrawRow[]>(`/lottery/recent?limit=${limit}`),
     staleTime: 15_000,
+  });
+}
+
+/** One round's full results (winning numbers + public winners list). */
+export function useDrawResults(drawIndex: string | null) {
+  return useQuery({
+    queryKey: ['lottery', 'results', drawIndex],
+    enabled: !!drawIndex,
+    queryFn: () => api<DrawResults>(`/lottery/draws/${drawIndex}/results`),
+    staleTime: 15_000,
+  });
+}
+
+/** Historical grand-prize winners (Jackpot Winners tab). */
+export function useJackpotWinners() {
+  return useQuery({
+    queryKey: ['lottery', 'jackpot-winners'],
+    queryFn: () => api<JackpotWinnerRow[]>('/lottery/jackpot-winners'),
+    staleTime: 30_000,
+  });
+}
+
+/** The caller's lifetime lottery stats (My Bets cards). */
+export function useMyLotteryStats() {
+  const token = useAuthStore((s) => s.accessToken);
+  return useQuery({
+    queryKey: ['lottery', 'my-stats'],
+    enabled: !!token,
+    queryFn: () => api<MyLotteryStats>('/lottery/my-stats', { token }),
   });
 }
