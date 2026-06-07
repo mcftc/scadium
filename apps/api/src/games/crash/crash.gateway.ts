@@ -29,8 +29,9 @@ export class CrashGateway {
     this.server.emit('crash:round-start', payload);
   }
 
-  emitRunning(roundId: string, bustPoint: number) {
-    // Don't leak the bust point to clients — only notify that running began
+  emitRunning(roundId: string) {
+    // The bust point is intentionally NOT part of this payload — it must
+    // stay secret until the round resolves.
     this.server.emit('crash:running', { roundId });
   }
 

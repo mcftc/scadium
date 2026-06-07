@@ -45,16 +45,25 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
   // `select()` only sets the active wallet on the *next* render — calling
   // connect() synchronously after it throws WalletNotSelectedError. So we wait
   // until the chosen wallet is actually selected, then connect exactly once.
+  //
+  // The connect() call is deferred a tick: this child effect runs *before* the
+  // WalletProvider re-attaches its 'connect' listener to the newly selected
+  // adapter, and wallets that connect synchronously (the burner) emit 'connect'
+  // during connect() itself — the event would be lost and `connected` would
+  // never flip, leaving the modal stuck on "Connecting…".
   useEffect(() => {
     if (!open || step !== 'connecting') return;
     if (!wallet || connected || connecting) return;
     if (connectStartedRef.current) return;
-    connectStartedRef.current = true;
-    connect().catch((e) => {
-      connectStartedRef.current = false;
-      setStep('error');
-      setError(e instanceof Error ? e.message : 'Failed to connect to wallet');
-    });
+    const t = setTimeout(() => {
+      connectStartedRef.current = true;
+      connect().catch((e) => {
+        connectStartedRef.current = false;
+        setStep('error');
+        setError(e instanceof Error ? e.message : 'Failed to connect to wallet');
+      });
+    }, 0);
+    return () => clearTimeout(t);
   }, [open, step, wallet, connected, connecting, connect]);
 
   // After the wallet adapter reports `connected: true`, kick off SIWS

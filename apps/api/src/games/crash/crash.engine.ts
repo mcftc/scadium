@@ -219,7 +219,7 @@ export class CrashEngine implements OnModuleInit {
       where: { id: this.current.id },
       data: { status: 'running', startedAt: new Date(this.current.startedAt) },
     });
-    this.gateway.emitRunning(this.current.id, this.current.bustPoint);
+    this.gateway.emitRunning(this.current.id);
 
     // Tick loop at 20 Hz — server authoritative
     const tickInterval = 1000 / CRASH.TICK_RATE_HZ;
