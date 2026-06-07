@@ -37,6 +37,26 @@ export class CrashController {
     });
   }
 
+  @Post('schedule')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Queue a bet for the next round (debited now, auto-placed later)' })
+  scheduleBet(@CurrentUser() user: AuthContextLike, @Body() dto: PlaceCrashBetDto) {
+    return this.crash.scheduleBet({
+      userId: user.userId,
+      amountLamports: BigInt(dto.amountLamports),
+      autoCashout: dto.autoCashout ?? null,
+    });
+  }
+
+  @Post('schedule/cancel')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Cancel the queued next-round bet and refund the stake' })
+  cancelScheduled(@CurrentUser() user: AuthContextLike) {
+    return this.crash.cancelScheduled(user.userId);
+  }
+
   @Post('cashout')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)

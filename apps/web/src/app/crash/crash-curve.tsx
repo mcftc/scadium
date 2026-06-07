@@ -2,18 +2,28 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useRef, useState, useMemo } from 'react';
-import type { CrashSnapshot } from '@/hooks/use-crash';
+import type { CrashBet, CrashCashoutMarker, CrashSnapshot } from '@/hooks/use-crash';
 import { cn } from '@/lib/cn';
+import { CrashRocket } from './crash-rocket';
 
 /**
- * Immersive crash visualizer matching solpump.io:
- *  - 3D perspective grid (Tron-style receding floor)
- *  - Rocket emoji traveling along a neon curve
- *  - "CURRENT PAYOUT" + giant multiplier centered
- *  - Big countdown with "NEW ROUND / STARTING" during wait
- *  - Red flash on bust
+ * Immersive crash visualizer (solpump structure, our scene):
+ *  - starfield + 3D perspective grid receding floor
+ *  - our own SVG rocket riding a neon curve, flickering thruster
+ *  - "CURRENT PAYOUT" + giant multiplier + the player's live profit chip
+ *  - big countdown with "NEW ROUND / STARTING" during the wait
+ *  - cashout markers pinned to the curve where players exited
+ *  - multi-layer explosion (shockwave + sparks + flash) on bust
  */
-export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
+export function CrashCurve({
+  state,
+  cashouts = [],
+  myBet = null,
+}: {
+  state: CrashSnapshot | null;
+  cashouts?: CrashCashoutMarker[];
+  myBet?: CrashBet | null;
+}) {
   const [countdown, setCountdown] = useState(20);
 
   useEffect(() => {
@@ -38,8 +48,20 @@ export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
   const waiting = state.phase === 'waiting';
   const running = state.phase === 'running';
 
+  // Live profit for MY bet: cash value now (remaining × m + realized payouts)
+  // minus the original wager. Hidden when I'm not in the round.
+  let myProfitSol: number | null = null;
+  if (running && myBet && myBet.originalAmountLamports) {
+    const remaining = Number(BigInt(myBet.amountLamports)) / 1e9;
+    const realized = Number(BigInt(myBet.payoutLamports ?? '0')) / 1e9;
+    const original = Number(BigInt(myBet.originalAmountLamports)) / 1e9;
+    myProfitSol = remaining * m + realized - original;
+  }
+
   return (
     <div className="absolute inset-0 bg-[#080818] overflow-hidden">
+      <Starfield speeding={running} />
+
       {/* 3D Perspective Grid Floor */}
       <PerspectiveGrid />
 
@@ -55,11 +77,24 @@ export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
         )}
       />
 
+      {/* Screen flash on bust */}
+      <AnimatePresence>
+        {busted && (
+          <motion.div
+            key={`flash-${state.roundId}`}
+            initial={{ opacity: 0.55 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="absolute inset-0 z-[12] pointer-events-none bg-red-500/60"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Multiplier ruler + horizontal grid lines */}
       <MultiplierRuler multiplier={m} phase={state.phase} />
 
       {/* Crash curve + rocket (only when running or busted) */}
-      {(running || busted) && <CrashTrail multiplier={m} busted={busted} />}
+      {(running || busted) && <CrashTrail multiplier={m} busted={busted} cashouts={cashouts} />}
 
       {/* Center display */}
       <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
@@ -125,6 +160,19 @@ export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
               >
                 {m.toFixed(2)}x
               </motion.div>
+              {/* My live profit (solpump green chip under the payout) */}
+              {myProfitSol !== null && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-3 inline-flex items-center gap-1 rounded-lg bg-emerald-500/15 border border-emerald-400/40 px-3 py-1"
+                >
+                  <span className="font-mono text-base md:text-xl font-bold text-emerald-400">
+                    {myProfitSol >= 0 ? '+' : ''}
+                    {myProfitSol.toFixed(4)} SOL
+                  </span>
+                </motion.div>
+              )}
             </motion.div>
           )}
 
@@ -148,6 +196,43 @@ export function CrashCurve({ state }: { state: CrashSnapshot | null }) {
           )}
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Two parallax star layers (CSS radial-gradient dots, no assets). The layers
+ * drift slowly while idle and streak downward-left while running to sell the
+ * rocket's speed.
+ */
+function Starfield({ speeding }: { speeding: boolean }) {
+  const layer = (size: number, alpha: number) => ({
+    backgroundImage: `
+      radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,${alpha}) 50%, transparent 50%),
+      radial-gradient(1.5px 1.5px at 60% 10%, rgba(255,255,255,${alpha * 0.9}) 50%, transparent 50%),
+      radial-gradient(1px 1px at 80% 50%, rgba(200,210,255,${alpha}) 50%, transparent 50%),
+      radial-gradient(1.2px 1.2px at 35% 70%, rgba(255,255,255,${alpha * 0.7}) 50%, transparent 50%),
+      radial-gradient(1px 1px at 90% 85%, rgba(220,200,255,${alpha * 0.8}) 50%, transparent 50%),
+      radial-gradient(1.4px 1.4px at 10% 90%, rgba(255,255,255,${alpha * 0.6}) 50%, transparent 50%),
+      radial-gradient(1px 1px at 50% 45%, rgba(255,255,255,${alpha * 0.5}) 50%, transparent 50%)
+    `,
+    backgroundSize: `${size}px ${size}px`,
+  });
+
+  return (
+    <div className="absolute inset-0 z-0 pointer-events-none">
+      <motion.div
+        className="absolute -inset-[40%]"
+        style={layer(280, 0.5)}
+        animate={speeding ? { x: [-0, -160], y: [0, 120] } : { x: [0, -20], y: [0, 10] }}
+        transition={{ duration: speeding ? 6 : 60, repeat: Infinity, ease: 'linear' }}
+      />
+      <motion.div
+        className="absolute -inset-[40%]"
+        style={layer(180, 0.3)}
+        animate={speeding ? { x: [0, -260], y: [0, 200] } : { x: [0, -32], y: [0, 16] }}
+        transition={{ duration: speeding ? 4 : 45, repeat: Infinity, ease: 'linear' }}
+      />
     </div>
   );
 }
@@ -182,17 +267,25 @@ function PerspectiveGrid() {
 }
 
 /**
- * SVG crash curve with a rocket at the tip and a neon trail.
+ * SVG crash curve with our rocket at the tip and a neon trail.
  *
  * The real game grows the multiplier exponentially in time
  * (`m(t) = GROWTH_RATE^(t/10)`), so to render the characteristic upward-
  * accelerating "hockey stick" we plot TIME on x and the MULTIPLIER on y:
  *   x ∝ ln(m)   (elapsed time is proportional to ln of the multiplier)
  *   y ∝ m       (linear in the multiplier value)
- * which makes screen-y ∝ e^x — a curve that bends sharply upward, exactly
- * like solpump. The y-axis auto-ranges so the rocket floats ~70% up.
+ * which makes screen-y ∝ e^x — a curve that bends sharply upward. The
+ * y-axis auto-ranges so the rocket floats ~70% up.
  */
-function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolean }) {
+function CrashTrail({
+  multiplier,
+  busted,
+  cashouts,
+}: {
+  multiplier: number;
+  busted: boolean;
+  cashouts: CrashCashoutMarker[];
+}) {
   // Measure the (non-uniformly stretched) plot in real pixels so the rocket can
   // be rotated to the *visual* tangent of the curve, not the viewBox tangent.
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -208,11 +301,18 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
     return () => ro.disconnect();
   }, []);
 
+  // Shared axis scaling — also used to pin cashout markers onto the curve.
+  const m = Math.max(1.0001, multiplier);
+  const yMax = Math.max(2, m * 1.45); // headroom so the tip sits ~69% up
+  const xRef = Math.max(2.2, m * 1.5); // time scale → keeps rocket off the edge
+  const lnX = Math.log(xRef);
+  const toXY = (v: number) => {
+    const fx = Math.min(0.84, Math.log(Math.max(1.0001, v)) / lnX);
+    const fy = Math.max(1.0001, v) / yMax;
+    return { x: 6 + fx * 82, y: 94 - fy * 84 };
+  };
+
   const points = useMemo(() => {
-    const m = Math.max(1.0001, multiplier);
-    const yMax = Math.max(2, m * 1.45); // headroom so the tip sits ~69% up
-    const xRef = Math.max(2.2, m * 1.5); // time scale → keeps rocket off the edge
-    const lnX = Math.log(xRef);
     const pts: { x: number; y: number }[] = [];
     const steps = 72;
     for (let i = 0; i <= steps; i++) {
@@ -220,11 +320,10 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
       // path leaves the floor nearly horizontal (a launch ramp) and rears up
       // toward vertical as the multiplier climbs.
       const v = Math.pow(m, i / steps);
-      const fx = Math.min(0.84, Math.log(v) / lnX);
-      const fy = v / yMax;
-      pts.push({ x: 6 + fx * 82, y: 94 - fy * 84 });
+      pts.push(toXY(v));
     }
     return pts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiplier]);
 
   const last = points[points.length - 1];
@@ -243,9 +342,6 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
   const glowColor = busted ? 'rgba(239,68,68,0.45)' : 'rgba(34,211,238,0.3)';
 
   const ptsStr = (arr: { x: number; y: number }[]) => arr.map((p) => `${p.x},${p.y}`).join(' ');
-  // Warm exhaust flame = the trailing slice of the curve, layered brightest at
-  // the rocket. Because it's the tail of the same path it follows and steepens
-  // with the curve automatically.
   const n = points.length;
   // Exhaust plume: a billowing smoke base, then a fat fire body tapering to a
   // hot white core right at the nozzle. Outer layers are longer (lingering
@@ -262,15 +358,22 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
       ];
 
   // Rocket rotation: tangent of the last segment in REAL pixels (the SVG is
-  // stretched, so viewBox angles ≠ on-screen angles). 🚀 points NE at 0°, so
-  // offset by +45° to align its nose with the direction of travel.
+  // stretched, so viewBox angles ≠ on-screen angles). Our sprite is drawn
+  // nose-up (pointing -90°), so offset by +90° to align with travel.
   let rocketDeg = -45;
   if (last) {
     const back = points[Math.max(0, n - 5)] ?? last;
     const dxpx = ((last.x - back.x) / 100) * size.w;
     const dypx = ((last.y - back.y) / 100) * size.h;
-    rocketDeg = (Math.atan2(dypx, dxpx) * 180) / Math.PI + 45;
+    rocketDeg = (Math.atan2(dypx, dxpx) * 180) / Math.PI + 90;
   }
+
+  // Spark directions for the bust explosion (deterministic fan, no RNG —
+  // Math.random would re-roll every render).
+  const sparks = Array.from({ length: 10 }, (_, i) => {
+    const a = (i / 10) * Math.PI * 2;
+    return { dx: Math.cos(a), dy: Math.sin(a), delay: (i % 3) * 0.05 };
+  });
 
   return (
     <div ref={rootRef} className="absolute inset-0 z-[5]">
@@ -329,41 +432,86 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
         ))}
       </svg>
 
-      {/* Rocket at the tip of the curve, nose along the curve's tangent */}
+      {/* Cashout markers pinned where players exited (positions rescale with the axes) */}
+      {cashouts.map((c, i) => {
+        const p = toXY(c.multiplier);
+        const payoutSol = Number(BigInt(c.payoutLamports)) / 1e9;
+        return (
+          <motion.div
+            key={`${c.userId}-${i}`}
+            initial={{ opacity: 0, scale: 0.5, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="absolute z-[9] pointer-events-none"
+            style={{ left: `${p.x}%`, top: `${p.y}%`, transform: 'translate(-50%, -110%)' }}
+          >
+            <div className="flex items-center gap-1">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-primary text-[9px] font-bold text-white ring-1 ring-white/30">
+                {c.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-mono font-bold text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]">
+                +{payoutSol.toFixed(4)}
+              </span>
+            </div>
+          </motion.div>
+        );
+      })}
+
+      {/* Our rocket at the tip of the curve, nose along the tangent */}
       {last && !busted && (
         <div
           className="absolute z-10 transition-all duration-75"
           style={{ left: `${last.x}%`, top: `${last.y}%`, transform: 'translate(-50%, -50%)' }}
         >
           <div
-            className="text-4xl md:text-6xl"
             style={{
               filter:
-                'drop-shadow(0 0 14px rgba(255,140,40,0.9)) drop-shadow(0 0 28px rgba(255,90,0,0.5))',
+                'drop-shadow(0 0 14px rgba(255,140,40,0.7)) drop-shadow(0 0 28px rgba(168,85,247,0.45))',
               transform: `rotate(${rocketDeg.toFixed(1)}deg)`,
             }}
           >
-            🚀
+            <CrashRocket size={56} />
           </div>
         </div>
       )}
 
-      {/* Explosion on bust */}
+      {/* Multi-layer explosion on bust: shockwave ring + spark fan + fireball */}
       {busted && last && (
         <div
           className="absolute z-10"
           style={{ left: `${last.x}%`, top: `${last.y}%`, transform: 'translate(-50%, -50%)' }}
         >
+          {/* fireball */}
           <motion.div
-            initial={{ scale: 0.5, opacity: 1 }}
-            animate={{ scale: 4, opacity: 0 }}
-            transition={{ duration: 1.2 }}
-            className="w-12 h-12 rounded-full"
+            initial={{ scale: 0.4, opacity: 1 }}
+            animate={{ scale: 3.4, opacity: 0 }}
+            transition={{ duration: 1.0 }}
+            className="w-14 h-14 rounded-full"
             style={{
-              background: 'radial-gradient(circle, rgba(239,68,68,0.8), rgba(239,68,68,0) 70%)',
+              background:
+                'radial-gradient(circle, rgba(255,221,130,0.95) 0%, rgba(255,106,0,0.8) 35%, rgba(239,68,68,0.6) 60%, rgba(239,68,68,0) 75%)',
             }}
           />
-          <div className="absolute inset-0 flex items-center justify-center text-4xl">💥</div>
+          {/* shockwave ring */}
+          <motion.div
+            initial={{ scale: 0.3, opacity: 0.9 }}
+            animate={{ scale: 5, opacity: 0 }}
+            transition={{ duration: 0.9, ease: 'easeOut' }}
+            className="absolute inset-0 rounded-full border-2 border-orange-300/80"
+          />
+          {/* sparks */}
+          {sparks.map((s, i) => (
+            <motion.div
+              key={i}
+              initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+              animate={{ x: s.dx * 90, y: s.dy * 70, opacity: 0, scale: 0.3 }}
+              transition={{ duration: 0.8, delay: s.delay, ease: 'easeOut' }}
+              className="absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full"
+              style={{
+                background: i % 2 ? '#ffd36b' : '#ff6a00',
+                boxShadow: '0 0 8px rgba(255,160,60,0.9)',
+              }}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -373,7 +521,7 @@ function CrashTrail({ multiplier, busted }: { multiplier: number; busted: boolea
 /**
  * Right-edge multiplier ruler with horizontal grid lines.
  * The scale auto-ranges based on the current multiplier so the labels
- * always cover the visible range. Matches solpump's right-side ruler.
+ * always cover the visible range.
  */
 function MultiplierRuler({
   multiplier,

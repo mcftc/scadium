@@ -1,20 +1,40 @@
 'use client';
 
-import { Check, X, Swords } from 'lucide-react';
+import { useMemo } from 'react';
+import { Check, Eye, X, Swords } from 'lucide-react';
 import { useRecentCoinflips, type CoinflipGame } from '@/hooks/use-coinflip';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { useMe } from '@/hooks/use-me';
+import type { FlipSort } from './coinflip-lobby';
 
-export function RecentFlipsList() {
+export function RecentFlipsList({
+  sort,
+  onWatch,
+}: {
+  sort: FlipSort;
+  onWatch: (game: CoinflipGame) => void;
+}) {
   const { data, isLoading } = useRecentCoinflips();
   const { data: me } = useMe();
+
+  const sorted = useMemo(() => {
+    const list = [...(data ?? [])];
+    if (sort === 'price') {
+      list.sort((a, b) => Number(BigInt(b.amountLamports) - BigInt(a.amountLamports)));
+    } else {
+      list.sort(
+        (a, b) => Date.parse(b.resolvedAt ?? b.createdAt) - Date.parse(a.resolvedAt ?? a.createdAt),
+      );
+    }
+    return list;
+  }, [data, sort]);
 
   if (isLoading) {
     return <div className="py-12 text-center text-foreground-muted text-sm">Loading...</div>;
   }
 
-  if (!data || data.length === 0) {
+  if (sorted.length === 0) {
     return (
       <div className="py-16 text-center text-foreground-muted text-sm">
         No resolved flips yet.
@@ -24,7 +44,7 @@ export function RecentFlipsList() {
 
   return (
     <div className="divide-y divide-border/30">
-      {data.map((flip) => {
+      {sorted.map((flip) => {
         const creatorWon = flip.winnerId === flip.creatorId;
         const iWon = me?.id != null && flip.winnerId === me.id;
         const iLost =
@@ -39,7 +59,7 @@ export function RecentFlipsList() {
           <div
             key={flip.id}
             className={cn(
-              'grid grid-cols-[1fr_120px_140px_100px] gap-4 items-center px-5 py-3 transition-colors',
+              'grid grid-cols-[1fr_110px_130px_120px] gap-4 items-center px-5 py-3 transition-colors',
               iWon
                 ? 'bg-emerald-500/5'
                 : iLost
@@ -111,9 +131,18 @@ export function RecentFlipsList() {
               {formatSol(flip.amountLamports, 4)}
             </div>
 
-            {/* Payout indicator */}
-            <div className="text-right text-xs text-foreground-muted">
-              1.9x
+            {/* Payout + replay */}
+            <div className="flex items-center justify-end gap-1.5">
+              <span className="text-xs text-foreground-muted">1.9x</span>
+              <button
+                type="button"
+                onClick={() => onWatch(flip)}
+                aria-label="Replay this flip"
+                title="Replay"
+                className="rounded-lg p-1.5 text-foreground-muted hover:bg-surface-elevated hover:text-foreground transition-colors"
+              >
+                <Eye className="h-4 w-4" />
+              </button>
             </div>
           </div>
         );

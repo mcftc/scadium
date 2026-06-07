@@ -35,6 +35,15 @@ interface Round {
   bets: Map<string, LiveBet>;
 }
 
+/** Bet queued for the NEXT round ("Schedule Bet For Next Round"). */
+interface ScheduledBet {
+  userId: string;
+  username: string | null;
+  walletAddress: string;
+  amountLamports: bigint;
+  autoCashout: number | null;
+}
+
 /**
  * Background round engine. Drives the crash game independently of any
  * HTTP request: betting window → running tick loop → bust → settle →
@@ -48,6 +57,8 @@ export class CrashEngine implements OnModuleInit {
   private readonly logger = new Logger(CrashEngine.name);
   private current!: Round;
   private history: { bustPoint: number; roundId: string }[] = [];
+  /** One queued bet per user, auto-placed when the next round opens. */
+  private readonly nextRoundBets = new Map<string, ScheduledBet>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -80,6 +91,8 @@ export class CrashEngine implements OnModuleInit {
         username: b.username,
         walletAddress: b.walletAddress,
         amountLamports: b.amountLamports.toString(),
+        originalAmountLamports: b.originalAmountLamports.toString(),
+        payoutLamports: b.payoutLamports.toString(),
         autoCashout: b.autoCashout,
         cashedOutAt: b.cashedOutAt,
       })),
@@ -115,6 +128,34 @@ export class CrashEngine implements OnModuleInit {
   }
 
   /**
+   * Queue a bet for the NEXT round. Allowed in any phase — players schedule
+   * mid-flight when they missed the window, or stack a follow-up while their
+   * current bet rides. The caller (service) has already debited the balance,
+   * so draining the queue at round start cannot fail.
+   */
+  scheduleBet(params: {
+    userId: string;
+    username: string | null;
+    walletAddress: string;
+    amountLamports: bigint;
+    autoCashout: number | null;
+  }): { ok: true } {
+    if (this.nextRoundBets.has(params.userId)) {
+      throw new Error('You already have a bet scheduled for the next round');
+    }
+    this.nextRoundBets.set(params.userId, { ...params });
+    return { ok: true };
+  }
+
+  /** Remove the caller's queued bet; returns its stake for the refund. */
+  cancelScheduled(userId: string): { amountLamports: bigint } {
+    const queued = this.nextRoundBets.get(userId);
+    if (!queued) throw new Error('No scheduled bet to cancel');
+    this.nextRoundBets.delete(userId);
+    return { amountLamports: queued.amountLamports };
+  }
+
+  /**
    * Cash out `percent` (10..100) of the REMAINING position at the current
    * multiplier — solpump's "Progressive Cashout". 100% (default) exits the
    * round; partials keep the rest riding.
@@ -144,6 +185,9 @@ export class CrashEngine implements OnModuleInit {
 
     this.gateway.emitCashedOut(this.current.id, {
       userId,
+      // Name fields ride along so the curve can label the cashout marker.
+      username: bet.username,
+      walletAddress: bet.walletAddress,
       multiplier: m,
       payoutLamports: payout.toString(),
       remainingLamports: bet.amountLamports.toString(),
@@ -205,6 +249,20 @@ export class CrashEngine implements OnModuleInit {
       nonce: seed.nonce,
       bettingWindowMs: CRASH.BET_WINDOW_MS,
     });
+
+    // Drain scheduled bets into the fresh round. Balances were debited at
+    // schedule time, so placement cannot fail; emit AFTER round-start so
+    // clients see the bets land in the new round.
+    for (const queued of this.nextRoundBets.values()) {
+      try {
+        this.placeBet(queued);
+      } catch (e) {
+        this.logger.error(
+          `scheduled bet for ${queued.userId} failed to place: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+    this.nextRoundBets.clear();
 
     // Betting window → run
     setTimeout(() => {

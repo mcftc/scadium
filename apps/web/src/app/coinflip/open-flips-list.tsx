@@ -1,6 +1,7 @@
 'use client';
 
-import { Loader2, X, Swords } from 'lucide-react';
+import { useMemo } from 'react';
+import { Eye, Loader2, X, Swords } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   useOpenCoinflips,
@@ -13,8 +14,15 @@ import { useMe } from '@/hooks/use-me';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import type { FlipSort } from './coinflip-lobby';
 
-export function OpenFlipsList() {
+export function OpenFlipsList({
+  sort,
+  onWatch,
+}: {
+  sort: FlipSort;
+  onWatch: (game: CoinflipGame) => void;
+}) {
   const { data, isLoading } = useOpenCoinflips();
   const { isAuthenticated } = useWalletAuth();
   const { data: me } = useMe();
@@ -22,11 +30,21 @@ export function OpenFlipsList() {
   const joinMutation = useJoinCoinflip();
   const cancelMutation = useCancelCoinflip();
 
+  const sorted = useMemo(() => {
+    const list = [...(data ?? [])];
+    if (sort === 'price') {
+      list.sort((a, b) => Number(BigInt(b.amountLamports) - BigInt(a.amountLamports)));
+    } else {
+      list.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    }
+    return list;
+  }, [data, sort]);
+
   if (isLoading) {
     return <div className="py-12 text-center text-foreground-muted text-sm">Loading...</div>;
   }
 
-  if (!data || data.length === 0) {
+  if (sorted.length === 0) {
     return (
       <div className="py-16 text-center text-foreground-muted text-sm">
         No active flips. Click <span className="text-primary-400">Create Flip</span> to start one.
@@ -34,9 +52,17 @@ export function OpenFlipsList() {
     );
   }
 
+  /** Join through the flip theater: open the modal first, then fire the
+   * mutation — the resolved socket event drives the animation inside it. */
+  function joinWithModal(flip: CoinflipGame) {
+    if (!isAuthenticated) return openWallet();
+    onWatch(flip);
+    joinMutation.mutate(flip.id);
+  }
+
   return (
     <div className="divide-y divide-border/30">
-      {data.map((flip) => {
+      {sorted.map((flip) => {
         const isOwn = me?.id === flip.creatorId;
         const pending =
           joinMutation.isPending && joinMutation.variables === flip.id
@@ -47,7 +73,7 @@ export function OpenFlipsList() {
         return (
           <div
             key={flip.id}
-            className="grid grid-cols-[1fr_120px_140px_100px] gap-4 items-center px-5 py-3 hover:bg-surface-elevated/30 transition-colors"
+            className="grid grid-cols-[1fr_110px_130px_120px] gap-4 items-center px-5 py-3 hover:bg-surface-elevated/30 transition-colors"
           >
             {/* Players: Creator VS ??? */}
             <div className="flex items-center gap-3 min-w-0">
@@ -56,7 +82,7 @@ export function OpenFlipsList() {
                 side={flip.creatorSide}
               />
               <Swords className="h-4 w-4 text-foreground-muted/50 shrink-0" />
-              <div className="h-8 w-8 rounded-full border-2 border-dashed border-border/60 flex items-center justify-center text-[10px] text-foreground-muted">
+              <div className="h-8 w-8 rounded-full border-2 border-dashed border-border/60 flex items-center justify-center text-[10px] text-foreground-muted shrink-0">
                 ?
               </div>
             </div>
@@ -80,8 +106,17 @@ export function OpenFlipsList() {
               {formatSol(flip.amountLamports, 4)}
             </div>
 
-            {/* Action */}
-            <div className="text-right">
+            {/* Actions: watch (everyone) + join/cancel */}
+            <div className="flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={() => onWatch(flip)}
+                aria-label="Watch this flip"
+                title="Watch"
+                className="rounded-lg p-1.5 text-foreground-muted hover:bg-surface-elevated hover:text-foreground transition-colors"
+              >
+                <Eye className="h-4 w-4" />
+              </button>
               {isOwn ? (
                 <Button
                   variant="secondary"
@@ -98,18 +133,15 @@ export function OpenFlipsList() {
                   Cancel
                 </Button>
               ) : (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    if (!isAuthenticated) return openWallet();
-                    joinMutation.mutate(flip.id);
-                  }}
+                <button
+                  type="button"
+                  onClick={() => joinWithModal(flip)}
                   disabled={pending === 'join'}
-                  className="text-xs"
+                  className="flex items-center gap-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-xs font-bold text-white transition-colors disabled:opacity-50"
                 >
                   {pending === 'join' ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                   Join
-                </Button>
+                </button>
               )}
             </div>
           </div>

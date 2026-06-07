@@ -8,13 +8,16 @@ import { CrashPlayersList } from './crash-players-list';
 import { CrashHistory } from './crash-history';
 import { CrashFairness } from './crash-fairness';
 import { useCrash } from '@/hooks/use-crash';
+import { useMe } from '@/hooks/use-me';
 
 /**
  * solpump layout: game center (full immersion), bet panel + players RIGHT.
  * Chat lives in the global left rail (AppShell), not in this component.
  */
 export function CrashGame() {
-  const { state } = useCrash();
+  const { state, cashouts } = useCrash();
+  const { data: me } = useMe();
+  const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
 
   return (
     <div className="flex gap-4">
@@ -22,7 +25,7 @@ export function CrashGame() {
       <div className="flex-1 min-w-0 space-y-3">
         <CrashHistory history={state?.history ?? []} />
         <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[520px]">
-          <CrashCurve state={state} />
+          <CrashCurve state={state} cashouts={cashouts} myBet={myBet} />
           {/* Live player count overlay (top-left), like solpump */}
           <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10">
             <Users className="h-3 w-3 text-cyan-300" />

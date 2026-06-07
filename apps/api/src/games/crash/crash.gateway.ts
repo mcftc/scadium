@@ -66,6 +66,9 @@ export class CrashGateway {
 
   emitCashedOut(roundId: string, payload: {
     userId: string;
+    /** Name fields so the curve can label the cashout marker. */
+    username: string | null;
+    walletAddress: string;
     multiplier: number;
     payoutLamports: string;
     /** Stake still riding after this (possibly partial) cashout. */

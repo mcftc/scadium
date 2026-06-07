@@ -6,6 +6,25 @@ import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
 
+/**
+ * Per-game resolved listeners (spectate modal). Module-level registry so the
+ * single lobby socket handler can fan events out to whichever modal is open.
+ */
+const resolvedListeners = new Map<string, Set<(game: CoinflipGame) => void>>();
+
+export function subscribeFlipResolved(
+  gameId: string,
+  cb: (game: CoinflipGame) => void,
+): () => void {
+  const set = resolvedListeners.get(gameId) ?? new Set();
+  set.add(cb);
+  resolvedListeners.set(gameId, set);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) resolvedListeners.delete(gameId);
+  };
+}
+
 export interface CoinflipGame {
   id: string;
   creatorId: string;
@@ -62,6 +81,8 @@ export function useOpenCoinflips() {
       });
       // Bet history + balance both changed for the winning/losing users
       qc.invalidateQueries({ queryKey: ['me'] });
+      // Notify any open spectate modal watching this game.
+      resolvedListeners.get(game.id)?.forEach((cb) => cb(game));
     };
     const onCancelled = ({ id }: { id: string }) => {
       qc.setQueryData<CoinflipGame[]>(['coinflip', 'open'], (prev) =>
@@ -119,11 +140,14 @@ export function useJoinCoinflip() {
 
 export function useCancelCoinflip() {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (gameId: string) =>
       api<CoinflipGame>(`/coinflip/${gameId}/cancel`, {
         method: 'POST',
         token,
       }),
+    // The stake refund lands on the play balance.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
   });
 }

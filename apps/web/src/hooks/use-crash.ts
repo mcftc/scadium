@@ -14,8 +14,20 @@ export interface CrashBet {
   username: string | null;
   walletAddress: string;
   amountLamports: string;
+  /** The full wager (amountLamports shrinks on partial cashouts). */
+  originalAmountLamports?: string;
   autoCashout: number | null;
   cashedOutAt: number | null;
+  /** Accumulated (partial) cashout payouts this round. */
+  payoutLamports?: string;
+}
+
+/** One cashout event, rendered as a marker pinned to the curve. */
+export interface CrashCashoutMarker {
+  userId: string;
+  name: string;
+  multiplier: number;
+  payoutLamports: string;
 }
 
 export interface CrashSnapshot {
@@ -39,6 +51,7 @@ export interface CrashSnapshot {
  */
 export function useCrash() {
   const [state, setState] = useState<CrashSnapshot | null>(null);
+  const [cashouts, setCashouts] = useState<CrashCashoutMarker[]>([]);
   const [, setTick] = useState(0);
   const queryClient = useQueryClient();
 
@@ -72,6 +85,7 @@ export function useCrash() {
           bets: [],
           history: prev?.history ?? [],
         }));
+        setCashouts([]); // markers belong to the previous round
       },
     );
 
@@ -106,7 +120,11 @@ export function useCrash() {
         s
           ? {
               ...s,
-              bets: [...s.bets.filter((b) => b.userId !== bet.userId), bet],
+              bets: [
+                ...s.bets.filter((b) => b.userId !== bet.userId),
+                // A fresh bet's remaining stake IS its original wager.
+                { ...bet, originalAmountLamports: bet.amountLamports, payoutLamports: '0' },
+              ],
             }
           : s,
       );
@@ -116,15 +134,22 @@ export function useCrash() {
       'crash:cashed-out',
       ({
         userId,
+        username,
+        walletAddress,
         multiplier,
+        payoutLamports,
         remainingLamports,
       }: {
         userId: string;
+        username?: string | null;
+        walletAddress?: string;
         multiplier: number;
+        payoutLamports?: string;
         remainingLamports?: string;
       }) => {
         // Progressive cashouts: only mark fully-out when nothing is riding.
         const remaining = remainingLamports ?? '0';
+        const payout = payoutLamports ?? '0';
         setState((s) =>
           s
             ? {
@@ -135,11 +160,19 @@ export function useCrash() {
                         ...b,
                         amountLamports: remaining,
                         cashedOutAt: remaining === '0' ? multiplier : b.cashedOutAt,
+                        payoutLamports: (
+                          BigInt(b.payoutLamports ?? '0') + BigInt(payout)
+                        ).toString(),
                       }
                     : b,
                 ),
               }
             : s,
+        );
+        // Pin a marker to the curve at the exit multiplier (cleared on round-start).
+        const name = username ?? (walletAddress ? `${walletAddress.slice(0, 4)}…` : 'player');
+        setCashouts((cur) =>
+          [...cur, { userId, name, multiplier, payoutLamports: payout }].slice(-24),
         );
       },
     );
@@ -150,7 +183,7 @@ export function useCrash() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { state };
+  return { state, cashouts };
 }
 
 export function useCrashActions() {
@@ -187,5 +220,29 @@ export function useCrashActions() {
     },
     [token, queryClient],
   );
-  return { placeBet, cashOut };
+  const scheduleBet = useCallback(
+    async (params: { amountLamports: string; autoCashout?: number | null }) => {
+      const res = await api<{ ok: true; scheduled: true }>('/crash/schedule', {
+        method: 'POST',
+        body: {
+          amountLamports: params.amountLamports,
+          autoCashout: params.autoCashout ?? undefined,
+        },
+        token,
+      });
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      return res;
+    },
+    [token, queryClient],
+  );
+  const cancelSchedule = useCallback(async () => {
+    const res = await api<{ ok: true; refundedLamports: string }>('/crash/schedule/cancel', {
+      method: 'POST',
+      body: {},
+      token,
+    });
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+    return res;
+  }, [token, queryClient]);
+  return { placeBet, cashOut, scheduleBet, cancelSchedule };
 }
