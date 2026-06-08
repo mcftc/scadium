@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Trophy, Users, Coins, ShieldCheck, ExternalLink, Crown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { ConnectButton } from '@/components/wallet/connect-button';
 import { useMe } from '@/hooks/use-me';
 import { useAuthStore } from '@/store/auth-store';
+import { useSocket } from '@/providers/socket-provider';
 import { formatSol, lamportsToSol, shortAddress } from '@/lib/format';
 import {
   useJackpot,
@@ -15,7 +16,9 @@ import {
   useMyJackpot,
   useJackpotRecent,
   type JackpotSnapshot,
+  type JackpotPlayer,
 } from '@/hooks/use-jackpot';
+import { JackpotReel, type JackpotReveal } from './jackpot-reel';
 import { cn } from '@/lib/cn';
 
 const QUICK = ['0.05', '0.25', '1', '5'];
@@ -26,8 +29,48 @@ export function JackpotGame() {
   const { data: me } = useMe();
   const token = useAuthStore((s) => s.accessToken);
   const enter = useEnterJackpot();
+  const socket = useSocket('/jackpot');
   const [amount, setAmount] = useState('0.25');
   const [error, setError] = useState<string | null>(null);
+
+  // Winner reveal: capture the pot's players the instant before the draw,
+  // then run the reel when the result event lands (the snapshot refetch wipes
+  // the players list for the next round, so we freeze it here).
+  const playersRef = useRef<JackpotPlayer[]>([]);
+  const meIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    meIdRef.current = me?.id;
+  }, [me?.id]);
+  useEffect(() => {
+    if (snap && snap.players.length) playersRef.current = snap.players;
+  }, [snap]);
+
+  const [reveal, setReveal] = useState<JackpotReveal | null>(null);
+  useEffect(() => {
+    if (!socket) return;
+    const onResult = (p: {
+      status: string;
+      winnerId: string | null;
+      winnerName: string | null;
+      payoutLamports: string;
+    }) => {
+      if (p.status !== 'drawn' || !p.winnerId) return;
+      const players = playersRef.current;
+      if (!players.length) return;
+      setReveal({
+        players,
+        winnerId: p.winnerId,
+        winnerName: p.winnerName,
+        payoutLamports: p.payoutLamports,
+        meId: meIdRef.current,
+      });
+    };
+    socket.on('jackpot:result', onResult);
+    return () => {
+      socket.off('jackpot:result', onResult);
+    };
+  }, [socket]);
+  const clearReveal = useCallback(() => setReveal(null), []);
 
   async function submit() {
     setError(null);
@@ -52,7 +95,7 @@ export function JackpotGame() {
   return (
     <div className="grid lg:grid-cols-[1fr_340px] gap-4">
       <div className="space-y-4 min-w-0">
-        <PotBanner snap={snap} />
+        {reveal ? <JackpotReel reveal={reveal} onDone={clearReveal} /> : <PotBanner snap={snap} />}
 
         <Card className="p-5 space-y-4">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
