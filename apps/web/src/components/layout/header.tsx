@@ -1,17 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  ChevronDown,
-  Coins,
-  Gamepad2,
-  Spade,
-  Ticket,
-  TrendingUp,
-  Trophy,
-} from 'lucide-react';
+import { Coins, Spade, Ticket, TrendingUp, Trophy } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
 import { ConnectButton } from '@/components/wallet/connect-button';
@@ -63,96 +54,33 @@ const games = [
 export function Header() {
   const pathname = usePathname();
   const { data: live } = usePlatformLive();
-  const [gamesOpen, setGamesOpen] = useState(false);
-  const gamesRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!gamesOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (!gamesRef.current?.contains(e.target as Node)) setGamesOpen(false);
-    };
-    window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
-  }, [gamesOpen]);
-
-  // Close the dropdown on navigation.
-  useEffect(() => setGamesOpen(false), [pathname]);
-
-  const activeGame = games.find((g) => pathname.startsWith(g.href));
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/50 bg-background/90 backdrop-blur-xl">
       <Container>
         <div className="flex h-14 items-center justify-between gap-2 sm:gap-3">
-          {/* Left: Logo + Games dropdown + Terminal */}
-          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-            <Link href="/crash" aria-label="Scadium home">
+          {/* Left: Logo + inline game tabs (desktop) + Leaderboard */}
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <Link href="/crash" aria-label="Scadium home" className="shrink-0">
               <Logo />
             </Link>
 
-            <div className="relative" ref={gamesRef}>
-              <button
-                type="button"
-                onClick={() => setGamesOpen((o) => !o)}
-                className={cn(
-                  'flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm font-bold transition-colors hover:border-primary-400/50',
-                  gamesOpen && 'border-primary-400/50',
-                )}
-              >
-                <Gamepad2 className="h-4 w-4 text-primary-400" />
-                <span className="hidden sm:inline">{activeGame?.label ?? 'Games'}</span>
-                <ChevronDown
-                  className={cn(
-                    'h-3.5 w-3.5 text-foreground-muted transition-transform',
-                    gamesOpen && 'rotate-180',
-                  )}
+            <nav className="hidden lg:flex items-center gap-0.5">
+              {games.map((g) => (
+                <GameTab
+                  key={g.key}
+                  game={g}
+                  active={pathname.startsWith(g.href)}
+                  chip={liveLabel(live, g.key)}
+                  running={g.key === 'crash' && live?.crash.phase === 'running'}
                 />
-              </button>
-
-              {gamesOpen && (
-                <div className="absolute left-0 top-full z-50 mt-2 w-60 rounded-xl border border-border bg-surface p-1.5 shadow-2xl shadow-black/40">
-                  {games.map((g) => {
-                    const Icon = g.icon;
-                    const chip = liveLabel(live, g.key);
-                    const active = pathname.startsWith(g.href);
-                    return (
-                      <Link
-                        key={g.key}
-                        href={g.href}
-                        className={cn(
-                          'flex items-center justify-between rounded-lg px-2.5 py-2.5 transition-colors',
-                          active
-                            ? 'bg-surface-elevated text-foreground'
-                            : 'text-foreground-muted hover:bg-surface-elevated hover:text-foreground',
-                        )}
-                      >
-                        <span className="flex items-center gap-2.5 text-xs font-bold">
-                          <Icon className="h-4 w-4 text-primary-400" />
-                          {g.label}
-                        </span>
-                        {chip && (
-                          <span
-                            className={cn(
-                              'rounded-md px-1.5 py-0.5 text-[10px] font-mono font-bold',
-                              g.key === 'crash' && live?.crash.phase === 'running'
-                                ? 'bg-success/15 text-success'
-                                : 'bg-surface text-foreground-muted',
-                            )}
-                          >
-                            {chip}
-                          </span>
-                        )}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+              ))}
+            </nav>
 
             <Link
               href="/leaderboard"
               className={cn(
-                'hidden lg:block px-2.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors',
+                'hidden xl:block px-2.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors',
                 pathname === '/leaderboard'
                   ? 'text-foreground bg-surface-elevated'
                   : 'text-foreground-muted hover:text-foreground',
@@ -181,7 +109,64 @@ export function Header() {
           </div>
         </div>
       </Container>
+
+      {/* Mobile / tablet: horizontally-scrollable game strip */}
+      <nav className="lg:hidden flex items-center gap-1 overflow-x-auto border-t border-border/50 px-3 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {games.map((g) => (
+          <GameTab
+            key={g.key}
+            game={g}
+            active={pathname.startsWith(g.href)}
+            chip={liveLabel(live, g.key)}
+            running={g.key === 'crash' && live?.crash.phase === 'running'}
+            showChip
+          />
+        ))}
+      </nav>
+
       <PromoBar />
     </header>
+  );
+}
+
+function GameTab({
+  game,
+  active,
+  chip,
+  running,
+  showChip = false,
+}: {
+  game: (typeof games)[number];
+  active: boolean;
+  chip: string | null;
+  running: boolean;
+  // Live chip only shows in the scrollable strip; inline desktop tabs stay
+  // compact so they don't crowd the right-side controls.
+  showChip?: boolean;
+}) {
+  const Icon = game.icon;
+  return (
+    <Link
+      href={game.href}
+      className={cn(
+        'flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition-colors',
+        active
+          ? 'bg-surface-elevated text-foreground'
+          : 'text-foreground-muted hover:bg-surface hover:text-foreground',
+      )}
+    >
+      <Icon className={cn('h-4 w-4', active ? 'text-primary-400' : 'text-foreground-muted')} />
+      {game.label}
+      {showChip && chip && (
+        <span
+          className={cn(
+            'rounded px-1 py-0.5 text-[9px] font-mono font-bold',
+            running ? 'bg-success/15 text-success' : 'bg-surface text-foreground-muted',
+          )}
+        >
+          {chip}
+        </span>
+      )}
+    </Link>
   );
 }
