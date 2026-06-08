@@ -8,6 +8,8 @@ Scadium — non-custodial, provably-fair Solana casino (Crash, Coinflip, Blackja
 
 **Read `ANALYSIS.md` (repo root) first** — it is the authoritative gap analysis: per-subsystem maturity, a risk register (5 critical / 10 high), a feature gap matrix, and the phased roadmap **G→M** with a real-money gating checklist. The work is tracked as GitHub issues/milestones (one milestone per phase G–M) on `mcftc/scadium`. There is **no** `~/.claude/plans/*` file — that earlier reference is stale.
 
+**Working the roadmap (multi-agent dev pipeline).** This repo ships a committed Claude Code pipeline in `.claude/` (see `.claude/README.md`). Run **`/scadium-next`** to take the next open issue (Phase G→M, priority P0→P3) — or **`/dev-task <issue#>`** for a specific one — through developer → tester → reviewer → PR → CI-gate → squash-merge. Money/fairness/security findings are blocking and **no task merges on a red gate or without its mandated tests**. "Continue where we left off" = open the repo and run `/scadium-next`. **Always verify an issue's audit premise against the real code before implementing** (the audit has been wrong — e.g. #3 was already guarded at the service layer).
+
 ## Stack & layout
 
 pnpm + Turborepo monorepo. Node ≥ 20, pnpm ≥ 10.

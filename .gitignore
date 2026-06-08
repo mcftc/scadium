@@ -57,10 +57,17 @@ infra/prisma/*.db-journal
 # Local tool state (Claude Code session memory, Playwright MCP logs)
 .remember/
 .playwright-mcp/
-.claude/
 .agents/
 skills-lock.json
 .keys/
+
+# Claude Code: ignore local/session state, but TRACK the shared dev pipeline
+# (agents + commands + docs) so every contributor gets it on clone.
+.claude/*
+!.claude/agents/
+!.claude/commands/
+!.claude/README.md
+.claude/settings.local.json
 
 # Rust/Anchor build artifacts
 target/
