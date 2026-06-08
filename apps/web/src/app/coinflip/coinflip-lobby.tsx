@@ -96,17 +96,21 @@ export function CoinflipLobby() {
         {/* Game list */}
         <Card>
           <CardContent className="p-0">
-            <div className="grid grid-cols-[1fr_110px_130px_120px] gap-4 px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
-              <div>Players</div>
-              <div className="text-center">Side</div>
-              <div className="text-right">Amount</div>
-              <div className="text-right">Action</div>
+            <div className="overflow-x-auto">
+              <div className="min-w-[560px]">
+                <div className="grid grid-cols-[1fr_110px_130px_120px] gap-4 px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
+                  <div>Players</div>
+                  <div className="text-center">Side</div>
+                  <div className="text-right">Amount</div>
+                  <div className="text-right">Action</div>
+                </div>
+                {tab === 'open' ? (
+                  <OpenFlipsList sort={sort} onWatch={watch} />
+                ) : (
+                  <RecentFlipsList sort={sort} onWatch={watch} />
+                )}
+              </div>
             </div>
-            {tab === 'open' ? (
-              <OpenFlipsList sort={sort} onWatch={watch} />
-            ) : (
-              <RecentFlipsList sort={sort} onWatch={watch} />
-            )}
           </CardContent>
         </Card>
       </div>

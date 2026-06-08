@@ -16,7 +16,7 @@ export function BalancePill() {
   return (
     <Link
       href="/wallet"
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap hover:border-primary-400/50 transition-colors"
+      className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap hover:border-primary-400/50 transition-colors"
     >
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
         <defs>
@@ -33,7 +33,7 @@ export function BalancePill() {
       <span className="text-xs font-bold font-mono tabular-nums">
         {lamportsToSol(me.playBalanceLamports).toFixed(3)}
       </span>
-      <span className="text-[10px] font-semibold text-foreground-muted">SOL</span>
+      <span className="hidden sm:inline text-[10px] font-semibold text-foreground-muted">SOL</span>
     </Link>
   );
 }

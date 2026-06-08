@@ -73,7 +73,7 @@ export function RewardsDropdown() {
         )}
       >
         <Gift className="h-3.5 w-3.5" />
-        <span className="text-[10px] font-bold">Rewards</span>
+        <span className="hidden sm:inline text-[10px] font-bold">Rewards</span>
       </button>
 
       {open && (

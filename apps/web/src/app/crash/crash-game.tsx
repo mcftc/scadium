@@ -20,7 +20,7 @@ export function CrashGame() {
   const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
 
   return (
-    <div className="flex gap-4">
+    <div className="flex flex-col lg:flex-row gap-4">
       {/* CENTER: Game area */}
       <div className="flex-1 min-w-0 space-y-3">
         <CrashHistory history={state?.history ?? []} />
@@ -37,8 +37,8 @@ export function CrashGame() {
         </div>
       </div>
 
-      {/* RIGHT: Bet panel + players */}
-      <div className="hidden lg:block w-[300px] shrink-0 pr-4 sm:pr-6 lg:pr-8 space-y-4">
+      {/* RIGHT (desktop) / BELOW (mobile): Bet panel + players */}
+      <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
         <Card className="p-5">
           <CrashBetPanel state={state} />
         </Card>

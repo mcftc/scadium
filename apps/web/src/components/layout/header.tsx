@@ -83,9 +83,9 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-border/50 bg-background/90 backdrop-blur-xl">
       <Container>
-        <div className="flex h-14 items-center justify-between gap-3">
+        <div className="flex h-14 items-center justify-between gap-2 sm:gap-3">
           {/* Left: Logo + Games dropdown + Terminal */}
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Link href="/crash" aria-label="Scadium home">
               <Logo />
             </Link>
@@ -163,7 +163,7 @@ export function Header() {
           </div>
 
           {/* Right: $SCAD chip + Rewards + balance + avatar */}
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
             <Link
               href="/trade"
               className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border whitespace-nowrap hover:border-primary-400/50 transition-colors"
@@ -174,7 +174,9 @@ export function Header() {
             </Link>
             <RewardsDropdown />
             <BalancePill />
-            <UserMenu />
+            <span className="hidden sm:block">
+              <UserMenu />
+            </span>
             <ConnectButton />
           </div>
         </div>
