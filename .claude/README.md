@@ -8,9 +8,12 @@ on clone.
 ## TL;DR
 
 ```text
+/plan <what you need>  # decompose a need into GitHub issues (epic + tasks), just like the roadmap
 /scadium-next          # work the next open issue (Phase G→M, P0→P3 order)
 /dev-task 14           # work a specific issue by number
 ```
+
+`/plan` is how new work enters the system; `/scadium-next` and `/dev-task` are how it gets built.
 
 Both run the same pipeline:
 
@@ -27,9 +30,18 @@ The orchestrator (`/dev-task`) does the git/gh plumbing and coordinates three ro
 
 | Agent | Role |
 |---|---|
+| **scadium-planner** | Turns a described need into grounded GitHub issues (epic + tasks, acceptance criteria, **E2E requirements**, milestone, labels) — explores the real code first. Used by `/plan`. |
 | **scadium-developer** | Implements one issue, minimal & idiomatic, **verifies the audit premise against the real code first** (the audit has been wrong — e.g. #3). |
 | **scadium-tester** | Writes & runs the unit / integration (real test Postgres) / e2e tests the issue mandates; proves red-before / green-after. |
 | **scadium-reviewer** | Adversarial gate: money-integrity, provable fairness, security, acceptance criteria, test adequacy, open PR/CI comments. |
+
+### Adding new work — `/plan`
+
+```text
+/plan add a "Plinko" game with provably-fair payouts, bet panel, and live multiplayer feed
+```
+
+`/plan` runs the **scadium-planner** agent: it explores the codebase, decomposes the need into an epic + small task issues (each with Context · evidence · scope · acceptance criteria · **E2E test requirements** · files · dependencies), proposes a milestone (existing Phase G–M or a new one) + labels, confirms with you, then **creates the issues on GitHub** — exactly the shape of the roadmap issues. Then `/scadium-next` will pick them up and build them.
 
 ## Ground rules baked into the pipeline
 
@@ -55,14 +67,18 @@ So "continue where we left off" is just: open the repo in Claude Code and run **
 ```
 .claude/
 ├── agents/
+│   ├── scadium-planner.md     # decomposes a need into issues (used by /plan)
 │   ├── scadium-developer.md
 │   ├── scadium-tester.md
 │   └── scadium-reviewer.md
 ├── commands/
+│   ├── plan.md          # /plan <need>        — create issues for a new need
 │   ├── dev-task.md      # /dev-task <issue#>  — full pipeline for one issue
 │   └── scadium-next.md  # /scadium-next       — pick the next issue and run it
 └── README.md
 ```
+
+Full lifecycle: **`/plan`** (need → issues) → **`/scadium-next`** or **`/dev-task`** (issue → developer → tester → reviewer → merged PR).
 
 Local/session state under `.claude/` (e.g. `settings.local.json`) stays git-ignored; only the shared
 agents, commands, and this README are tracked.
