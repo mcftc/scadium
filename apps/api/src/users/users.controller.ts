@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthContext } from '../auth/jwt-auth.guard';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListBetsQueryDto } from './dto/list-bets-query.dto';
+import { StatsQueryDto } from './dto/stats-query.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -39,12 +41,19 @@ export class UsersController {
     return this.users.listBets(ctx.userId, {
       limit: query.limit,
       cursor: query.cursor,
+      gameType: query.gameType,
     });
   }
 
   @Get('stats')
-  @ApiOperation({ summary: 'Aggregate lifetime stats for the current user' })
-  getStats(@CurrentUser() ctx: AuthContext) {
-    return this.users.getStats(ctx.userId);
+  @ApiOperation({ summary: 'Aggregate stats for the current user (windowed)' })
+  getStats(@CurrentUser() ctx: AuthContext, @Query() query: StatsQueryDto) {
+    return this.users.getStats(ctx.userId, query.window);
+  }
+
+  @Post('stats/reset')
+  @ApiOperation({ summary: 'Reset the lifetime stats baseline to now' })
+  resetStats(@CurrentUser() ctx: AuthContext) {
+    return this.users.resetStats(ctx.userId);
   }
 }

@@ -97,6 +97,10 @@ model User {
   // deposited at least once; null = never deposited (still play-money).
   vaultAddress   String?  @unique
   lastDailyCaseAt DateTime?
+  // "Reset Stats" timestamp — when set, the lifetime stats grid counts only
+  // bets settled after this instant (computed from the Bet table). null =
+  // show the denormalized User aggregate columns (fast path).
+  statsResetAt   DateTime?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)
