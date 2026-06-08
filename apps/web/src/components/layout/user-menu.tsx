@@ -17,6 +17,7 @@ import { useAuthStore } from '@/store/auth-store';
 import { useMe } from '@/hooks/use-me';
 import { shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { Avatar } from '@/components/ui/avatar';
 
 const menuItems = [
   { href: '/profile', label: 'Statistics', icon: BarChart3 },
@@ -64,9 +65,7 @@ export function UserMenu() {
         )}
         aria-label="Account menu"
       >
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-primary text-[11px] font-bold text-white">
-          {name.slice(0, 1).toUpperCase()}
-        </span>
+        <Avatar src={me.avatarUrl} name={name} className="h-7 w-7 rounded-lg text-[11px]" />
         <ChevronDown
           className={cn('h-3.5 w-3.5 text-foreground-muted transition-transform', open && 'rotate-180')}
         />

@@ -20,6 +20,7 @@ import {
 import { ApiError } from '@/lib/api-client';
 import { shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { PhotoSection } from './photo-section';
 
 const PROVIDERS: {
   key: SocialProvider;
@@ -51,7 +52,9 @@ export function SettingsContent() {
           <CardTitle>Account</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div>
+          <PhotoSection />
+
+          <div className="border-t border-border pt-6">
             <label className="text-xs uppercase tracking-wider text-foreground-muted">
               Username
             </label>

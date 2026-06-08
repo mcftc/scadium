@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useSolBalance } from '@/hooks/use-sol-balance';
 import { formatSol } from '@/lib/format';
+import { Avatar } from '@/components/ui/avatar';
 import { env } from '@/config/env';
 import { StatsGrid } from '@/components/profile/stats-grid';
 import { BetHistory } from '@/components/profile/bet-history';
@@ -140,8 +141,15 @@ function LevelBar() {
   const pct = span > 0 ? Math.min(100, (into / span) * 100) : 0;
   return (
     <div className="rounded-xl border border-border bg-surface p-4 flex items-center gap-4">
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-primary font-black text-lg">
-        {me.level}
+      <div className="relative shrink-0">
+        <Avatar
+          src={me.avatarUrl}
+          name={me.username ?? me.walletAddress}
+          className="h-12 w-12 rounded-xl text-lg"
+        />
+        <span className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-gradient-primary px-1 text-[10px] font-black text-white ring-2 ring-surface">
+          {me.level}
+        </span>
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between text-xs mb-1.5">

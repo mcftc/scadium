@@ -123,6 +123,7 @@ export type SocialProvider = 'google' | 'telegram' | 'discord';
 export interface ProfilePatch {
   username?: string;
   email?: string;
+  avatarUrl?: string;
   notifyEmailWins?: boolean;
   notifyMarketing?: boolean;
 }
