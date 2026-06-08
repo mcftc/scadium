@@ -21,7 +21,6 @@ const footerSections = [
       { href: '/profile', label: 'Settings' },
       { href: '/token', label: '$SCAD' },
       { href: '/whitepaper', label: 'Whitepaper' },
-      { href: '/trade', label: 'Terminal' },
     ],
   },
   {

@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Activity,
   ChevronDown,
   Coins,
   Gamepad2,
@@ -149,23 +148,6 @@ export function Header() {
                 </div>
               )}
             </div>
-
-            {/* Terminal — the $SCAD token hub (Phase 7 expands this). */}
-            <Link
-              href="/trade"
-              className={cn(
-                'hidden md:flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors',
-                pathname.startsWith('/trade') || pathname.startsWith('/token')
-                  ? 'text-foreground bg-surface'
-                  : 'text-foreground-muted hover:text-foreground',
-              )}
-            >
-              <Activity className="h-4 w-4 text-primary-400" />
-              Terminal
-              <span className="rounded bg-primary-400/15 px-1 py-0.5 text-[9px] font-bold uppercase text-primary-300">
-                Beta
-              </span>
-            </Link>
 
             <Link
               href="/leaderboard"

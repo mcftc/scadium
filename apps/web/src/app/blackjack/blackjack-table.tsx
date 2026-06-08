@@ -441,7 +441,7 @@ function BetPanel({
           <>
             Round in progress — your bet{' '}
             <span className="font-mono font-bold text-foreground">
-              {formatSol(mySeat.bet.mainLamports, 3)} SOL
+              {formatSol(mySeat.bet.mainLamports, 3)}
             </span>
           </>
         ) : (
