@@ -45,6 +45,28 @@ export const BLACKJACK = {
   ALLOW_SURRENDER: false,
   ALLOW_DOUBLE_AFTER_SPLIT: true,
   MAX_SPLIT_HANDS: 4,
+  // Multiplayer table timing
+  BETTING_WINDOW_MS: 15_000, // "PLACE YOUR BETS" countdown
+  TURN_TIMEOUT_MS: 15_000, // per-seat action timer (timeout = stand)
+  SETTLE_PAUSE_MS: 5_000, // result display before the next betting window
+  IDLE_ROUNDS_TO_UNSEAT: 3, // sit-outs before a seat is freed
+  // Side bet payout multipliers (return = stake × multiplier; outcomes are
+  // pure functions of the dealt cards — see @scadium/fair evaluate21Plus3 /
+  // evaluatePerfectPairs).
+  SIDE_BETS: {
+    twentyOnePlusThree: {
+      suited_trips: 100,
+      straight_flush: 40,
+      three_of_a_kind: 30,
+      straight: 10,
+      flush: 5,
+    },
+    perfectPairs: {
+      perfect: 25,
+      colored: 10,
+      mixed: 5,
+    },
+  },
 } as const;
 
 /**

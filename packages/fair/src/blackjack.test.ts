@@ -1,5 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { blackjackDeal, handValue, isBlackjack, isBust, cardValue } from './blackjack';
+import {
+  blackjackDeal,
+  handValue,
+  isBlackjack,
+  isBust,
+  cardValue,
+  evaluate21Plus3,
+  evaluatePerfectPairs,
+} from './blackjack';
+import type { Card } from '@scadium/shared';
+
+const c = (rank: Card['rank'], suit: Card['suit']): Card => ({ rank, suit });
+
+describe('21+3 side bet evaluation', () => {
+  it('detects suited trips', () => {
+    expect(evaluate21Plus3(c('Q', 'H'), c('Q', 'H'), c('Q', 'H'))).toBe('suited_trips');
+  });
+  it('detects straight flush', () => {
+    expect(evaluate21Plus3(c('5', 'S'), c('6', 'S'), c('7', 'S'))).toBe('straight_flush');
+  });
+  it('detects three of a kind (mixed suits)', () => {
+    expect(evaluate21Plus3(c('K', 'H'), c('K', 'S'), c('K', 'D'))).toBe('three_of_a_kind');
+  });
+  it('detects straight (mixed suits) incl. A-2-3 and Q-K-A', () => {
+    expect(evaluate21Plus3(c('9', 'H'), c('10', 'S'), c('J', 'D'))).toBe('straight');
+    expect(evaluate21Plus3(c('A', 'H'), c('2', 'S'), c('3', 'D'))).toBe('straight');
+    expect(evaluate21Plus3(c('Q', 'H'), c('K', 'S'), c('A', 'D'))).toBe('straight');
+  });
+  it('detects flush', () => {
+    expect(evaluate21Plus3(c('2', 'C'), c('9', 'C'), c('K', 'C'))).toBe('flush');
+  });
+  it('returns none otherwise (and K-A-2 does not wrap)', () => {
+    expect(evaluate21Plus3(c('2', 'H'), c('9', 'S'), c('K', 'D'))).toBe('none');
+    expect(evaluate21Plus3(c('K', 'H'), c('A', 'S'), c('2', 'D'))).toBe('none');
+  });
+});
+
+describe('Perfect Pairs side bet evaluation', () => {
+  it('detects perfect pair (same rank + suit)', () => {
+    expect(evaluatePerfectPairs(c('8', 'D'), c('8', 'D'))).toBe('perfect');
+  });
+  it('detects colored pair (same rank + color)', () => {
+    expect(evaluatePerfectPairs(c('8', 'D'), c('8', 'H'))).toBe('colored');
+    expect(evaluatePerfectPairs(c('J', 'C'), c('J', 'S'))).toBe('colored');
+  });
+  it('detects mixed pair (same rank, different color)', () => {
+    expect(evaluatePerfectPairs(c('8', 'D'), c('8', 'S'))).toBe('mixed');
+  });
+  it('returns none for non-pairs', () => {
+    expect(evaluatePerfectPairs(c('8', 'D'), c('9', 'D'))).toBe('none');
+  });
+});
 
 describe('blackjack provably-fair engine', () => {
   it('deals deterministic cards', () => {

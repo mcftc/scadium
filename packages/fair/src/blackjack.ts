@@ -71,3 +71,60 @@ export function isBlackjack(cards: Card[]): boolean {
 export function isBust(cards: Card[]): boolean {
   return handValue(cards).total > 21;
 }
+
+// ---------- Side bets (pure functions of the dealt cards — no extra entropy) ----------
+
+export type TwentyOnePlusThreeOutcome =
+  | 'suited_trips'
+  | 'straight_flush'
+  | 'three_of_a_kind'
+  | 'straight'
+  | 'flush'
+  | 'none';
+
+export type PerfectPairsOutcome = 'perfect' | 'colored' | 'mixed' | 'none';
+
+/** Rank order index for straight detection (A counts both low and high). */
+const STRAIGHT_ORDER: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+const RED_SUITS: Suit[] = ['H', 'D'];
+
+function isStraightTriple(cards: Card[]): boolean {
+  const idxs = cards.map((c) => STRAIGHT_ORDER.indexOf(c.rank)).sort((a, b) => a - b);
+  if (new Set(idxs).size !== 3) return false;
+  // Consecutive run, with the A-high wheel (Q K A → idx 0,11,12) also valid.
+  const consecutive = idxs[2]! - idxs[0]! === 2 && idxs[1]! - idxs[0]! === 1;
+  const aceHigh = idxs[0] === 0 && idxs[1] === 11 && idxs[2] === 12;
+  return consecutive || aceHigh;
+}
+
+/**
+ * "21+3" side bet: the player's two cards + the dealer's upcard form a
+ * three-card poker hand. Deterministic — derived entirely from the committed
+ * deal, so the verifier reproduces it from the same seeds.
+ */
+export function evaluate21Plus3(
+  p1: Card,
+  p2: Card,
+  dealerUp: Card,
+): TwentyOnePlusThreeOutcome {
+  const cards = [p1, p2, dealerUp];
+  const sameSuit = cards.every((c) => c.suit === cards[0]!.suit);
+  const sameRank = cards.every((c) => c.rank === cards[0]!.rank);
+  const straight = isStraightTriple(cards);
+
+  if (sameRank && sameSuit) return 'suited_trips';
+  if (straight && sameSuit) return 'straight_flush';
+  if (sameRank) return 'three_of_a_kind';
+  if (straight) return 'straight';
+  if (sameSuit) return 'flush';
+  return 'none';
+}
+
+/** "Perfect Pairs" side bet on the player's two cards. */
+export function evaluatePerfectPairs(p1: Card, p2: Card): PerfectPairsOutcome {
+  if (p1.rank !== p2.rank) return 'none';
+  if (p1.suit === p2.suit) return 'perfect';
+  const sameColor = RED_SUITS.includes(p1.suit) === RED_SUITS.includes(p2.suit);
+  return sameColor ? 'colored' : 'mixed';
+}

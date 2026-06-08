@@ -16,6 +16,9 @@ out/
 dist/
 build/
 *.tsbuildinfo
+# stale in-source tsc output (packages emit to dist/, source is .ts only)
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
 
 # turbo
 .turbo
