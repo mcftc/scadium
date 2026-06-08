@@ -18,7 +18,7 @@ const footerSections = [
     links: [
       { href: '/affiliates', label: 'Affiliates' },
       { href: '/profile', label: 'Statistics' },
-      { href: '/profile', label: 'Settings' },
+      { href: '/settings', label: 'Settings' },
       { href: '/token', label: '$SCAD' },
       { href: '/whitepaper', label: 'Whitepaper' },
     ],

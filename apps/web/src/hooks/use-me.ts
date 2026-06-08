@@ -14,6 +14,9 @@ export interface MeResponse {
   walletAddress: string;
   username: string | null;
   avatarUrl: string | null;
+  email: string | null;
+  connections: { google: string | null; telegram: string | null; discord: string | null };
+  prefs: { emailWins: boolean; marketing: boolean };
   role: 'user' | 'moderator' | 'admin';
   refCode: string;
   referredBy: string | null;
@@ -112,5 +115,34 @@ export function useResetStats() {
   return useMutation({
     mutationFn: () => api<{ ok: true }>('/me/stats/reset', { method: 'POST', token }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['me', 'stats'] }),
+  });
+}
+
+export type SocialProvider = 'google' | 'telegram' | 'discord';
+
+export interface ProfilePatch {
+  username?: string;
+  email?: string;
+  notifyEmailWins?: boolean;
+  notifyMarketing?: boolean;
+}
+
+export function useUpdateProfile() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: ProfilePatch) =>
+      api<MeResponse>('/me', { method: 'PATCH', body: patch, token }),
+    onSuccess: (me) => qc.setQueryData(['me'], me),
+  });
+}
+
+export function useUpdateConnection() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { provider: SocialProvider; account: string | null }) =>
+      api<MeResponse>('/me/connection', { method: 'PUT', body: vars, token }),
+    onSuccess: (me) => qc.setQueryData(['me'], me),
   });
 }

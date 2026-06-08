@@ -22,7 +22,13 @@ export class UsersService {
 
   async updateProfile(
     id: string,
-    input: { username?: string; avatarUrl?: string },
+    input: {
+      username?: string;
+      avatarUrl?: string;
+      email?: string;
+      notifyEmailWins?: boolean;
+      notifyMarketing?: boolean;
+    },
   ): Promise<ReturnType<UsersService['serializeUser']>> {
     // Username collision check (the DB unique index will still catch races)
     if (input.username) {
@@ -38,6 +44,23 @@ export class UsersService {
       where: { id },
       data: input,
     });
+    return this.serializeUser(user);
+  }
+
+  /** Link or unlink a social account. `account` empty/null clears the link. */
+  async updateConnection(
+    id: string,
+    provider: 'google' | 'telegram' | 'discord',
+    account: string | null,
+  ): Promise<ReturnType<UsersService['serializeUser']>> {
+    const col =
+      provider === 'google'
+        ? 'googleAccount'
+        : provider === 'telegram'
+          ? 'telegramAccount'
+          : 'discordAccount';
+    const value = account && account.trim() ? account.trim() : null;
+    const user = await this.prisma.user.update({ where: { id }, data: { [col]: value } });
     return this.serializeUser(user);
   }
 
@@ -143,6 +166,12 @@ export class UsersService {
     walletAddress: string;
     username: string | null;
     avatarUrl: string | null;
+    email: string | null;
+    googleAccount: string | null;
+    telegramAccount: string | null;
+    discordAccount: string | null;
+    notifyEmailWins: boolean;
+    notifyMarketing: boolean;
     role: 'user' | 'moderator' | 'admin';
     refCode: string;
     referredById: string | null;
@@ -161,6 +190,13 @@ export class UsersService {
       walletAddress: user.walletAddress,
       username: user.username,
       avatarUrl: user.avatarUrl,
+      email: user.email,
+      connections: {
+        google: user.googleAccount,
+        telegram: user.telegramAccount,
+        discord: user.discordAccount,
+      },
+      prefs: { emailWins: user.notifyEmailWins, marketing: user.notifyMarketing },
       role: user.role,
       refCode: user.refCode,
       referredBy: user.referredById,

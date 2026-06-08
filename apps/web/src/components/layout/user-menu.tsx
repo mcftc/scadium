@@ -21,7 +21,7 @@ import { cn } from '@/lib/cn';
 const menuItems = [
   { href: '/profile', label: 'Statistics', icon: BarChart3 },
   { href: '/affiliates', label: 'Affiliates', icon: Users },
-  { href: '/profile', label: 'Settings', icon: Settings },
+  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/profile#bets', label: 'Transactions', icon: Receipt },
   { href: '/fairness', label: 'Fairness', icon: ShieldCheck },
   { href: '/tos', label: 'TOS', icon: FileText },

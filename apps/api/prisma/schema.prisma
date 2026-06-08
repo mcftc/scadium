@@ -75,6 +75,15 @@ model User {
   walletAddress  String   @unique
   username       String?  @unique
   avatarUrl      String?
+  // Optional contact + linked socials (Settings). Social fields hold the
+  // linked handle/email per provider; null = not connected.
+  email          String?
+  googleAccount  String?
+  telegramAccount String?
+  discordAccount String?
+  // Notification preferences.
+  notifyEmailWins Boolean @default(false)
+  notifyMarketing Boolean @default(false)
   role           Role     @default(user)
   refCode        String   @unique
   referredById   String?  @db.Uuid

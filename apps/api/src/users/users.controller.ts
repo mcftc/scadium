@@ -4,6 +4,7 @@ import {
   Get,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import type { AuthContext } from '../auth/jwt-auth.guard';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListBetsQueryDto } from './dto/list-bets-query.dto';
 import { StatsQueryDto } from './dto/stats-query.dto';
+import { ConnectionDto } from './dto/connection.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -30,9 +32,15 @@ export class UsersController {
   }
 
   @Patch()
-  @ApiOperation({ summary: 'Update username/avatar of the current user' })
+  @ApiOperation({ summary: 'Update username/avatar/email/notification prefs' })
   updateMe(@CurrentUser() ctx: AuthContext, @Body() dto: UpdateProfileDto) {
     return this.users.updateProfile(ctx.userId, dto);
+  }
+
+  @Put('connection')
+  @ApiOperation({ summary: 'Link or unlink a social account (google/telegram/discord)' })
+  updateConnection(@CurrentUser() ctx: AuthContext, @Body() dto: ConnectionDto) {
+    return this.users.updateConnection(ctx.userId, dto.provider, dto.account ?? null);
   }
 
   @Get('bets')
