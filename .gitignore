@@ -58,6 +58,8 @@ infra/prisma/*.db-journal
 .remember/
 .playwright-mcp/
 .claude/
+.agents/
+skills-lock.json
 .keys/
 
 # Rust/Anchor build artifacts

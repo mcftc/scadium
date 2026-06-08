@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Scadium — non-custodial, provably-fair Solana casino (Crash, Coinflip, Blackjack) modeled after solpump.io. Currently runs off-chain on a play-money balance (`User.playBalanceLamports`, seeded at 10 SOL); on-chain settlement via Anchor programs is planned for Phase 4+ (see `programs/` and the roadmap in `~/.claude/plans/misty-cooking-stearns.md`).
+Scadium — non-custodial, provably-fair Solana casino (Crash, Coinflip, Blackjack, Jackpot, Lottery) modeled after solpump.io. **It currently runs entirely on a play-money balance** (`User.playBalanceLamports`, seeded at 10 SOL): every casino game debits/credits Postgres, not the chain. On-chain Phases A–F shipped the Anchor programs (`scadium_vault`/`scadium_swap`/`scadium_lottery`), a `$SCAD` rewards economy, a SCAD/SOL CPMM pool + buy-and-burn, and on-chain lottery draws — **but the chain layer is currently decorative**: the programs are not built/deployed (no `target/`/IDL) and the vault balance is never reconciled with the spendable play balance, so `settle_bet` is a fire-and-forget receipt that moves ~0 lamports. Making it real money is the roadmap.
+
+**Read `ANALYSIS.md` (repo root) first** — it is the authoritative gap analysis: per-subsystem maturity, a risk register (5 critical / 10 high), a feature gap matrix, and the phased roadmap **G→M** with a real-money gating checklist. The work is tracked as GitHub issues/milestones (one milestone per phase G–M) on `mcftc/scadium`. There is **no** `~/.claude/plans/*` file — that earlier reference is stale.
 
 ## Stack & layout
 
@@ -13,12 +15,12 @@ pnpm + Turborepo monorepo. Node ≥ 20, pnpm ≥ 10.
 - `apps/web` — Next.js 15 (App Router, React 19, Tailwind, Solana wallet-adapter, Socket.io client, Zustand, TanStack Query)
 - `apps/api` — NestJS 10 (REST under `/api/v1`, Socket.io gateways, Prisma + Postgres, JWT auth, Swagger at `/docs`)
 - `apps/api/prisma` — single Postgres schema, source of truth for the DB
-- `apps/worker` — BullMQ worker (airdrops, leaderboards) — listed in README but not yet present in `apps/`
+- `apps/worker` — BullMQ worker (airdrops, leaderboards) — promised in README but **does not exist yet**; airdrop/leaderboard/buy-and-burn currently run as in-process `setTimeout`/`setInterval` in the API (a single-instance trap — Phase H stands up the worker)
 - `packages/shared` — TS types, zod schemas, and game constants (`COINFLIP`, `CRASH`, `BLACKJACK`, `AFFILIATE`, …)
 - `packages/fair` — provably-fair engine (HMAC-SHA256 over `${clientSeed}:${nonce}`, keyed by serverSeed)
 - `packages/ui` — shared component primitives
-- `programs/` — Anchor (Rust) Solana programs (Phase 4+; currently empty/stubbed)
-- `infra/docker-compose.yml` — Postgres 16 + Redis 7 for local dev
+- `programs/` — Anchor (Rust) Solana programs: `scadium_vault`, `scadium_swap`, `scadium_lottery` (~1.4k LOC of real code — **not empty**, but unbuilt/undeployed: no `target/`, no generated IDL, and the setup scripts import IDL files that don't exist yet)
+- `infra/docker-compose.yml` — Postgres 16 + Redis 7 for local dev (note: Redis is started but **currently unused** by the code)
 
 TS path aliases (`tsconfig.base.json`) map `@scadium/{shared,fair,ui}` → each package's `src/`. The web app additionally lists them under `transpilePackages` in `next.config.mjs`.
 
@@ -26,10 +28,15 @@ TS path aliases (`tsconfig.base.json`) map `@scadium/{shared,fair,ui}` → each 
 
 ```bash
 pnpm install                             # install (also runs `prisma generate` postinstall in apps/api)
+pnpm --filter @scadium/shared --filter @scadium/fair build   # ⚠️ build workspace pkgs FIRST (see note below)
 docker compose -f infra/docker-compose.yml up -d   # Postgres + Redis
+pnpm --filter @scadium/api exec prisma migrate deploy        # apply migrations
+pnpm --filter @scadium/api prisma:seed                       # optional: demo users + chat
 pnpm dev                                 # turbo: all dev servers in parallel
 pnpm build | pnpm lint | pnpm typecheck | pnpm test | pnpm format
 ```
+
+> **Cold-start gotcha:** the API imports `@scadium/{shared,fair}` which resolve to each package's `dist/` at runtime, but `turbo.json`'s `dev` task has **no** `dependsOn: ["^build"]`, so a fresh-clone `pnpm dev` (or `pnpm --filter @scadium/api dev`) fails with `Cannot find module '@scadium/shared'` until those packages are built once. Build them first (command above), or fix it properly per Phase H (add the `^build` dep / a `predev` step). Also note Prisma CLI reads `DATABASE_URL` from `apps/api/.env` (absent) — the value lives in the **root** `.env`; export it inline or rely on the API's `ConfigModule` (`envFilePath: ['../../.env', '.env']`) at runtime.
 
 Web → http://localhost:3000 · API → http://localhost:4000 · Swagger → http://localhost:4000/docs
 
