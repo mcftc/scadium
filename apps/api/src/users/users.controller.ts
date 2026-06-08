@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   Patch,
   Post,
   Put,
@@ -17,6 +19,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ListBetsQueryDto } from './dto/list-bets-query.dto';
 import { StatsQueryDto } from './dto/stats-query.dto';
 import { ConnectionDto } from './dto/connection.dto';
+import { WalletAddressDto, WalletLinkDto } from './dto/wallet.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -41,6 +44,36 @@ export class UsersController {
   @ApiOperation({ summary: 'Link or unlink a social account (google/telegram/discord)' })
   updateConnection(@CurrentUser() ctx: AuthContext, @Body() dto: ConnectionDto) {
     return this.users.updateConnection(ctx.userId, dto.provider, dto.account ?? null);
+  }
+
+  @Get('wallets')
+  @ApiOperation({ summary: 'List the account’s wallets (primary + linked)' })
+  listWallets(@CurrentUser() ctx: AuthContext) {
+    return this.users.listWallets(ctx.userId);
+  }
+
+  @Post('wallets/nonce')
+  @ApiOperation({ summary: 'Issue a SIWS nonce to prove ownership of a wallet to link' })
+  walletNonce(@CurrentUser() _ctx: AuthContext, @Body() dto: WalletAddressDto) {
+    return this.users.walletLinkNonce(dto.address);
+  }
+
+  @Post('wallets/link')
+  @ApiOperation({ summary: 'Link a wallet after signing the SIWS nonce with it' })
+  linkWallet(@CurrentUser() ctx: AuthContext, @Body() dto: WalletLinkDto) {
+    return this.users.linkWallet(ctx.userId, dto);
+  }
+
+  @Post('wallets/primary')
+  @ApiOperation({ summary: 'Make a linked wallet the primary one' })
+  setPrimaryWallet(@CurrentUser() ctx: AuthContext, @Body() dto: WalletAddressDto) {
+    return this.users.setPrimaryWallet(ctx.userId, dto.address);
+  }
+
+  @Delete('wallets/:address')
+  @ApiOperation({ summary: 'Unlink a linked wallet (cannot unlink the primary)' })
+  unlinkWallet(@CurrentUser() ctx: AuthContext, @Param('address') address: string) {
+    return this.users.unlinkWallet(ctx.userId, address);
   }
 
   @Get('bets')

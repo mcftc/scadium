@@ -132,9 +132,23 @@ model User {
   lotteryTickets LotteryTicket[]
   jackpotEntries JackpotEntry[]
   jackpotWins    JackpotRound[] @relation("jackpotWinner")
+  linkedWallets  LinkedWallet[]
 
   @@index([walletAddress])
   @@index([refCode])
+}
+
+// Additional Solana wallets linked to an account (beyond the primary
+// User.walletAddress). Sign-in with any linked address resolves to the owning
+// user; ownership is proven once via a SIWS signature at link time.
+model LinkedWallet {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address   String   @unique
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Session {

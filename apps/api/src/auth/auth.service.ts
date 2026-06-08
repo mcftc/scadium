@@ -65,6 +65,13 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({ where: { walletAddress } });
     if (existing) return existing;
 
+    // Multi-wallet: a non-primary linked address resolves to its owner.
+    const linked = await this.prisma.linkedWallet.findUnique({
+      where: { address: walletAddress },
+      include: { user: true },
+    });
+    if (linked) return linked.user;
+
     try {
       return await this.prisma.user.create({
         data: {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Mail, Globe, Send, MessageCircle, Check } from 'lucide-react';
+import { Mail, Globe, Send, MessageCircle, Check, Wallet, Star } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UsernameForm } from '@/components/profile/username-form';
@@ -11,6 +11,14 @@ import {
   useUpdateConnection,
   type SocialProvider,
 } from '@/hooks/use-me';
+import {
+  useWallets,
+  useLinkWallet,
+  useSetPrimaryWallet,
+  useUnlinkWallet,
+} from '@/hooks/use-wallets';
+import { ApiError } from '@/lib/api-client';
+import { shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
 const PROVIDERS: {
@@ -82,6 +90,8 @@ export function SettingsContent() {
         </CardContent>
       </Card>
 
+      <WalletsCard />
+
       <Card>
         <CardHeader>
           <CardTitle>Connections</CardTitle>
@@ -126,6 +136,83 @@ export function SettingsContent() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function WalletsCard() {
+  const { data } = useWallets();
+  const link = useLinkWallet();
+  const setPrimary = useSetPrimaryWallet();
+  const unlink = useUnlinkWallet();
+  const wallets = data?.wallets ?? [];
+  const busy = link.isPending || setPrimary.isPending || unlink.isPending;
+  const linkErr =
+    link.error instanceof ApiError
+      ? link.error.message
+      : link.error
+        ? (link.error as Error).message
+        : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Wallets</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-foreground-muted">
+          Link multiple wallets to one account — sign in with any of them. The primary wallet is
+          shown across the app.
+        </p>
+        {wallets.map((w) => (
+          <div
+            key={w.address}
+            className="flex items-center gap-3 rounded-xl border border-border bg-surface-elevated/40 px-4 py-3"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-400/10 border border-primary-400/20">
+              <Wallet className="h-4 w-4 text-primary-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-sm truncate">{shortAddress(w.address)}</div>
+              {w.primary && (
+                <div className="text-[10px] uppercase tracking-wider text-amber-400 inline-flex items-center gap-1">
+                  <Star className="h-3 w-3 fill-amber-400" /> Primary
+                </div>
+              )}
+            </div>
+            {!w.primary && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => setPrimary.mutate(w.address)}
+                >
+                  Make primary
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => unlink.mutate(w.address)}
+                >
+                  Unlink
+                </Button>
+              </div>
+            )}
+          </div>
+        ))}
+        <div className="pt-1">
+          <Button variant="secondary" disabled={busy} onClick={() => link.mutate()}>
+            <Wallet className="h-4 w-4" />
+            {link.isPending ? 'Signing…' : 'Link this wallet'}
+          </Button>
+          {linkErr && <p className="text-xs text-danger mt-2">{linkErr}</p>}
+          <p className="text-[11px] text-foreground-muted mt-2">
+            Connect the wallet you want to add, then sign to prove ownership.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

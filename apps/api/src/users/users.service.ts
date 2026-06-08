@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import type { GameType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SiwsService } from '../auth/siws.service';
 import type { StatsWindow } from './dto/stats-query.dto';
 
 /**
@@ -12,7 +18,91 @@ import type { StatsWindow } from './dto/stats-query.dto';
  */
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly siws: SiwsService,
+  ) {}
+
+  // ---------- Linked wallets (multi-wallet) ----------
+
+  async listWallets(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { linkedWallets: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return {
+      wallets: [
+        { address: user.walletAddress, primary: true },
+        ...user.linkedWallets.map((w) => ({ address: w.address, primary: false })),
+      ],
+    };
+  }
+
+  /** Issue a SIWS nonce for a wallet the user wants to link (signs to prove ownership). */
+  walletLinkNonce(address: string) {
+    return this.siws.issueNonce(address);
+  }
+
+  async linkWallet(
+    userId: string,
+    params: { address: string; message: string; signature: string; nonce: string },
+  ) {
+    const ok = this.siws.verifySignature({
+      walletAddress: params.address,
+      message: params.message,
+      signature: params.signature,
+      nonce: params.nonce,
+    });
+    if (!ok) throw new BadRequestException('Invalid signature');
+
+    const me = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!me) throw new NotFoundException('User not found');
+    if (me.walletAddress === params.address) {
+      throw new ConflictException('That is already your primary wallet');
+    }
+    const asPrimary = await this.prisma.user.findUnique({
+      where: { walletAddress: params.address },
+    });
+    if (asPrimary) throw new ConflictException('Wallet already in use by another account');
+    const asLinked = await this.prisma.linkedWallet.findUnique({
+      where: { address: params.address },
+    });
+    if (asLinked) {
+      throw new ConflictException(
+        asLinked.userId === userId ? 'Wallet already linked' : 'Wallet already in use',
+      );
+    }
+
+    await this.prisma.linkedWallet.create({ data: { userId, address: params.address } });
+    return this.listWallets(userId);
+  }
+
+  /** Promote a linked wallet to primary, demoting the current primary to linked. */
+  async setPrimaryWallet(userId: string, address: string) {
+    const me = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!me) throw new NotFoundException('User not found');
+    if (me.walletAddress === address) return this.listWallets(userId);
+    const linked = await this.prisma.linkedWallet.findUnique({ where: { address } });
+    if (!linked || linked.userId !== userId) {
+      throw new BadRequestException('Not one of your wallets');
+    }
+    await this.prisma.$transaction([
+      this.prisma.linkedWallet.delete({ where: { address } }),
+      this.prisma.linkedWallet.create({ data: { userId, address: me.walletAddress } }),
+      this.prisma.user.update({ where: { id: userId }, data: { walletAddress: address } }),
+    ]);
+    return this.listWallets(userId);
+  }
+
+  async unlinkWallet(userId: string, address: string) {
+    const linked = await this.prisma.linkedWallet.findUnique({ where: { address } });
+    if (!linked || linked.userId !== userId) {
+      throw new BadRequestException('Not a linked wallet');
+    }
+    await this.prisma.linkedWallet.delete({ where: { address } });
+    return this.listWallets(userId);
+  }
 
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
