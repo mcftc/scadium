@@ -6,6 +6,7 @@ import { Gift, Package, Percent, Coins } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/cn';
+import { DailyCaseModal } from './daily-case-modal';
 
 interface RewardsSummary {
   wagerClaimableScad: string;
@@ -27,6 +28,7 @@ export function RewardsDropdown() {
   const token = useAuthStore((s) => s.accessToken);
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [caseOpen, setCaseOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const summary = useQuery({
@@ -44,11 +46,6 @@ export function RewardsDropdown() {
       void qc.invalidateQueries({ queryKey: ['me'] });
     },
   });
-  const openCase = useMutation({
-    mutationFn: () => api('/airdrop/case/open', { method: 'POST', token }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['rewards'] }),
-  });
-
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
@@ -92,8 +89,11 @@ export function RewardsDropdown() {
               s.dailyCase.available ? 'Ready to open' : 'Opens again tomorrow'
             }
             action={s.dailyCase.available ? 'Open' : null}
-            busy={openCase.isPending}
-            onAction={() => openCase.mutate()}
+            busy={false}
+            onAction={() => {
+              setOpen(false);
+              setCaseOpen(true);
+            }}
           />
           <RewardRow
             icon={Percent}
@@ -113,6 +113,8 @@ export function RewardsDropdown() {
           />
         </div>
       )}
+
+      <DailyCaseModal open={caseOpen} onClose={() => setCaseOpen(false)} />
     </div>
   );
 }

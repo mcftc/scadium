@@ -1,15 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Gift, Check, X, Loader2, Clock } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Gift, Check, X, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { api, ApiError } from '@/lib/api-client';
+import { api } from '@/lib/api-client';
 import { formatSol } from '@/lib/format';
 import { useAuthStore } from '@/store/auth-store';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
+import { DailyCaseModal } from '@/components/rewards/daily-case-modal';
 
 interface NextDrop {
   nextDropAt: string;
@@ -25,18 +26,12 @@ interface CaseStatus {
   available: boolean;
   nextAvailableAt: string | null;
 }
-interface CaseOpenResult {
-  tier: string;
-  rewardLamports: string;
-  nextAvailableAt: string;
-}
 
 export function AirdropDashboard() {
   const token = useAuthStore((s) => s.accessToken);
   const { isAuthenticated } = useWalletAuth();
   const { open } = useWalletModal();
-  const qc = useQueryClient();
-  const [lastOpen, setLastOpen] = useState<CaseOpenResult | null>(null);
+  const [caseOpen, setCaseOpen] = useState(false);
 
   const next = useQuery({
     queryKey: ['airdrop', 'next'],
@@ -53,16 +48,6 @@ export function AirdropDashboard() {
     enabled: !!token,
     queryFn: () => api<CaseStatus>('/airdrop/case/status', { token }),
   });
-  const openCase = useMutation({
-    mutationFn: () =>
-      api<CaseOpenResult>('/airdrop/case/open', { method: 'POST', token }),
-    onSuccess: (res) => {
-      setLastOpen(res);
-      qc.invalidateQueries({ queryKey: ['airdrop', 'case'] });
-      qc.invalidateQueries({ queryKey: ['me'] });
-    },
-  });
-
   const [countdown, setCountdown] = useState('');
   useEffect(() => {
     if (!next.data) return;
@@ -76,9 +61,6 @@ export function AirdropDashboard() {
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [next.data]);
-
-  const openCaseError =
-    openCase.error instanceof ApiError ? openCase.error.message : null;
 
   return (
     <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
@@ -147,35 +129,13 @@ export function AirdropDashboard() {
           <div className="mx-auto h-32 w-32 rounded-3xl bg-gradient-primary shadow-glow flex items-center justify-center">
             <Gift className="h-16 w-16 text-white" />
           </div>
-          {lastOpen && (
-            <div className="rounded-xl border border-primary-400/30 bg-primary-400/10 p-4">
-              <div className="text-xs uppercase tracking-wider text-foreground-muted">
-                You won
-              </div>
-              <div className="text-2xl font-bold text-gradient mt-1">
-                {formatSol(lastOpen.rewardLamports, 4)}
-              </div>
-              <div className="text-[10px] uppercase tracking-wider text-primary-400 mt-1">
-                {lastOpen.tier}
-              </div>
-            </div>
-          )}
           {!isAuthenticated ? (
             <Button onClick={open} className="w-full">
               Connect to open
             </Button>
           ) : caseStatus.data?.available ? (
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={() => openCase.mutate()}
-              disabled={openCase.isPending}
-            >
-              {openCase.isPending ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Gift className="h-5 w-5" />
-              )}
+            <Button size="lg" className="w-full" onClick={() => setCaseOpen(true)}>
+              <Gift className="h-5 w-5" />
               Open free case
             </Button>
           ) : (
@@ -184,14 +144,13 @@ export function AirdropDashboard() {
               Next case tomorrow
             </Button>
           )}
-          {openCaseError && (
-            <p className="text-xs text-danger">{openCaseError}</p>
-          )}
           <div className="text-[11px] text-foreground-muted">
-            Drops: 89% common · 10% rare · 1% epic · 0.1% legendary (1 SOL)
+            Win up to 100,000 SCAD · 90% common · 9% rare · 0.9% epic · 0.1% legendary
           </div>
         </CardContent>
       </Card>
+
+      <DailyCaseModal open={caseOpen} onClose={() => setCaseOpen(false)} />
     </div>
   );
 }
