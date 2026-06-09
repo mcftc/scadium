@@ -5,9 +5,12 @@ import Link from 'next/link';
 import { Clock, HelpCircle, ShieldCheck, Ticket, Users } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/dialog';
-import { formatUsd } from '@/lib/format';
 import type { useLottery } from '@/hooks/use-lottery';
 import { LotteryBalls } from './lottery-balls';
+
+function fmtScad(n: number): string {
+  return `${n.toLocaleString(undefined, { maximumFractionDigits: n < 1 ? 4 : 2 })} SCAD`;
+}
 
 /**
  * bc.game-style page header: next draw time + 00d:01h:29m:08s countdown,
@@ -64,7 +67,7 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
               Latest Winning Prize
             </span>
             <span className="text-sm font-bold font-mono text-success">
-              {snap ? `${formatUsd(snap.latestWinningPrizeUsd)}` : '—'}
+              {snap ? fmtScad(snap.latestWinningPrizeScad) : '—'}
             </span>
           </div>
         </div>
@@ -95,10 +98,7 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
             </Link>
           </div>
           <div className="flex items-center gap-6">
-            <Stat
-              label="Pot"
-              value={snap ? `${formatUsd(snap.ticketCount * snap.ticketPriceUsd)} USDT` : '—'}
-            />
+            <Stat label="Pot" value={snap ? fmtScad(snap.totalPoolScad) : '—'} />
             <Stat
               label="Tickets"
               value={snap ? String(snap.ticketCount) : '—'}
@@ -113,11 +113,7 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
           <div className="text-[10px] uppercase tracking-wider text-foreground-muted">
             Last draw
           </div>
-          <LotteryBalls
-            main={snap.lastResult.mainNumbers}
-            bonus={snap.lastResult.bonusNumber}
-            size="sm"
-          />
+          <LotteryBalls digits={snap.lastResult.digits} size="sm" />
           <div className="text-[10px] text-foreground-muted">
             {snap.lastResult.winnersCount} winner{snap.lastResult.winnersCount === 1 ? '' : 's'}
           </div>
@@ -128,24 +124,25 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
         open={howToOpen}
         onClose={() => setHowToOpen(false)}
         title="How to play?"
-        description="Scadium Lottery — 5 of 36 + 1 of 10, provably fair on Solana."
+        description="Scadium Lottery — 6-digit · match left-to-right · $SCAD."
       >
         <ol className="list-decimal space-y-2 pl-4 text-sm text-foreground-muted">
           <li>
-            Pick <span className="text-foreground font-semibold">5 numbers</span> from 1–36 and{' '}
-            <span className="text-foreground font-semibold">1 Jackpot Ball</span> from 1–10 on each
-            ticket — or hit Quick Pick.
+            Pick a <span className="text-foreground font-semibold">6-digit number</span> (each digit
+            0–9) on each ticket — or hit Quick Pick.
           </li>
           <li>
-            Each ticket costs <span className="text-foreground font-semibold">0.1 USDT</span>, paid
-            on-chain from your wallet. Buy as many as you like — beyond 10 manual tickets the rest
-            are random quick-picks.
+            Each ticket is paid in <span className="text-foreground font-semibold">$SCAD</span> from
+            your wallet, with a bulk discount the more you buy. Buy as many as you like — beyond the
+            manual cards the rest are random quick-picks.
           </li>
           <li>Draws run every 8 hours at 04:00, 12:00 and 20:00 (UTC+3).</li>
           <li>
-            Match 3+ main numbers to win — match all 5 + the Jackpot Ball for the{' '}
-            <span className="text-success font-semibold">$100,000 grand prize</span>. The Jackpot
-            Ball only matters for the grand prize.
+            Match your digits to the winning number{' '}
+            <span className="text-foreground font-semibold">left-to-right</span> — the more leading
+            digits match, the higher your bracket. Match all 6 for the{' '}
+            <span className="text-success font-semibold">jackpot</span>. The pooled $SCAD prize is
+            split per bracket, shared among that bracket&apos;s winners.
           </li>
           <li>
             Every draw is committed before tickets open and revealed on-chain with Solana slot-hash

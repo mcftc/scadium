@@ -21,7 +21,8 @@ export default function WhitepaperPage() {
                 Scadium is a decentralized betting platform built on the Solana blockchain
                 that enables ultra-fast, frictionless gaming through its core offerings:
                 Crash, Coinflip, Blackjack, Jackpot and an on-chain Lottery. Players connect
-                their wallets directly, wager in SOL (lottery tickets in USDT), and enjoy
+                their wallets directly, wager in SOL (the PancakeSwap-style 6-digit lottery
+                buys tickets and pays pooled prizes in $SCAD), and enjoy
                 provably fair gameplay with cryptographic verification — every bet
                 settlement, token claim, swap and lottery draw is a real Solana transaction.
               </p>

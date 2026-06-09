@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   lotteryDraw,
   lotteryFinalEntropy,
-  lotteryMatches,
+  lotteryLeadingMatch,
+  lotteryBracket,
+  encodeLotteryNumber,
   padClientSeed32,
   syntheticSlotHash,
-  LOTTERY_MAIN_COUNT,
-  LOTTERY_MAIN_MAX,
-  LOTTERY_BONUS_MAX,
+  LOTTERY_DIGITS,
+  LOTTERY_DIGIT_MAX,
+  LOTTERY_TICKET_OFFSET,
 } from './lottery';
 import { generateClientSeed, generateServerSeed } from './seed';
 
@@ -23,8 +25,8 @@ const GOLDEN = {
   slotHash: Uint8Array.from({ length: 32 }, (_, i) => i),
   nonce: 0,
   entropyHex: 'ce7775cad5c28b6fb81bb6a97692854adcd58595a0016badea8381e4fe62960d',
-  main: [4, 15, 18, 19, 30],
-  bonus: 2,
+  digits: [5, 1, 9, 7, 3, 3],
+  encoded: 1_519_733,
 };
 
 describe('lottery provably-fair draw', () => {
@@ -38,14 +40,15 @@ describe('lottery provably-fair draw', () => {
     );
     expect(entropy.toString('hex')).toBe(GOLDEN.entropyHex);
 
-    const { main, bonus } = lotteryDraw(
+    const { digits, encoded } = lotteryDraw(
       GOLDEN.serverSeed,
       clientSeed32,
       GOLDEN.slotHash,
       GOLDEN.nonce,
     );
-    expect(main).toEqual(GOLDEN.main);
-    expect(bonus).toBe(GOLDEN.bonus);
+    expect(digits).toEqual(GOLDEN.digits);
+    expect(encoded).toBe(GOLDEN.encoded);
+    expect(encoded).toBe(LOTTERY_TICKET_OFFSET + 519_733);
   });
 
   it('is deterministic for identical inputs', () => {
@@ -56,22 +59,20 @@ describe('lottery provably-fair draw', () => {
     expect(a).toEqual(b);
   });
 
-  it('draws 5 distinct main numbers in 1..36 plus a bonus in 1..10', () => {
+  it('draws 6 digits each in 0..9 with the canonical encoding', () => {
     const serverSeed = generateServerSeed();
     const clientSeed32 = padClientSeed32(generateClientSeed());
     const slotHash = syntheticSlotHash(serverSeed, 'x');
     for (let i = 0; i < 2000; i++) {
-      const { main, bonus } = lotteryDraw(serverSeed, clientSeed32, slotHash, i);
-      expect(main).toHaveLength(LOTTERY_MAIN_COUNT);
-      expect(new Set(main).size).toBe(LOTTERY_MAIN_COUNT); // distinct
-      for (const n of main) {
-        expect(n).toBeGreaterThanOrEqual(1);
-        expect(n).toBeLessThanOrEqual(LOTTERY_MAIN_MAX);
+      const { digits, encoded } = lotteryDraw(serverSeed, clientSeed32, slotHash, i);
+      expect(digits).toHaveLength(LOTTERY_DIGITS);
+      for (const d of digits) {
+        expect(d).toBeGreaterThanOrEqual(0);
+        expect(d).toBeLessThanOrEqual(LOTTERY_DIGIT_MAX - 1);
       }
-      // ascending
-      expect([...main].sort((x, y) => x - y)).toEqual(main);
-      expect(bonus).toBeGreaterThanOrEqual(1);
-      expect(bonus).toBeLessThanOrEqual(LOTTERY_BONUS_MAX);
+      expect(encoded).toBe(encodeLotteryNumber(digits));
+      expect(encoded).toBeGreaterThanOrEqual(LOTTERY_TICKET_OFFSET);
+      expect(encoded).toBeLessThan(LOTTERY_TICKET_OFFSET + 1_000_000);
     }
   });
 
@@ -93,10 +94,19 @@ describe('lottery provably-fair draw', () => {
     ).toThrow();
   });
 
-  it('counts matches correctly', () => {
-    const m = lotteryMatches([1, 2, 3, 4, 5], 7, [3, 4, 5, 6, 7], 7);
-    expect(m).toEqual({ matchedMain: 3, matchedBonus: 1 });
-    const none = lotteryMatches([10, 20, 30, 31, 32], 1, [1, 2, 3, 4, 5], 9);
-    expect(none).toEqual({ matchedMain: 0, matchedBonus: 0 });
+  it('counts leading matches LEFT-TO-RIGHT and maps to the highest bracket', () => {
+    const draw = [5, 1, 9, 7, 3, 3];
+    // 3 leading digits match, then diverge → bracket 2 (match-first-3)
+    expect(lotteryLeadingMatch([5, 1, 9, 0, 0, 0], draw)).toBe(3);
+    expect(lotteryBracket(3)).toBe(2);
+    // all 6 → jackpot bracket 5
+    expect(lotteryLeadingMatch(draw, draw)).toBe(6);
+    expect(lotteryBracket(6)).toBe(5);
+    // first digit wrong → 0 matches even if later digits coincide
+    expect(lotteryLeadingMatch([0, 1, 9, 7, 3, 3], draw)).toBe(0);
+    expect(lotteryBracket(0)).toBeNull();
+    // exactly 1 leading match → bracket 0
+    expect(lotteryLeadingMatch([5, 0, 0, 0, 0, 0], draw)).toBe(1);
+    expect(lotteryBracket(1)).toBe(0);
   });
 });

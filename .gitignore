@@ -72,3 +72,6 @@ skills-lock.json
 # Rust/Anchor build artifacts
 target/
 !target/idl/
+
+# firecrawl scrape cache
+.firecrawl/

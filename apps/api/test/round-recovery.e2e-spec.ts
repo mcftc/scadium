@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { LOTTERY, JACKPOT } from '@scadium/shared';
+import { JACKPOT, ticketPriceScadBase } from '@scadium/shared';
 import { CrashEngine } from '../src/games/crash/crash.engine';
 import { JackpotEngine } from '../src/games/jackpot/jackpot.engine';
 import { LotteryEngine } from '../src/games/lottery/lottery.engine';
@@ -136,9 +136,9 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       data: {
         drawId: draw.id,
         userId: u.id,
-        mainNumbers: [1, 2, 3, 4, 5].slice(0, LOTTERY.MAIN_COUNT),
-        bonusNumber: 1,
-        costLamports: BigInt(LOTTERY.TICKET_PRICE_LAMPORTS),
+        digits: [1, 2, 3, 4, 5, 6],
+        costLamports: BigInt(0),
+        costScadBase: ticketPriceScadBase(),
       },
     });
 

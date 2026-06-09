@@ -28,16 +28,18 @@ export class LotteryGateway {
     drawId: string;
     ticketCount: number;
     potLamports: string;
+    totalPoolScadBase: string;
   }) {
     this.server.emit('lottery:ticket-sold', payload);
   }
 
   emitDrawResult(payload: {
     drawId: string;
-    mainNumbers: number[];
-    bonusNumber: number;
+    digits: number[];
     serverSeed: string;
     winnersCount: number;
+    bracketWinnerCounts: number[];
+    burnScadBase: string;
   }) {
     this.server.emit('lottery:draw-result', payload);
   }

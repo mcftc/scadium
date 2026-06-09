@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, ExternalLink, Star } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { formatUsd } from '@/lib/format';
 import { useDrawResults, useRecentDraws } from '@/hooks/use-lottery';
 import { LotteryBalls } from './lottery-balls';
 import { PlayerCell } from './player-cell';
@@ -96,13 +95,25 @@ export function ResultsTab() {
                   Winning Numbers
                   <Star className="h-3.5 w-3.5" />
                 </div>
-                {r.mainNumbers.length > 0 ? (
-                  <LotteryBalls main={r.mainNumbers} bonus={r.bonusNumber} />
+                {r.digits.length > 0 ? (
+                  <LotteryBalls digits={r.digits} />
                 ) : (
                   <span className="text-xs text-foreground-muted">Not drawn yet</span>
                 )}
               </div>
               <div className="space-y-1.5 text-right">
+                <div className="text-[11px] text-foreground-muted">
+                  Total pool this round:{' '}
+                  <span className="font-mono font-bold text-foreground">
+                    {r.totalPoolScad.toLocaleString()} SCAD
+                  </span>
+                </div>
+                <div className="text-[11px] text-foreground-muted">
+                  Burned this round:{' '}
+                  <span className="font-mono font-bold text-foreground/60">
+                    {r.burnScad.toLocaleString()} SCAD
+                  </span>
+                </div>
                 <div className="text-[11px] text-foreground-muted">
                   Total tickets sold in this round:{' '}
                   <span className="font-mono font-bold text-foreground">{r.ticketCount}</span>
@@ -152,19 +163,12 @@ export function ResultsTab() {
                     className="grid sm:grid-cols-[1fr_auto_70px_90px] grid-cols-1 gap-2 sm:gap-3 items-center rounded-lg bg-surface-elevated/40 px-3 py-2"
                   >
                     <PlayerCell player={w.player} />
-                    <LotteryBalls
-                      main={w.mainNumbers}
-                      bonus={w.bonusNumber}
-                      hits={r.mainNumbers}
-                      bonusHit={w.matchedBonus > 0}
-                      size="sm"
-                    />
+                    <LotteryBalls digits={w.digits} matchLen={w.matchLen} size="sm" />
                     <span className="text-xs font-mono sm:text-center">
-                      {w.matchedMain}
-                      {w.matchedBonus > 0 ? ' + bonus' : ''}
+                      {w.bracket !== null ? `Match ${w.bracket + 1}` : w.matchLen}
                     </span>
                     <span className="text-xs font-mono font-bold text-success sm:text-right">
-                      {formatUsd(w.payoutUsd)}
+                      {w.payoutScad.toLocaleString()} SCAD
                     </span>
                   </div>
                 ))}

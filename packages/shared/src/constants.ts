@@ -70,74 +70,111 @@ export const BLACKJACK = {
 } as const;
 
 /**
- * Demo SOL/USD price. The lottery is priced in USDT but the play-money ledger
- * runs on the SOL balance, so USDT prices convert to lamports at this fixed
- * rate. In production this would come from a price oracle.
+ * Demo SOL/USD price. The play-money ledger runs on the SOL balance, so USD
+ * prices convert to lamports at this fixed rate. In production this would come
+ * from a price oracle.
  */
 export const USD_PER_SOL = 150;
 
-// ---------- Lottery (5 of 36 + 1 of 10, provably fair) ----------
+/**
+ * Demo $SCAD/USD price. The lottery is denominated in $SCAD (the role CAKE
+ * plays in PancakeSwap) — ticket price, prize pool, burn and injection are all
+ * SCAD. The per-round ticket price targets `LOTTERY.TICKET_PRICE_USD` worth of
+ * SCAD at this rate. In production this would come from the SCAD/SOL CPMM or an
+ * oracle. At $0.10/SCAD a $1 ticket costs 10 SCAD.
+ */
+export const USD_PER_SCAD = 0.1;
+
+// ---------- Lottery (PancakeSwap-v2 style: 6-digit, pooled $SCAD prizes) ----------
+// A ticket is a 6-digit number, each digit 0..9, matched LEFT-TO-RIGHT in order.
+// Six brackets (match-first-1 .. match-first-6); a ticket wins only its highest
+// qualifying bracket. The round pool (ticket sales + injection + rollover) is
+// split per bracket, an equal share among each bracket's winners; unwon
+// brackets roll into the next round. Everything is denominated in $SCAD.
 export const LOTTERY = {
-  MAIN_COUNT: 5, // pick 5 main numbers
-  MAIN_MAX: 36, // from 1..36
-  BONUS_COUNT: 1, // plus 1 bonus ("power") number
-  BONUS_MAX: 10, // from 1..10
-  TICKET_PRICE_USD: 0.1, // $0.10 per ticket (canonical price)
-  // Tickets are paid in USDT (SPL, 6 decimals like the real one) — this is
-  // the on-chain transfer amount per ticket.
-  USDT_DECIMALS: 6,
-  TICKET_PRICE_USDT_BASE: 100_000, // 0.1 × 10^6
-  // Lamport-equivalent of the ticket price at the demo USD rate — used ONLY
-  // for the unified Bet ledger / aggregates (real money moves in USDT).
-  TICKET_PRICE_LAMPORTS: Math.round((0.1 / USD_PER_SOL) * LAMPORTS_PER_SOL),
-  // No ticket cap of any kind (bc.game parity) — the only limits are the
-  // buyer's USDT balance and per-tx chunking. Purchases are batched on-chain:
-  BATCH_TICKETS_PER_TX: 12, // picks per buy_tickets tx (CU headroom; program caps at 20)
-  MAX_MANUAL_ROWS: 10, // bc.game UI: at most 10 editable ticket rows; the rest are auto random
+  DIGITS: 6, // 6-digit ticket / winning number
+  DIGIT_MAX: 10, // each digit is u64 % 10 → 0..9
+  BRACKET_COUNT: 6, // match-first-1 .. match-first-6
+  TICKET_ENCODING_OFFSET: 1_000_000, // encoded = OFFSET + value (PancakeSwap 1xxxxxx guard)
+  // PancakeSwap contract-faithful split: `treasuryFee` is taken off the top
+  // (our burn), then `rewardsBreakdown` (which sums to 10000) divides the
+  // remaining 80% across brackets. This is mathematically identical to
+  // "bracket 1..6 = 1/3/6/10/20/40% of the TOTAL pool + 20% burn".
+  TREASURY_FEE_BPS: 2000, // 20% of the pool is burned (PancakeSwap treasuryFee, max 3000)
+  REWARDS_BREAKDOWN_BPS: [125, 375, 750, 1250, 2500, 5000] as readonly number[], // sums to 10000
+  DISCOUNT_DIVISOR: 2000, // bulk-discount divisor (≈4.95% off at 100 tickets)
+  MAX_TICKETS_PER_PURCHASE: 100, // PancakeSwap cap per buy
+  TICKET_PRICE_USD: 1, // ticket targets ~$1 of SCAD, set at round start
+  SCAD_DECIMALS: 9,
+  /** Fixed $SCAD injected into every round's pool (base units, 9 decimals). 1,000 SCAD. */
+  INJECTION_SCAD_BASE: 1_000 * 1_000_000_000,
+  // No ticket cap of any kind beyond the per-purchase cap (bc.game parity) — the
+  // only other limits are the buyer's SCAD balance and per-tx chunking:
+  BATCH_TICKETS_PER_TX: 12, // picks per buy_tickets tx (CU headroom; program caps at MAX_TICKETS_PER_TX)
+  MAX_TICKETS_PER_TX: 20, // on-chain per-tx cap (raise toward 100 after CU testing)
+  MAX_MANUAL_ROWS: 10, // UI: at most 10 editable ticket rows; the rest are auto random
   TICKET_COUNT_PRESETS: [5, 10, 20, 50] as readonly number[],
-  // bc.game cadence: a draw every 8 hours (3/day) at fixed wall-clock times.
-  // Hours are local (Europe/Istanbul = UTC+3, no DST). See `nextLotteryDrawAt`.
-  DRAW_HOURS_LOCAL: [4, 12, 20] as readonly number[],
+  // One draw per day at a fixed wall-clock hour. Hours are local
+  // (Europe/Istanbul = UTC+3, no DST). See `nextLotteryDrawAt`.
+  DRAW_HOURS_LOCAL: [12] as readonly number[],
   DRAW_TZ_OFFSET_MINUTES: 180, // UTC+3
-  /**
-   * bc.game fixed-prize model (house lottery, paid in USDT):
-   * the bonus number only matters for the grand prize; 4 or 3 main
-   * matches pay regardless of bonus.
-   */
-  PRIZES_USD: {
-    grand: 100_000, // 5 main + bonus
-    second: 3_000, // 5 main
-    third: 20, // 4 main
-    fourth: 1, // 3 main
-  },
   /** Loyalty: every 1 SOL wagered across ANY game earns 1 free ticket. */
   FREE_TICKET_PER_WAGER_LAMPORTS: LAMPORTS_PER_SOL,
 } as const;
 
-export type LotteryTier = 'grand' | 'second' | 'third' | 'fourth' | 'free' | 'none';
+/** Prize bracket: 0 = match-first-1 … 5 = match-all-6 (jackpot). */
+export type LotteryBracket = 0 | 1 | 2 | 3 | 4 | 5;
 
-/** bc.game-style tier for a ticket given its match counts. */
-export function lotteryTier(matchedMain: number, matchedBonus: number): LotteryTier {
-  if (matchedMain === 5 && matchedBonus === 1) return 'grand';
-  if (matchedMain === 5) return 'second';
-  if (matchedMain === 4) return 'third';
-  if (matchedMain === 3) return 'fourth';
-  return 'none';
+/**
+ * Highest bracket (0..5) a ticket wins given its leading-match count, or `null`
+ * for no win. A ticket wins ONLY this single bracket (PancakeSwap semantics).
+ */
+export function lotteryBracket(matchLen: number): LotteryBracket | null {
+  if (matchLen < 1) return null;
+  return (Math.min(matchLen, LOTTERY.DIGITS) - 1) as LotteryBracket;
 }
 
-/** Prize in USDT base units (6 decimals) for a tier; 0 for free/none. */
-export function lotteryPrizeUsdtBase(tier: LotteryTier): bigint {
-  const usd =
-    tier === 'grand'
-      ? LOTTERY.PRIZES_USD.grand
-      : tier === 'second'
-        ? LOTTERY.PRIZES_USD.second
-        : tier === 'third'
-          ? LOTTERY.PRIZES_USD.third
-          : tier === 'fourth'
-            ? LOTTERY.PRIZES_USD.fourth
-            : 0;
-  return BigInt(usd) * BigInt(10 ** LOTTERY.USDT_DECIMALS);
+/** Per-round ticket price in $SCAD base units (9 decimals) for a USD target. */
+export function ticketPriceScadBase(usd = LOTTERY.TICKET_PRICE_USD, usdPerScad = USD_PER_SCAD): bigint {
+  return BigInt(Math.round((usd / usdPerScad) * 10 ** LOTTERY.SCAD_DECIMALS));
+}
+
+/**
+ * SOL-equivalent (lamports) of a $SCAD base-unit amount, via the demo USD
+ * rates. Used ONLY for the unified Bet ledger / aggregates — real value moves
+ * in $SCAD. Float-based (precision is ample for ledger mirrors).
+ */
+export function scadBaseToLamports(
+  scadBase: bigint,
+  usdPerScad = USD_PER_SCAD,
+  usdPerSol = USD_PER_SOL,
+): bigint {
+  const usd = (Number(scadBase) / 10 ** LOTTERY.SCAD_DECIMALS) * usdPerScad;
+  return BigInt(Math.round((usd / usdPerSol) * LAMPORTS_PER_SOL));
+}
+
+/**
+ * PancakeSwap bulk-discount total for `n` tickets (integer base-unit math):
+ *   total = price · n · (DISCOUNT_DIVISOR + 1 − n) / DISCOUNT_DIVISOR
+ */
+export function bulkDiscountTotal(priceBase: bigint, n: number): bigint {
+  const d = BigInt(LOTTERY.DISCOUNT_DIVISOR);
+  return (priceBase * BigInt(n) * (d + 1n - BigInt(n))) / d;
+}
+
+/**
+ * Split a round's total SCAD pool into the burn slice and the six bracket
+ * slices, faithfully to the PancakeSwap contract: burn `treasuryFee` off the
+ * top, then divide the remainder by `rewardsBreakdown` (sums to 10000). A
+ * bracket slice with no winners is the caller's responsibility to roll forward.
+ */
+export function lotteryPoolSplit(totalPool: bigint): { brackets: bigint[]; burn: bigint } {
+  const burn = (totalPool * BigInt(LOTTERY.TREASURY_FEE_BPS)) / 10_000n;
+  const toWinners = totalPool - burn;
+  const brackets = LOTTERY.REWARDS_BREAKDOWN_BPS.map(
+    (bps) => (toWinners * BigInt(bps)) / 10_000n,
+  );
+  return { brackets, burn };
 }
 
 /**

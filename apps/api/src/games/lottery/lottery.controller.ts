@@ -39,6 +39,13 @@ export class LotteryController {
     return this.lottery.recentDraws(limit ? Math.min(100, Number(limit)) : 10);
   }
 
+  @Get('price')
+  @ApiOperation({ summary: 'Bulk-discounted $SCAD price for buying N tickets this round' })
+  price(@Query('count') count?: string) {
+    const n = Math.max(1, Math.min(100, Number(count) || 1));
+    return this.lottery.bulkPrice(n);
+  }
+
   @Get('draws/:drawIndex/results')
   @ApiOperation({ summary: 'One round: winning numbers, tallies and the public winners list' })
   drawResults(@Param('drawIndex') drawIndex: string) {
@@ -79,20 +86,13 @@ export class LotteryController {
   @Post('ticket')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Buy a ticket for the current draw (5 of 36 + 1 of 10)' })
+  @ApiOperation({ summary: 'Buy a ticket for the current draw (6 digits 0-9, paid in $SCAD)' })
   buyTicket(
     @CurrentUser() user: AuthContextLike,
     @Body() dto: BuyTicketDto,
     @Headers('idempotency-key') key?: string,
   ) {
-    return this.lottery.buyTicket(
-      {
-        userId: user.userId,
-        mainNumbers: dto.mainNumbers,
-        bonusNumber: dto.bonusNumber,
-      },
-      key,
-    );
+    return this.lottery.buyTicket({ userId: user.userId, digits: dto.digits }, key);
   }
 
   @Post('confirm')
@@ -118,19 +118,15 @@ export class LotteryController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Spend one earned free ticket on your picks' })
   useFreeTicket(@CurrentUser() user: AuthContextLike, @Body() dto: BuyTicketDto) {
-    return this.lottery.useFreeTicket({
-      userId: user.userId,
-      mainNumbers: dto.mainNumbers,
-      bonusNumber: dto.bonusNumber,
-    });
+    return this.lottery.useFreeTicket({ userId: user.userId, digits: dto.digits });
   }
 
   @Post('faucet')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Devnet: receive 10 demo USDT for ticket purchases' })
+  @ApiOperation({ summary: 'Devnet: receive demo $SCAD for ticket purchases' })
   faucet(@CurrentUser() user: AuthContextLike) {
-    return this.lottery.usdtFaucet(user.userId);
+    return this.lottery.scadFaucet(user.userId);
   }
 
   @Post('draw/run')
