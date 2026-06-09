@@ -136,7 +136,7 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
             your wallet, with a bulk discount the more you buy. Buy as many as you like — beyond the
             manual cards the rest are random quick-picks.
           </li>
-          <li>Draws run every 8 hours at 04:00, 12:00 and 20:00 (UTC+3).</li>
+          <li>One draw per day at 12:00 (UTC+3).</li>
           <li>
             Match your digits to the winning number{' '}
             <span className="text-foreground font-semibold">left-to-right</span> — the more leading
