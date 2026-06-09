@@ -1,6 +1,3 @@
--- DropForeignKey
-ALTER TABLE "AuditLog" DROP CONSTRAINT "AuditLog_targetUserId_fkey";
-
 -- AlterTable
 ALTER TABLE "LotteryDraw" DROP COLUMN "bonusNumber",
 DROP COLUMN "mainNumbers",
@@ -26,7 +23,3 @@ ADD COLUMN     "costScadBase" BIGINT NOT NULL DEFAULT 0,
 ADD COLUMN     "digits" INTEGER[],
 ADD COLUMN     "matchLen" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN     "payoutScadBase" BIGINT NOT NULL DEFAULT 0;
-
--- AddForeignKey
-ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_targetUserId_fkey" FOREIGN KEY ("targetUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
