@@ -1,7 +1,6 @@
 'use client';
 
 import { useMyLotteryTickets } from '@/hooks/use-lottery';
-import { formatUsd } from '@/lib/format';
 import { LotteryBalls } from './lottery-balls';
 import { cn } from '@/lib/cn';
 
@@ -25,7 +24,7 @@ export function MyTickets({ onlyOpen = false }: { onlyOpen?: boolean }) {
     <div className="space-y-2">
       {tickets.map((t) => {
         const settled = t.drawStatus === 'drawn';
-        const won = settled && t.won && t.payoutUsd > 0;
+        const won = settled && t.won && t.payoutScad > 0;
         return (
           <div
             key={t.id}
@@ -39,19 +38,13 @@ export function MyTickets({ onlyOpen = false }: { onlyOpen?: boolean }) {
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <LotteryBalls
-                main={t.mainNumbers}
-                bonus={t.bonusNumber}
-                hits={settled ? t.drawMain : undefined}
-                bonusHit={settled && t.matchedBonus > 0}
-                size="sm"
-              />
+              <LotteryBalls digits={t.digits} matchLen={settled ? t.matchLen : 0} size="sm" />
               <span className="text-[10px] shrink-0">
                 {!settled ? (
                   <span className="text-foreground-muted">pending</span>
                 ) : won ? (
                   <span className="text-success font-semibold">
-                    +{formatUsd(t.payoutUsd)} USDT
+                    +{t.payoutScad.toLocaleString()} SCAD
                   </span>
                 ) : (
                   <span className="text-foreground-muted">no win</span>
@@ -60,7 +53,8 @@ export function MyTickets({ onlyOpen = false }: { onlyOpen?: boolean }) {
             </div>
             {settled && (
               <div className="mt-1 text-[10px] text-foreground-muted">
-                matched {t.matchedMain} + {t.matchedBonus > 0 ? 'bonus' : 'no bonus'}
+                matched {t.matchLen} digit{t.matchLen === 1 ? '' : 's'}
+                {t.bracket !== null ? ` · Match ${t.bracket + 1}` : ''}
               </div>
             )}
           </div>

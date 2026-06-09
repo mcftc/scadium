@@ -4,17 +4,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LOTTERY } from '@scadium/shared';
+import { LOTTERY, bulkDiscountTotal, scadBaseToLamports } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
+const SCAD_BASE = 10 ** LOTTERY.SCAD_DECIMALS;
+
 /**
- * HTTP-facing facade for the lottery. Validates ticket picks, debits the
- * play-money balance, persists the ticket, and registers it with the engine.
- * The debit is pessimistic (taken at purchase) so balance can't be double-spent.
+ * HTTP-facing facade for the PancakeSwap-style $SCAD lottery. Validates ticket
+ * picks (6 digits 0..9), debits the play-money balance (off-chain) or confirms
+ * a user-signed on-chain $SCAD purchase, persists the ticket, and registers it
+ * with the engine. The debit is pessimistic so balance can't be double-spent.
  */
 @Injectable()
 export class LotteryService {
@@ -26,6 +29,21 @@ export class LotteryService {
 
   snapshot() {
     return this.engine.snapshot();
+  }
+
+  /** Bulk-discounted $SCAD price for buying N tickets this round. */
+  bulkPrice(n: number) {
+    const unit = this.engine.ticketPriceScadBase();
+    const total = bulkDiscountTotal(unit, n);
+    const full = unit * BigInt(n);
+    const discountBps = full > 0n ? Number(((full - total) * 10_000n) / full) : 0;
+    return {
+      count: n,
+      unitScadBase: unit.toString(),
+      totalScadBase: total.toString(),
+      totalScad: Number(total) / SCAD_BASE,
+      discountBps,
+    };
   }
 
   async forceDraw(userId: string) {
@@ -41,12 +59,18 @@ export class LotteryService {
     if (user?.role !== 'admin') throw new ForbiddenException('Admin access required');
   }
 
+  private validateDigits(digits: number[]) {
+    if (digits.length !== LOTTERY.DIGITS || digits.some((d) => d < 0 || d > 9 || !Number.isInteger(d))) {
+      throw new BadRequestException('Ticket must be 6 digits, each 0..9');
+    }
+  }
+
   /**
-   * On-chain purchase confirmation (Phase E): the web buys via a USER-signed
-   * buy_ticket transaction, then posts the signature here. We fetch the tx,
-   * decode the TicketBought event, and only then persist the ticket — the
-   * chain is the source of truth, the API cannot be tricked into recording
-   * a ticket that wasn't paid for.
+   * On-chain purchase confirmation: the web buys via a USER-signed
+   * buy_ticket(s) transaction (paid in $SCAD), then posts the signature here.
+   * We fetch the tx, decode the TicketBought events, and only then persist —
+   * the chain is the source of truth. The bulk discount applied on-chain is
+   * mirrored here (price split equally across the batch).
    */
   async confirmTicket(params: { userId: string; signature: string }) {
     if (!this.chain.lotteryEnabled) {
@@ -73,35 +97,35 @@ export class LotteryService {
       }
     }
 
-    const price = BigInt(LOTTERY.TICKET_PRICE_LAMPORTS);
+    // The on-chain transfer was the bulk-discounted total of this batch.
+    const totalScad = bulkDiscountTotal(this.engine.ticketPriceScadBase(), events.length);
+    const perTicketScad = totalScad / BigInt(events.length);
+    const perTicketLamports = scadBaseToLamports(perTicketScad);
+
     // @@unique([txSignature, txIndex]) makes replaying a signature impossible —
-    // createMany throws on the duplicate key before anything is recorded.
+    // the transaction throws on the duplicate key before anything is recorded.
     const tickets = await this.prisma.$transaction(
       events.map((event, txIndex) =>
         this.prisma.lotteryTicket.create({
           data: {
             drawId: open.id,
             userId: params.userId,
-            mainNumbers: [...event.main].sort((a, b) => a - b),
-            bonusNumber: event.bonus,
-            costLamports: price,
+            digits: event.digits,
+            costScadBase: perTicketScad,
+            costLamports: perTicketLamports,
             txSignature: params.signature,
             txIndex,
           },
         }),
       ),
     );
-    await this.engine.onTicketSold(price, tickets.length);
+    await this.engine.onTicketSold(totalScad, scadBaseToLamports(totalScad), tickets.length);
 
     return {
       txSignature: params.signature,
       count: tickets.length,
-      tickets: tickets.map((t) => ({
-        id: t.id,
-        drawId: t.drawId,
-        mainNumbers: t.mainNumbers,
-        bonusNumber: t.bonusNumber,
-      })),
+      totalScad: Number(totalScad) / SCAD_BASE,
+      tickets: tickets.map((t) => ({ id: t.id, drawId: t.drawId, digits: t.digits })),
     };
   }
 
@@ -122,12 +146,9 @@ export class LotteryService {
     };
   }
 
-  /** Spend one earned free ticket on the caller's picks (no USDT moves). */
-  async useFreeTicket(params: { userId: string; mainNumbers: number[]; bonusNumber: number }) {
-    const distinct = new Set(params.mainNumbers);
-    if (distinct.size !== LOTTERY.MAIN_COUNT) {
-      throw new BadRequestException('Main numbers must be 5 distinct values');
-    }
+  /** Spend one earned free ticket on the caller's picks (no $SCAD moves). */
+  async useFreeTicket(params: { userId: string; digits: number[] }) {
+    this.validateDigits(params.digits);
     const open = this.engine.getOpenDraw();
     if (!open) throw new BadRequestException('No open draw');
 
@@ -147,60 +168,47 @@ export class LotteryService {
         data: {
           drawId: open.id,
           userId: params.userId,
-          mainNumbers: [...params.mainNumbers].sort((a, b) => a - b),
-          bonusNumber: params.bonusNumber,
+          digits: params.digits,
           costLamports: BigInt(0),
+          costScadBase: BigInt(0),
           free: true,
         },
       });
     });
-    await this.engine.onTicketSold(BigInt(0));
-    return {
-      id: ticket.id,
-      drawId: ticket.drawId,
-      mainNumbers: ticket.mainNumbers,
-      bonusNumber: ticket.bonusNumber,
-      free: true,
-    };
+    await this.engine.onTicketSold(BigInt(0), BigInt(0));
+    return { id: ticket.id, drawId: ticket.drawId, digits: ticket.digits, free: true };
   }
 
-  /** Devnet convenience: top the caller up with 10 demo USDT. */
-  async usdtFaucet(userId: string) {
+  /** Devnet convenience: top the caller up with demo $SCAD. */
+  async scadFaucet(userId: string) {
     if (!this.chain.lotteryEnabled) {
       throw new BadRequestException('On-chain lottery is not enabled');
     }
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    const sig = await this.chain.usdtFaucet(user.walletAddress, BigInt(10_000_000)); // 10 USDT
+    const amount = BigInt(100) * BigInt(SCAD_BASE); // 100 SCAD
+    const sig = await this.chain.scadFaucet(user.walletAddress, amount);
     if (!sig) throw new BadRequestException('Faucet transfer failed');
-    return { signature: sig, amountUsdtBase: '10000000' };
+    return { signature: sig, amountScadBase: amount.toString() };
   }
 
-  async buyTicket(
-    params: { userId: string; mainNumbers: number[]; bonusNumber: number },
-    key?: string,
-  ) {
+  async buyTicket(params: { userId: string; digits: number[] }, key?: string) {
     // When the on-chain lottery is live, the play-money path is closed —
-    // tickets must be real wallet-signed USDT purchases (POST /confirm).
+    // tickets must be real wallet-signed $SCAD purchases (POST /confirm).
     if (this.chain.lotteryEnabled) {
       throw new BadRequestException(
-        'Tickets are bought on-chain with USDT — sign the purchase with your wallet',
+        'Tickets are bought on-chain with $SCAD — sign the purchase with your wallet',
       );
     }
-    const { mainNumbers, bonusNumber } = params;
-
-    // Validate the picks beyond what the DTO checks (distinctness).
-    const distinct = new Set(mainNumbers);
-    if (distinct.size !== LOTTERY.MAIN_COUNT) {
-      throw new BadRequestException('Main numbers must be 5 distinct values');
-    }
+    this.validateDigits(params.digits);
 
     const open = this.engine.getOpenDraw();
     if (!open) {
       throw new BadRequestException('No open draw — the next one starts shortly');
     }
 
-    const price = BigInt(LOTTERY.TICKET_PRICE_LAMPORTS);
+    const priceScad = this.engine.ticketPriceScadBase();
+    const priceLamports = scadBaseToLamports(priceScad);
 
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
@@ -214,7 +222,7 @@ export class LotteryService {
         return { response: replay as ReturnType<typeof this.serializeTicket>, replayed: true };
       }
 
-      await applyBalanceDelta(tx, params.userId, -price, {
+      await applyBalanceDelta(tx, params.userId, -priceLamports, {
         reason: 'lottery_ticket',
         refType: 'LotteryDraw',
         refId: open.id,
@@ -223,9 +231,9 @@ export class LotteryService {
         data: {
           drawId: open.id,
           userId: params.userId,
-          mainNumbers: [...mainNumbers].sort((a, b) => a - b),
-          bonusNumber,
-          costLamports: price,
+          digits: params.digits,
+          costLamports: priceLamports,
+          costScadBase: priceScad,
         },
       });
 
@@ -234,8 +242,7 @@ export class LotteryService {
       return { response, replayed: false };
     });
 
-    // Skip the pot/ticket-count engine update on replay — already counted.
-    if (!outcome.replayed) await this.engine.onTicketSold(price);
+    if (!outcome.replayed) await this.engine.onTicketSold(priceScad, priceLamports, 1);
 
     return outcome.response;
   }
@@ -243,23 +250,23 @@ export class LotteryService {
   private serializeTicket(ticket: {
     id: string;
     drawId: string;
-    mainNumbers: number[];
-    bonusNumber: number;
+    digits: number[];
+    costScadBase: bigint;
     costLamports: bigint;
   }) {
     return {
       id: ticket.id,
       drawId: ticket.drawId,
-      mainNumbers: ticket.mainNumbers,
-      bonusNumber: ticket.bonusNumber,
+      digits: ticket.digits,
+      costScadBase: ticket.costScadBase.toString(),
       costLamports: ticket.costLamports.toString(),
     };
   }
 
   /**
-   * bc.game-style "game number": the draw's wall-clock time (UTC+3, same zone
-   * as the draw schedule) formatted as YYYYMMDDHHMMSS. Computed server-side —
-   * the web bundle can't import runtime values from @scadium/shared.
+   * "Game number": the draw's wall-clock time (UTC+3, same zone as the draw
+   * schedule) formatted as YYYYMMDDHHMMSS. Computed server-side — the web
+   * bundle can't import runtime values from @scadium/shared.
    */
   private gameNumber(drawAt: Date): string {
     const local = new Date(drawAt.getTime() + LOTTERY.DRAW_TZ_OFFSET_MINUTES * 60_000);
@@ -268,6 +275,10 @@ export class LotteryService {
       `${local.getUTCFullYear()}${p(local.getUTCMonth() + 1)}${p(local.getUTCDate())}` +
       `${p(local.getUTCHours())}${p(local.getUTCMinutes())}${p(local.getUTCSeconds())}`
     );
+  }
+
+  private scad(base: bigint): number {
+    return Number(base) / SCAD_BASE;
   }
 
   async myTickets(userId: string, limit = 20, wonOnly = false) {
@@ -281,21 +292,17 @@ export class LotteryService {
       id: t.id,
       drawId: t.drawId,
       gameNumber: this.gameNumber(t.draw.drawAt),
-      mainNumbers: t.mainNumbers,
-      bonusNumber: t.bonusNumber,
-      costLamports: t.costLamports.toString(),
-      matchedMain: t.matchedMain,
-      matchedBonus: t.matchedBonus,
-      payoutLamports: t.payoutLamports.toString(),
-      payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
-      tier: t.tier,
+      digits: t.digits,
+      costScad: this.scad(t.costScadBase),
+      matchLen: t.matchLen,
+      bracket: t.bracket,
+      payoutScad: this.scad(t.payoutScadBase),
       free: t.free,
       txSignature: t.txSignature,
       prizeTxSignature: t.prizeTxSignature,
       won: t.won,
       drawStatus: t.draw.status,
-      drawMain: t.draw.mainNumbers,
-      drawBonus: t.draw.bonusNumber,
+      drawDigits: t.draw.winningDigits,
       createdAt: t.createdAt.toISOString(),
     }));
   }
@@ -307,22 +314,21 @@ export class LotteryService {
       this.prisma.lotteryTicket.count({ where: { userId, won: true } }),
       this.prisma.lotteryTicket.aggregate({
         where: { userId },
-        _sum: { payoutUsdtBase: true },
+        _sum: { payoutScadBase: true },
       }),
     ]);
     return {
       totalTickets,
       winningTickets,
-      totalPrizeUsd:
-        Number(prizeSum._sum.payoutUsdtBase ?? BigInt(0)) / 10 ** LOTTERY.USDT_DECIMALS,
+      totalPrizeScad: this.scad(prizeSum._sum.payoutScadBase ?? BigInt(0)),
     };
   }
 
   /**
-   * bc.game Results tab: one round's winning numbers, sale/winner tallies and
-   * the public winners list (player display follows the leaderboard precedent:
-   * username or truncated wallet). Public endpoint — the server seed is only
-   * exposed once the draw has been revealed.
+   * Results tab: one round's winning number, sale/winner tallies and the public
+   * winners list (player display follows the leaderboard precedent: username or
+   * truncated wallet). Public endpoint — the server seed is only exposed once
+   * the draw has been revealed.
    */
   async drawResults(drawIndex: bigint, winnersLimit = 50) {
     const draw = await this.prisma.lotteryDraw.findUnique({
@@ -336,7 +342,7 @@ export class LotteryService {
       this.prisma.lotteryTicket.count({ where: { drawId: draw.id, won: true } }),
       this.prisma.lotteryTicket.findMany({
         where: { drawId: draw.id, won: true },
-        orderBy: { payoutUsdtBase: 'desc' },
+        orderBy: { payoutScadBase: 'desc' },
         take: winnersLimit,
         include: {
           user: { select: { username: true, walletAddress: true, avatarUrl: true } },
@@ -351,10 +357,12 @@ export class LotteryService {
       status: draw.status,
       drawAt: draw.drawAt.toISOString(),
       drawnAt: draw.drawnAt?.toISOString() ?? null,
-      mainNumbers: draw.mainNumbers,
-      bonusNumber: draw.bonusNumber,
+      digits: draw.winningDigits,
       ticketCount: draw.ticketCount,
-      potLamports: draw.potLamports.toString(),
+      totalPoolScad: this.scad(draw.totalPoolScadBase),
+      burnScad: this.scad(draw.burnScadBase),
+      bracketWinnerCounts: draw.bracketWinnerCounts,
+      bracketAmountsScad: draw.bracketAmountsScadBase.map((a) => this.scad(a)),
       commitTxSignature: draw.commitTxSignature,
       revealTxSignature: draw.revealTxSignature,
       serverSeed: drawn ? draw.seed.serverSeed : null,
@@ -369,20 +377,18 @@ export class LotteryService {
           walletAddress: t.user.walletAddress,
           avatarUrl: t.user.avatarUrl,
         },
-        mainNumbers: t.mainNumbers,
-        bonusNumber: t.bonusNumber,
-        matchedMain: t.matchedMain,
-        matchedBonus: t.matchedBonus,
-        tier: t.tier,
-        payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+        digits: t.digits,
+        matchLen: t.matchLen,
+        bracket: t.bracket,
+        payoutScad: this.scad(t.payoutScadBase),
       })),
     };
   }
 
-  /** bc.game Jackpot Winners tab: historical grand-prize winners. */
+  /** Jackpot Winners tab: historical jackpot (bracket 5, all-6-match) winners. */
   async jackpotWinners(limit = 50) {
     const tickets = await this.prisma.lotteryTicket.findMany({
-      where: { tier: 'grand' },
+      where: { bracket: LOTTERY.BRACKET_COUNT - 1 },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
@@ -399,11 +405,10 @@ export class LotteryService {
         walletAddress: t.user.walletAddress,
         avatarUrl: t.user.avatarUrl,
       },
-      mainNumbers: t.mainNumbers,
-      bonusNumber: t.bonusNumber,
-      matchedMain: t.matchedMain,
-      matchedBonus: t.matchedBonus,
-      payoutUsd: Number(t.payoutUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+      digits: t.digits,
+      matchLen: t.matchLen,
+      bracket: t.bracket,
+      payoutScad: this.scad(t.payoutScadBase),
     }));
   }
 
@@ -420,10 +425,9 @@ export class LotteryService {
       gameNumber: this.gameNumber(d.drawAt),
       commitTxSignature: d.commitTxSignature,
       revealTxSignature: d.revealTxSignature,
-      mainNumbers: d.mainNumbers,
-      bonusNumber: d.bonusNumber,
+      digits: d.winningDigits,
       ticketCount: d.ticketCount,
-      potLamports: d.potLamports.toString(),
+      totalPoolScad: this.scad(d.totalPoolScadBase),
       drawnAt: d.drawnAt?.toISOString() ?? null,
       serverSeed: d.seed.serverSeed,
       serverSeedHash: d.seed.serverSeedHash,

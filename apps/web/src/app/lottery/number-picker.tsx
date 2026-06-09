@@ -1,62 +1,52 @@
 'use client';
 
+import { useState } from 'react';
 import { cn } from '@/lib/cn';
 
 /**
- * Grid number selector. Players pick exactly `mainCount` numbers from
- * 1..mainMax and one bonus from 1..bonusMax. Pure controlled component — the
- * parent owns selection state.
+ * PancakeSwap-style 6-digit picker. A ticket is 6 digits (each 0..9), matched
+ * left-to-right. Tap a position tile to make it active, then tap a digit on the
+ * 0-9 keypad to set it (auto-advances to the next position). Pure controlled
+ * component — the parent owns the digits array.
  */
 export function NumberPicker({
-  mainMax,
-  mainCount,
-  bonusMax,
-  main,
-  bonus,
-  onToggleMain,
-  onPickBonus,
+  digits,
+  onSetDigit,
   disabled,
 }: {
-  mainMax: number;
-  mainCount: number;
-  bonusMax: number;
-  main: number[];
-  bonus: number | null;
-  onToggleMain: (n: number) => void;
-  onPickBonus: (n: number) => void;
+  digits: number[]; // length 6, each 0..9
+  onSetDigit: (index: number, digit: number) => void;
   disabled?: boolean;
 }) {
+  const [active, setActive] = useState(0);
+
   return (
     <div className="space-y-5">
       <div>
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs uppercase tracking-wider text-foreground-muted">
-            Pick {mainCount} numbers
+            Your 6-digit number
           </span>
-          <span className="text-xs font-mono text-foreground-muted">
-            {main.length}/{mainCount}
-          </span>
+          <span className="text-xs font-mono text-foreground-muted">matched left → right</span>
         </div>
-        <div className="grid grid-cols-9 gap-1.5">
-          {Array.from({ length: mainMax }, (_, i) => i + 1).map((n) => {
-            const selected = main.includes(n);
-            const full = main.length >= mainCount && !selected;
+        <div className="grid grid-cols-6 gap-1.5">
+          {Array.from({ length: 6 }, (_, i) => {
+            const d = digits[i] ?? 0;
+            const isActive = i === active;
             return (
               <button
-                key={n}
+                key={i}
                 type="button"
-                disabled={disabled || full}
-                onClick={() => onToggleMain(n)}
+                disabled={disabled}
+                onClick={() => setActive(i)}
                 className={cn(
-                  'aspect-square rounded-lg text-xs font-bold font-mono transition-all',
-                  selected
-                    ? 'bg-gradient-primary text-white shadow-lg shadow-primary-400/30 scale-105'
-                    : full
-                      ? 'bg-surface-elevated/40 text-foreground-muted/30 cursor-not-allowed'
-                      : 'bg-surface-elevated text-foreground-muted hover:text-foreground hover:bg-surface-elevated/80 hover:ring-1 hover:ring-primary-400/40',
+                  'aspect-square rounded-lg text-base font-bold font-mono transition-all',
+                  isActive
+                    ? 'bg-gradient-primary text-white shadow-lg shadow-primary-400/30 scale-105 ring-2 ring-primary-400/60'
+                    : 'bg-surface-elevated text-foreground hover:text-foreground hover:bg-surface-elevated/80 hover:ring-1 hover:ring-primary-400/40',
                 )}
               >
-                {n}
+                {d}
               </button>
             );
           })}
@@ -66,19 +56,22 @@ export function NumberPicker({
       <div>
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs uppercase tracking-wider text-foreground-muted">
-            Bonus number
+            Set position {active + 1}
           </span>
-          <span className="text-xs font-mono text-foreground-muted">{bonus ? '1/1' : '0/1'}</span>
+          <span className="text-xs font-mono text-foreground-muted">0–9</span>
         </div>
         <div className="grid grid-cols-10 gap-1.5">
-          {Array.from({ length: bonusMax }, (_, i) => i + 1).map((n) => {
-            const selected = bonus === n;
+          {Array.from({ length: 10 }, (_, n) => {
+            const selected = (digits[active] ?? 0) === n;
             return (
               <button
                 key={n}
                 type="button"
                 disabled={disabled}
-                onClick={() => onPickBonus(n)}
+                onClick={() => {
+                  onSetDigit(active, n);
+                  setActive((a) => Math.min(5, a + 1));
+                }}
                 className={cn(
                   'aspect-square rounded-lg text-xs font-bold font-mono transition-all',
                   selected

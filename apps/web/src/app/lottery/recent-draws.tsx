@@ -30,10 +30,10 @@ export function RecentDraws() {
             key={d.id}
             className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-surface-elevated/40"
           >
-            <LotteryBalls main={d.mainNumbers} bonus={d.bonusNumber} size="sm" />
+            <LotteryBalls digits={d.digits} size="sm" />
             <div className="flex items-center gap-3 shrink-0">
               <span className="text-[10px] text-foreground-muted tabular-nums">
-                {d.ticketCount} tickets
+                {d.totalPoolScad.toLocaleString()} SCAD · {d.ticketCount} tickets
               </span>
               <Link
                 href={verifyHref}

@@ -4,25 +4,26 @@ import {
   generateClientSeed,
   generateServerSeed,
   lotteryDraw,
-  lotteryMatches,
+  lotteryLeadingMatch,
+  lotteryBracket,
   padClientSeed32,
   syntheticSlotHash,
 } from '@scadium/fair';
 import {
-  LAMPORTS_PER_SOL,
   LOTTERY,
   SCAD,
-  USD_PER_SOL,
-  lotteryPrizeUsdtBase,
-  lotteryTier,
+  lotteryPoolSplit,
+  ticketPriceScadBase,
+  scadBaseToLamports,
   nextLotteryDrawAt,
 } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryGateway } from './lottery.gateway';
+import { splitBracketPrizes } from './lottery.settlement';
 
-const TIER_INDEX: Record<string, number> = { grand: 0, second: 1, third: 2, fourth: 3 };
+const SCAD_BASE_NUM = 10 ** LOTTERY.SCAD_DECIMALS;
 
 interface CurrentDraw {
   id: string;
@@ -37,35 +38,43 @@ interface CurrentDraw {
   drawAt: number; // epoch ms when this draw resolves
   status: 'open' | 'drawn';
   ticketCount: number;
-  potLamports: bigint;
+  // $SCAD economy for this round (base units):
+  ticketPriceScadBase: bigint;
+  injectionScadBase: bigint;
+  rolloverScadBase: bigint; // carried in from the prior round's unwon slices
+  salesScadBase: bigint; // running discounted sales (display only; recomputed at settle)
+  potLamports: bigint; // SOL-equiv ledger mirror
   commitTxSignature: string | null;
 }
 
 interface LastResult {
   drawId: string;
   drawIndex: string;
-  mainNumbers: number[];
-  bonusNumber: number;
+  digits: number[];
   serverSeed: string;
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
   slotHash: string; // hex — third entropy input, needed by the verifier
   winnersCount: number;
-  freeTickets: number;
-  topPrizeUsd: number; // biggest single-ticket payout of the round (header banner)
+  bracketWinnerCounts: number[];
+  totalPoolScad: number;
+  burnScad: number;
+  topPrizeScad: number; // biggest single-ticket payout of the round (header banner)
   revealTxSignature: string | null;
   drawnAt: number;
 }
 
 /**
- * Singleton lottery scheduler — bc.game model, anchored on-chain.
+ * Singleton lottery scheduler — PancakeSwap-v2 model, anchored on-chain.
  *
- * Every 8 hours (04:00/12:00/20:00 Istanbul): open a draw → publish the
- * sha256(serverSeed) commitment ON-CHAIN (commit_draw) → sell USER-signed
- * 0.1-USDT tickets → at draw time reveal the seed on-chain (the program
- * asserts the commitment) → fixed USD prizes paid in USDT from the lottery
- * treasury (pay_prize). Free tickets are a wager-loyalty reward (1/SOL).
+ * Once a day at 12:00 (Istanbul): open a draw → publish the sha256(serverSeed)
+ * commitment ON-CHAIN (commit_draw) + inject house $SCAD → sell USER-signed
+ * $SCAD tickets (6 digits) with a bulk discount → at draw time reveal the seed
+ * on-chain (the program derives the 6-digit number) → split the pool per
+ * bracket (equal share among each bracket's winners, 20% burned, unwon slices
+ * rolled forward) and pay winners in $SCAD (pay_prize). Free tickets are a
+ * wager-loyalty reward (1/SOL).
  */
 @Injectable()
 export class LotteryEngine implements OnModuleInit {
@@ -73,6 +82,8 @@ export class LotteryEngine implements OnModuleInit {
   private current!: CurrentDraw;
   private lastResult: LastResult | null = null;
   private drawTimer: NodeJS.Timeout | null = null;
+  /** Unwon bracket slices carried into the NEXT round's pool (PancakeSwap auto-injection). */
+  private carryRolloverScadBase = BigInt(0);
   /** True while replaying stranded draws on boot — suppresses the chained
    * openNewDraw() in drawAndSettle so onModuleInit opens exactly one fresh draw
    * after all stranded draws settle. */
@@ -90,21 +101,32 @@ export class LotteryEngine implements OnModuleInit {
   }
 
   /**
-   * Boot recovery (#14): a restart strands every draw left 'open' — its tickets
-   * are sold but the draw never resolves and sits 'open' forever. For each,
-   * reconstruct `this.current` from the DB draw + its Seed and call the existing
-   * transactional `drawAndSettle()` (it has a synthetic-slot-hash fallback when
-   * no on-chain entropy, so it always settles). The chained openNewDraw() at the
-   * end of drawAndSettle is suppressed via `recovering` so onModuleInit opens
-   * exactly one fresh draw after all stranded draws settle. Per-draw try/catch →
-   * SettlementFailure on error, continue.
+   * Boot recovery: a restart strands every draw left 'open'. For each,
+   * reconstruct `this.current` from the DB draw + its Seed and call the
+   * transactional `drawAndSettle()` (it recomputes sales from the tickets and
+   * has a synthetic-slot-hash fallback, so it always settles). The chained
+   * openNewDraw() is suppressed via `recovering`.
    */
   private async recoverStrandedDraws(): Promise<void> {
-    let stranded: { id: string; drawIndex: bigint | null; seedId: string }[];
+    let stranded: {
+      id: string;
+      drawIndex: bigint | null;
+      seedId: string;
+      injectionScadBase: bigint;
+      rolloverScadBase: bigint;
+      ticketPriceScadBase: bigint;
+    }[];
     try {
       stranded = await this.prisma.lotteryDraw.findMany({
         where: { status: 'open' },
-        select: { id: true, drawIndex: true, seedId: true },
+        select: {
+          id: true,
+          drawIndex: true,
+          seedId: true,
+          injectionScadBase: true,
+          rolloverScadBase: true,
+          ticketPriceScadBase: true,
+        },
         orderBy: { createdAt: 'asc' },
       });
     } catch (e) {
@@ -132,6 +154,10 @@ export class LotteryEngine implements OnModuleInit {
             drawAt: Date.now(),
             status: 'open',
             ticketCount: 0,
+            ticketPriceScadBase: d.ticketPriceScadBase,
+            injectionScadBase: d.injectionScadBase,
+            rolloverScadBase: d.rolloverScadBase,
+            salesScadBase: BigInt(0),
             potLamports: BigInt(0),
             commitTxSignature: null,
           };
@@ -169,10 +195,20 @@ export class LotteryEngine implements OnModuleInit {
     return { id: this.current.id, drawIndex: this.current.drawIndex, drawAt: this.current.drawAt };
   }
 
+  /** This round's per-ticket price in $SCAD base units. */
+  ticketPriceScadBase(): bigint {
+    return this.current.ticketPriceScadBase;
+  }
+
+  private currentPoolScadBase(): bigint {
+    return this.current.salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
+  }
+
   /** Register freshly-persisted tickets in the live tallies (`count` for bulk buys). */
-  async onTicketSold(costLamports: bigint, count = 1): Promise<void> {
+  async onTicketSold(scadBase: bigint, lamports: bigint, count = 1): Promise<void> {
     this.current.ticketCount += count;
-    this.current.potLamports += costLamports * BigInt(count);
+    this.current.salesScadBase += scadBase;
+    this.current.potLamports += lamports;
     await this.prisma.lotteryDraw.update({
       where: { id: this.current.id },
       data: { ticketCount: this.current.ticketCount, potLamports: this.current.potLamports },
@@ -181,10 +217,13 @@ export class LotteryEngine implements OnModuleInit {
       drawId: this.current.id,
       ticketCount: this.current.ticketCount,
       potLamports: this.current.potLamports.toString(),
+      totalPoolScadBase: this.currentPoolScadBase().toString(),
     });
   }
 
   snapshot() {
+    const pool = this.currentPoolScadBase();
+    const jackpotSlice = lotteryPoolSplit(pool).brackets[LOTTERY.BRACKET_COUNT - 1] ?? BigInt(0);
     return {
       drawId: this.current.id,
       drawIndex: this.current.drawIndex.toString(),
@@ -195,25 +234,33 @@ export class LotteryEngine implements OnModuleInit {
       drawAt: this.current.drawAt,
       ticketCount: this.current.ticketCount,
       potLamports: this.current.potLamports.toString(),
+      ticketPriceScadBase: this.current.ticketPriceScadBase.toString(),
+      ticketPriceScad: Number(this.current.ticketPriceScadBase) / SCAD_BASE_NUM,
       ticketPriceUsd: LOTTERY.TICKET_PRICE_USD,
-      ticketPriceUsdtBase: LOTTERY.TICKET_PRICE_USDT_BASE.toString(),
-      // bc.game header: "Latest Winning Prize" — biggest payout of the last
-      // settled round, or the grand prize when nobody has won yet.
-      latestWinningPrizeUsd:
-        this.lastResult && this.lastResult.topPrizeUsd > 0
-          ? this.lastResult.topPrizeUsd
-          : LOTTERY.PRIZES_USD.grand,
+      injectionScadBase: this.current.injectionScadBase.toString(),
+      rolloverScadBase: this.current.rolloverScadBase.toString(),
+      totalPoolScadBase: pool.toString(),
+      totalPoolScad: Number(pool) / SCAD_BASE_NUM,
+      // Header "Latest Winning Prize": biggest payout of the last settled round,
+      // else the current jackpot-bracket slice estimate.
+      latestWinningPrizeScad:
+        this.lastResult && this.lastResult.topPrizeScad > 0
+          ? this.lastResult.topPrizeScad
+          : Number(jackpotSlice) / SCAD_BASE_NUM,
       commitTxSignature: this.current.commitTxSignature,
       chain: {
         enabled: this.chain.lotteryEnabled,
         programId: this.chain.lotteryProgramIdBase58,
-        usdtMint: this.chain.usdtMintBase58,
+        scadMint: this.chain.scadMintBase58,
       },
       config: {
-        mainCount: LOTTERY.MAIN_COUNT,
-        mainMax: LOTTERY.MAIN_MAX,
-        bonusMax: LOTTERY.BONUS_MAX,
-        prizesUsd: LOTTERY.PRIZES_USD,
+        digits: LOTTERY.DIGITS,
+        digitMax: LOTTERY.DIGIT_MAX - 1, // top digit value (9)
+        bracketCount: LOTTERY.BRACKET_COUNT,
+        rewardsBreakdownBps: LOTTERY.REWARDS_BREAKDOWN_BPS,
+        burnBps: LOTTERY.TREASURY_FEE_BPS,
+        discountDivisor: LOTTERY.DISCOUNT_DIVISOR,
+        maxTicketsPerPurchase: LOTTERY.MAX_TICKETS_PER_PURCHASE,
         freeTicketPerSolWagered: true,
         // Bulk purchase tuning — served here because the web bundle can't
         // import runtime values from @scadium/shared (webpack interop).
@@ -240,13 +287,26 @@ export class LotteryEngine implements OnModuleInit {
     const maxRow = await this.prisma.lotteryDraw.aggregate({ _max: { drawIndex: true } });
     const drawIndex = (maxRow._max.drawIndex ?? BigInt(0)) + BigInt(1);
 
+    const price = ticketPriceScadBase();
+    const injection = BigInt(LOTTERY.INJECTION_SCAD_BASE);
+    const rollover = this.carryRolloverScadBase;
+    this.carryRolloverScadBase = BigInt(0);
+
     const drawAt = nextLotteryDrawAt(Date.now());
     const draw = await this.prisma.lotteryDraw.create({
-      data: { drawIndex, seedId: seed.id, nonce, status: 'open', drawAt: new Date(drawAt) },
+      data: {
+        drawIndex,
+        seedId: seed.id,
+        nonce,
+        status: 'open',
+        drawAt: new Date(drawAt),
+        ticketPriceScadBase: price,
+        injectionScadBase: injection,
+        rolloverScadBase: rollover,
+      },
     });
 
-    // Publish the commitment on-chain BEFORE sales. Await so the receipt is
-    // available to buyers from the first second (no-op when disabled).
+    // Publish the commitment on-chain BEFORE sales, then inject house $SCAD.
     let commitTxSignature: string | null = null;
     if (this.chain.lotteryEnabled) {
       commitTxSignature = await this.chain.lotteryCommitDraw({
@@ -261,6 +321,11 @@ export class LotteryEngine implements OnModuleInit {
           data: { commitTxSignature },
         });
       }
+      if (injection > BigInt(0)) {
+        void this.chain
+          .lotteryInject({ drawIndex, amountScadBase: injection })
+          .catch((e: unknown) => this.logger.error(`inject #${drawIndex} failed: ${String(e)}`));
+      }
     }
 
     this.current = {
@@ -274,6 +339,10 @@ export class LotteryEngine implements OnModuleInit {
       drawAt,
       status: 'open',
       ticketCount: 0,
+      ticketPriceScadBase: price,
+      injectionScadBase: injection,
+      rolloverScadBase: rollover,
+      salesScadBase: BigInt(0),
       potLamports: BigInt(0),
       commitTxSignature,
     };
@@ -301,39 +370,37 @@ export class LotteryEngine implements OnModuleInit {
     await this.drawAndSettle();
   }
 
-
   private async drawAndSettle(): Promise<void> {
     const drawIndex = this.current.drawIndex;
     const { serverSeed, clientSeed, nonce } = this.current;
 
     // Reveal on-chain first — the program asserts sha256(seed) == commitment,
-    // mixes in the newest slot hash, and derives the winning numbers ITSELF.
-    // We adopt the chain's numbers. Off-chain (or if the reveal fails) we
-    // fall back to a documented synthetic slot hash so the draw still settles.
+    // mixes in the newest slot hash, and derives the winning digits ITSELF.
+    // We adopt the chain's digits. Off-chain (or if the reveal fails) we fall
+    // back to a documented synthetic slot hash so the draw still settles.
     let revealTxSignature: string | null = null;
     let slotHashHex: string;
-    let main: number[];
-    let bonus: number;
+    let digits: number[];
 
     const reveal = this.chain.lotteryEnabled
       ? await this.chain.lotteryRevealDraw({ drawIndex, serverSeedHex: serverSeed })
       : null;
     if (reveal) {
-      ({ main, bonus } = reveal);
+      digits = reveal.digits;
       revealTxSignature = reveal.signature;
       slotHashHex = reveal.slotHashHex;
       // Lockstep cross-check: the TS derivation must reproduce the program's
-      // numbers from the same inputs — divergence means a layout bug.
+      // digits from the same inputs — divergence means a layout bug.
       const local = lotteryDraw(
         serverSeed,
         padClientSeed32(clientSeed),
         Buffer.from(slotHashHex, 'hex'),
         nonce,
       );
-      if (local.main.join(',') !== main.join(',') || local.bonus !== bonus) {
+      if (local.digits.join(',') !== digits.join(',')) {
         this.logger.error(
-          `Draw #${drawIndex}: on-chain numbers [${main.join(',')}]+${bonus} diverge from local ` +
-            `derivation [${local.main.join(',')}]+${local.bonus} — check the golden vector!`,
+          `Draw #${drawIndex}: on-chain digits [${digits.join(',')}] diverge from local ` +
+            `derivation [${local.digits.join(',')}] — check the golden vector!`,
         );
       }
     } else {
@@ -342,7 +409,7 @@ export class LotteryEngine implements OnModuleInit {
       }
       const synthetic = syntheticSlotHash(serverSeed, clientSeed);
       slotHashHex = synthetic.toString('hex');
-      ({ main, bonus } = lotteryDraw(serverSeed, padClientSeed32(clientSeed), synthetic, nonce));
+      digits = lotteryDraw(serverSeed, padClientSeed32(clientSeed), synthetic, nonce).digits;
     }
 
     const tickets = await this.prisma.lotteryTicket.findMany({
@@ -350,67 +417,50 @@ export class LotteryEngine implements OnModuleInit {
       include: { user: { select: { walletAddress: true } } },
     });
 
+    // ----- Phase 1 (pure): bracket every ticket + size the pool -----
+    const B = LOTTERY.BRACKET_COUNT;
+    const bracketWinnerCounts = new Array<number>(B).fill(0);
+    const matched = tickets.map((t) => {
+      const matchLen = lotteryLeadingMatch(t.digits, digits);
+      const bracket = lotteryBracket(matchLen);
+      if (bracket !== null) bracketWinnerCounts[bracket] += 1;
+      return { ticket: t, matchLen, bracket };
+    });
+
+    // Sales are recomputed from the tickets (robust across restarts).
+    const salesScadBase = tickets.reduce((acc, t) => acc + t.costScadBase, BigInt(0));
+    const totalPool = salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
+    const {
+      bracketSlices,
+      perWinner,
+      bracketRollover,
+      burn: burnScadBase,
+      nextRollover,
+    } = splitBracketPrizes(totalPool, bracketWinnerCounts);
+
     let winnersCount = 0;
-    let topPrizeUsdtBase = BigInt(0);
-    const freeTickets = 0; // zero-match rule removed — free tickets now come from wager loyalty
-    const prizeJobs: {
-      ticketId: string;
-      walletAddress: string;
-      amountUsdtBase: bigint;
-      tier: string;
-    }[] = [];
+    let topPrizeScadBase = BigInt(0);
+    const prizeJobs: { ticketId: string; walletAddress: string; amountScadBase: bigint; bracket: number }[] =
+      [];
 
-    // Phase 1 (pure): match every ticket + tally winners. No DB writes yet.
-    const ticketResults: {
-      ticket: (typeof tickets)[number];
-      matchedMain: number;
-      matchedBonus: number;
-      tier: string;
-      prizeUsdtBase: bigint;
-      payoutLamportsEq: bigint;
-      won: boolean;
-    }[] = [];
-    for (const t of tickets) {
-      const { matchedMain, matchedBonus } = lotteryMatches(
-        t.mainNumbers,
-        t.bonusNumber,
-        main,
-        bonus,
-      );
-      const tier = lotteryTier(matchedMain, matchedBonus);
-      const prizeUsdtBase = lotteryPrizeUsdtBase(tier);
-      const won = prizeUsdtBase > BigInt(0);
+    const ticketResults = matched.map((m) => {
+      const payoutScadBase = m.bracket !== null ? perWinner[m.bracket]! : BigInt(0);
+      const won = payoutScadBase > BigInt(0);
       if (won) winnersCount += 1;
-      if (prizeUsdtBase > topPrizeUsdtBase) topPrizeUsdtBase = prizeUsdtBase;
-
-      // Ledger equivalents in lamports (real prizes move in USDT on-chain).
-      const payoutLamportsEq =
-        (prizeUsdtBase * BigInt(LAMPORTS_PER_SOL)) /
-        BigInt(USD_PER_SOL) /
-        BigInt(10 ** LOTTERY.USDT_DECIMALS);
-
-      ticketResults.push({
-        ticket: t,
-        matchedMain,
-        matchedBonus,
-        tier,
-        prizeUsdtBase,
-        payoutLamportsEq,
-        won,
-      });
-
+      if (payoutScadBase > topPrizeScadBase) topPrizeScadBase = payoutScadBase;
+      const payoutLamports = scadBaseToLamports(payoutScadBase);
       if (won && this.chain.lotteryEnabled) {
         prizeJobs.push({
-          ticketId: t.id,
-          walletAddress: t.user.walletAddress,
-          amountUsdtBase: prizeUsdtBase,
-          tier,
+          ticketId: m.ticket.id,
+          walletAddress: m.ticket.user.walletAddress,
+          amountScadBase: payoutScadBase,
+          bracket: m.bracket!,
         });
       }
-    }
+      return { ...m, payoutScadBase, payoutLamports, won };
+    });
 
-    // Phase 2: per-ticket ledger update + ticket update + Bet row + the draw
-    // 'drawn' flip + the seed reveal in ONE serializable transaction.
+    // ----- Phase 2: ledger + ticket updates + draw flip + reveal, atomically -----
     try {
       await withSerializable(this.prisma, async (tx) => {
         for (const r of ticketResults) {
@@ -418,11 +468,13 @@ export class LotteryEngine implements OnModuleInit {
           await tx.user.update({
             where: { id: t.userId },
             data: {
+              // Loyalty $SCAD reward kept (per product decision): wagering the
+              // lottery still accrues the standard wager reward.
               scadiumBalance: {
                 increment: t.costLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
               },
               totalWagered: { increment: t.costLamports },
-              totalWon: { increment: r.won ? r.payoutLamportsEq : BigInt(0) },
+              totalWon: { increment: r.won ? r.payoutLamports : BigInt(0) },
               totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
               gamesPlayed: { increment: 1 },
             },
@@ -430,11 +482,10 @@ export class LotteryEngine implements OnModuleInit {
           await tx.lotteryTicket.update({
             where: { id: t.id },
             data: {
-              matchedMain: r.matchedMain,
-              matchedBonus: r.matchedBonus,
-              tier: r.tier,
-              payoutUsdtBase: r.prizeUsdtBase,
-              payoutLamports: r.payoutLamportsEq,
+              matchLen: r.matchLen,
+              bracket: r.bracket,
+              payoutScadBase: r.payoutScadBase,
+              payoutLamports: r.payoutLamports,
               won: r.won,
             },
           });
@@ -443,21 +494,18 @@ export class LotteryEngine implements OnModuleInit {
               userId: t.userId,
               gameType: 'lottery',
               amountLamports: t.costLamports,
-              payoutLamports: r.payoutLamportsEq,
+              payoutLamports: r.payoutLamports,
               multiplier: null,
               status: r.won ? 'won' : 'lost',
               seedId: this.current.seedId,
               nonce: this.current.nonce,
               resultJson: {
                 drawIndex: drawIndex.toString(),
-                drawMain: main,
-                drawBonus: bonus,
-                ticketMain: t.mainNumbers,
-                ticketBonus: t.bonusNumber,
-                matchedMain: r.matchedMain,
-                matchedBonus: r.matchedBonus,
-                tier: r.tier,
-                prizeUsd: Number(r.prizeUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+                drawDigits: digits,
+                ticketDigits: t.digits,
+                matchLen: r.matchLen,
+                bracket: r.bracket,
+                prizeScad: Number(r.payoutScadBase) / SCAD_BASE_NUM,
               },
             },
           });
@@ -467,11 +515,15 @@ export class LotteryEngine implements OnModuleInit {
           where: { id: this.current.id },
           data: {
             status: 'drawn',
-            mainNumbers: main,
-            bonusNumber: bonus,
+            winningDigits: digits,
             slotHash: slotHashHex,
             drawnAt: new Date(),
             revealTxSignature,
+            totalPoolScadBase: totalPool,
+            burnScadBase,
+            bracketWinnerCounts,
+            bracketAmountsScadBase: bracketSlices,
+            bracketRolloverScadBase: bracketRollover,
           },
         });
         await tx.seed.update({
@@ -482,8 +534,6 @@ export class LotteryEngine implements OnModuleInit {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(`Lottery settle failed for ${this.current.id} after retries: ${message}`);
-      // Best-effort dead-letter; leave the draw non-terminal and do NOT open a
-      // new draw — the recovery worker re-settles it.
       try {
         await this.prisma.settlementFailure.create({
           data: {
@@ -492,15 +542,14 @@ export class LotteryEngine implements OnModuleInit {
             payloadJson: {
               drawId: this.current.id,
               drawIndex: drawIndex.toString(),
-              main,
-              bonus,
+              digits,
               slotHash: slotHashHex,
+              totalPoolScadBase: totalPool.toString(),
               tickets: ticketResults.map((r) => ({
                 ticketId: r.ticket.id,
                 userId: r.ticket.userId,
-                cost: r.ticket.costLamports.toString(),
-                tier: r.tier,
-                payoutUsdtBase: r.prizeUsdtBase.toString(),
+                bracket: r.bracket,
+                payoutScadBase: r.payoutScadBase.toString(),
                 won: r.won,
               })),
             },
@@ -516,15 +565,17 @@ export class LotteryEngine implements OnModuleInit {
     }
 
     this.current.status = 'drawn';
+    // Unwon slices fund the next round's pool (PancakeSwap auto-injection).
+    this.carryRolloverScadBase = nextRollover;
 
-    // On-chain USDT prize payouts AFTER the rows commit (fire-and-forget).
+    // On-chain $SCAD prize payouts + burn AFTER the rows commit (fire-and-forget).
     for (const job of prizeJobs) {
       void this.chain
         .lotteryPayPrize({
           drawIndex,
           walletAddress: job.walletAddress,
-          amountUsdtBase: job.amountUsdtBase,
-          tier: TIER_INDEX[job.tier] ?? 255,
+          amountScadBase: job.amountScadBase,
+          bracket: job.bracket,
         })
         .then(async (sig) => {
           if (sig) {
@@ -538,37 +589,45 @@ export class LotteryEngine implements OnModuleInit {
           this.logger.error(`pay_prize failed for ticket ${job.ticketId}: ${String(e)}`),
         );
     }
+    if (this.chain.lotteryEnabled && burnScadBase > BigInt(0)) {
+      void this.chain
+        .lotteryBurnPool({ drawIndex, amountScadBase: burnScadBase })
+        .catch((e: unknown) => this.logger.error(`burn_pool #${drawIndex} failed: ${String(e)}`));
+    }
 
     this.lastResult = {
       drawId: this.current.id,
       drawIndex: drawIndex.toString(),
-      mainNumbers: main,
-      bonusNumber: bonus,
+      digits,
       serverSeed: this.current.serverSeed,
       serverSeedHash: this.current.serverSeedHash,
       clientSeed: this.current.clientSeed,
       nonce: this.current.nonce,
       slotHash: slotHashHex,
       winnersCount,
-      freeTickets,
-      topPrizeUsd: Number(topPrizeUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+      bracketWinnerCounts,
+      totalPoolScad: Number(totalPool) / SCAD_BASE_NUM,
+      burnScad: Number(burnScadBase) / SCAD_BASE_NUM,
+      topPrizeScad: Number(topPrizeScadBase) / SCAD_BASE_NUM,
       revealTxSignature,
       drawnAt: Date.now(),
     };
 
     this.gateway.emitDrawResult({
       drawId: this.current.id,
-      mainNumbers: main,
-      bonusNumber: bonus,
+      digits,
       serverSeed: this.current.serverSeed,
       winnersCount,
+      bracketWinnerCounts,
+      burnScadBase: burnScadBase.toString(),
     });
 
     this.logger.log(
-      `Lottery #${drawIndex} → [${main.join(',')}] +${bonus} · ${tickets.length} tickets · ${winnersCount} winners · ${freeTickets} free re-entries`,
+      `Lottery #${drawIndex} → [${digits.join('')}] · ${tickets.length} tickets · ${winnersCount} winners · ` +
+        `pool ${Number(totalPool) / SCAD_BASE_NUM} SCAD · burn ${Number(burnScadBase) / SCAD_BASE_NUM} · ` +
+        `rollover ${Number(nextRollover) / SCAD_BASE_NUM}`,
     );
 
-    // Open the next draw immediately (also materializes the free tickets).
     if (!this.recovering) await this.openNewDraw();
   }
 }

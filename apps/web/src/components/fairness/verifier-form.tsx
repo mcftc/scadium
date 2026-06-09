@@ -80,8 +80,8 @@ export function VerifierForm() {
         if (!slotHash.trim()) {
           throw new Error('Lottery needs the draw’s slot hash (64 hex chars) — shown on the lottery page after each draw');
         }
-        const { main, bonus } = await lotteryDraw(serverSeed, clientSeed, slotHash.trim(), nonceNum);
-        output = `${main.join('  ')}   +${bonus}`;
+        const { digits } = await lotteryDraw(serverSeed, clientSeed, slotHash.trim(), nonceNum);
+        output = digits.join('  ');
       } else if (game === 'jackpot') {
         const roll = await jackpotRoll(serverSeed, clientSeed, nonceNum);
         output = `roll ${roll}  (winner = roll mod pot)`;

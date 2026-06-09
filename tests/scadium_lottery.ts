@@ -1,10 +1,17 @@
 import * as anchor from '@coral-xyz/anchor';
 import { Program } from '@coral-xyz/anchor';
-import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from '@solana/web3.js';
+import {
+  Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  SYSVAR_SLOT_HASHES_PUBKEY,
+} from '@solana/web3.js';
 import {
   createMint,
   getAccount,
   getAssociatedTokenAddressSync,
+  getMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
 } from '@solana/spl-token';
@@ -12,9 +19,10 @@ import { createHash } from 'crypto';
 import { assert } from 'chai';
 
 /**
- * scadium_lottery invariants:
- *  - commit → buy (USDT moves, picks validated) → reveal (sha256 assert)
- *  - wrong seed reveal rejected; pay_prize transfers from treasury
+ * scadium_lottery (PancakeSwap-style 6-digit $SCAD) invariants:
+ *  - commit → buy (SCAD moves, 6 digits validated) → bulk buy (discounted) →
+ *    reveal (sha256 assert, derives 6-digit number from a live slot hash) →
+ *    inject / pay_prize (idempotent per winner) / burn_pool (reduces supply).
  */
 describe('scadium_lottery', () => {
   const provider = anchor.AnchorProvider.env();
@@ -24,11 +32,13 @@ describe('scadium_lottery', () => {
 
   const cosigner = Keypair.generate();
   const buyer = Keypair.generate();
-  let usdtMint: PublicKey;
+  let scadMint: PublicKey;
   let config: PublicKey;
   let treasury: PublicKey;
 
-  const TICKET_PRICE = 100_000n; // 0.1 USDT (6 decimals)
+  const SCAD = (n: bigint) => n * 10n ** 9n; // 9 decimals
+  const TICKET_PRICE = SCAD(10n); // 10 SCAD (~$1)
+  const DISCOUNT_DIVISOR = 2000n;
   const DRAW_INDEX = new anchor.BN(1);
   const serverSeedHex = 'a'.repeat(64); // deterministic test seed
   const seedBytes = Array.from(Buffer.from(serverSeedHex, 'utf8')); // 64 utf8 bytes
@@ -40,42 +50,59 @@ describe('scadium_lottery', () => {
       [Buffer.from('draw'), new anchor.BN(index).toArrayLike(Buffer, 'le', 8)],
       program.programId,
     )[0];
+  const payoutPda = (index: number, winner: PublicKey) =>
+    PublicKey.findProgramAddressSync(
+      [Buffer.from('payout'), new anchor.BN(index).toArrayLike(Buffer, 'le', 8), winner.toBuffer()],
+      program.programId,
+    )[0];
 
   before(async () => {
     for (const kp of [cosigner, buyer]) {
       const sig = await provider.connection.requestAirdrop(kp.publicKey, 5 * LAMPORTS_PER_SOL);
       await provider.connection.confirmTransaction(sig);
     }
-    usdtMint = await createMint(provider.connection, payer, payer.publicKey, null, 6);
+    scadMint = await createMint(provider.connection, payer, payer.publicKey, null, 9);
     config = PublicKey.findProgramAddressSync([Buffer.from('lottery')], program.programId)[0];
-    treasury = getAssociatedTokenAddressSync(usdtMint, config, true);
+    treasury = getAssociatedTokenAddressSync(scadMint, config, true);
 
-    // Buyer gets 10 USDT.
+    // Buyer gets 1,000 SCAD; cosigner gets 1,000 SCAD for injection.
     const buyerAta = await getOrCreateAssociatedTokenAccount(
       provider.connection,
       payer,
-      usdtMint,
+      scadMint,
       buyer.publicKey,
     );
-    await mintTo(provider.connection, payer, usdtMint, buyerAta.address, payer, 10_000_000n);
+    await mintTo(provider.connection, payer, scadMint, buyerAta.address, payer, SCAD(1_000n));
+    const cosignerAta = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      scadMint,
+      cosigner.publicKey,
+    );
+    await mintTo(provider.connection, payer, scadMint, cosignerAta.address, payer, SCAD(1_000n));
   });
 
   it('init_lottery', async () => {
     await program.methods
-      .initLottery(cosigner.publicKey, new anchor.BN(TICKET_PRICE.toString()))
+      .initLottery(
+        cosigner.publicKey,
+        new anchor.BN(TICKET_PRICE.toString()),
+        new anchor.BN(DISCOUNT_DIVISOR.toString()),
+      )
       .accounts({
         config,
-        usdtMint,
-        treasuryUsdt: treasury,
+        scadMint,
+        treasuryScad: treasury,
         payer: payer.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
     const cfg = await (program.account as any).lotteryConfig.fetch(config);
-    assert.equal(cfg.ticketPrice.toNumber(), 100_000);
+    assert.equal(cfg.ticketPrice.toString(), TICKET_PRICE.toString());
+    assert.equal(cfg.discountDivisor.toString(), DISCOUNT_DIVISOR.toString());
 
-    // Fund the prize treasury (house lottery: fixed prizes).
-    await mintTo(provider.connection, payer, usdtMint, treasury, payer, 1_000_000_000n); // 1000 USDT
+    // Seed the prize treasury (pool float).
+    await mintTo(provider.connection, payer, scadMint, treasury, payer, SCAD(1_000n));
   });
 
   it('commit_draw publishes the seed hash', async () => {
@@ -94,16 +121,34 @@ describe('scadium_lottery', () => {
     assert.deepEqual(Array.from(d.serverSeedHash), seedHash);
   });
 
-  it('buy_ticket moves 0.1 USDT into the treasury', async () => {
+  it('inject tops up the pool with cosigner SCAD', async () => {
     const before = (await getAccount(provider.connection, treasury)).amount;
     await program.methods
-      .buyTicket(DRAW_INDEX, [3, 7, 14, 22, 36], 5)
+      .inject(DRAW_INDEX, new anchor.BN(SCAD(100n).toString()))
       .accounts({
         config,
         draw: drawPda(1),
-        buyerUsdt: getAssociatedTokenAddressSync(usdtMint, buyer.publicKey),
-        treasuryUsdt: treasury,
-        usdtMint,
+        injectorScad: getAssociatedTokenAddressSync(scadMint, cosigner.publicKey),
+        treasuryScad: treasury,
+        scadMint,
+        cosigner: cosigner.publicKey,
+      })
+      .signers([cosigner])
+      .rpc();
+    const after = (await getAccount(provider.connection, treasury)).amount;
+    assert.equal(after - before, SCAD(100n));
+  });
+
+  it('buy_ticket moves one ticket price of SCAD into the treasury', async () => {
+    const before = (await getAccount(provider.connection, treasury)).amount;
+    await program.methods
+      .buyTicket(DRAW_INDEX, [1, 5, 9, 0, 3, 7])
+      .accounts({
+        config,
+        draw: drawPda(1),
+        buyerScad: getAssociatedTokenAddressSync(scadMint, buyer.publicKey),
+        treasuryScad: treasury,
+        scadMint,
         buyer: buyer.publicKey,
       })
       .signers([buyer])
@@ -114,16 +159,41 @@ describe('scadium_lottery', () => {
     assert.equal(d.ticketCount, 1);
   });
 
-  it('rejects invalid picks', async () => {
+  it('buy_tickets applies the PancakeSwap bulk discount', async () => {
+    const before = (await getAccount(provider.connection, treasury)).amount;
+    const n = 3n;
+    const picks = [
+      { digits: [0, 0, 0, 0, 0, 1] },
+      { digits: [9, 9, 9, 9, 9, 9] },
+      { digits: [1, 2, 3, 4, 5, 6] },
+    ];
+    await program.methods
+      .buyTickets(DRAW_INDEX, picks)
+      .accounts({
+        config,
+        draw: drawPda(1),
+        buyerScad: getAssociatedTokenAddressSync(scadMint, buyer.publicKey),
+        treasuryScad: treasury,
+        scadMint,
+        buyer: buyer.publicKey,
+      })
+      .signers([buyer])
+      .rpc();
+    const after = (await getAccount(provider.connection, treasury)).amount;
+    const expected = (TICKET_PRICE * n * (DISCOUNT_DIVISOR + 1n - n)) / DISCOUNT_DIVISOR;
+    assert.equal(after - before, expected);
+  });
+
+  it('rejects an invalid digit (>9)', async () => {
     try {
       await program.methods
-        .buyTicket(DRAW_INDEX, [3, 3, 14, 22, 36], 5) // duplicate
+        .buyTicket(DRAW_INDEX, [1, 5, 9, 0, 3, 10]) // 10 is out of range
         .accounts({
           config,
           draw: drawPda(1),
-          buyerUsdt: getAssociatedTokenAddressSync(usdtMint, buyer.publicKey),
-          treasuryUsdt: treasury,
-          usdtMint,
+          buyerScad: getAssociatedTokenAddressSync(scadMint, buyer.publicKey),
+          treasuryScad: treasury,
+          scadMint,
           buyer: buyer.publicKey,
         })
         .signers([buyer])
@@ -138,8 +208,13 @@ describe('scadium_lottery', () => {
     const wrongSeed = Array.from(Buffer.from('b'.repeat(64), 'utf8'));
     try {
       await program.methods
-        .revealDraw(DRAW_INDEX, wrongSeed, [1, 2, 3, 4, 5], 1)
-        .accounts({ config, draw: drawPda(1), cosigner: cosigner.publicKey })
+        .revealDraw(DRAW_INDEX, wrongSeed)
+        .accounts({
+          config,
+          draw: drawPda(1),
+          cosigner: cosigner.publicKey,
+          slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
+        })
         .signers([cosigner])
         .rpc();
       assert.fail('should have thrown');
@@ -148,34 +223,74 @@ describe('scadium_lottery', () => {
     }
   });
 
-  it('reveal_draw pins the winning numbers on-chain', async () => {
+  it('reveal_draw derives a valid 6-digit number on-chain', async () => {
     await program.methods
-      .revealDraw(DRAW_INDEX, seedBytes, [3, 7, 14, 22, 36], 5)
-      .accounts({ config, draw: drawPda(1), cosigner: cosigner.publicKey })
-      .signers([cosigner])
-      .rpc();
-    const d = await (program.account as any).draw.fetch(drawPda(1));
-    assert.deepEqual(Array.from(d.winningMain), [3, 7, 14, 22, 36]);
-    assert.equal(d.winningBonus, 5);
-  });
-
-  it('pay_prize transfers USDT to the winner', async () => {
-    const winnerAta = getAssociatedTokenAddressSync(usdtMint, buyer.publicKey);
-    const before = (await getAccount(provider.connection, winnerAta)).amount;
-    await program.methods
-      .payPrize(DRAW_INDEX, new anchor.BN(3_000_000_000 / 1000), 1) // $3 demo-scaled
+      .revealDraw(DRAW_INDEX, seedBytes)
       .accounts({
         config,
         draw: drawPda(1),
-        winner: buyer.publicKey,
-        treasuryUsdt: treasury,
-        winnerUsdt: winnerAta,
-        usdtMint,
+        cosigner: cosigner.publicKey,
+        slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
+      })
+      .signers([cosigner])
+      .rpc();
+    const d = await (program.account as any).draw.fetch(drawPda(1));
+    const digits = Array.from(d.winningDigits) as number[];
+    assert.equal(digits.length, 6);
+    for (const dig of digits) assert.isTrue(dig >= 0 && dig <= 9);
+    assert.isTrue(Array.from(d.finalEntropy).some((b) => b !== 0));
+  });
+
+  it('pay_prize transfers SCAD to the winner and is idempotent', async () => {
+    const winnerAta = getAssociatedTokenAddressSync(scadMint, buyer.publicKey);
+    const before = (await getAccount(provider.connection, winnerAta)).amount;
+    const prize = SCAD(50n);
+    const accounts = {
+      config,
+      draw: drawPda(1),
+      winner: buyer.publicKey,
+      payout: payoutPda(1, buyer.publicKey),
+      treasuryScad: treasury,
+      winnerScad: winnerAta,
+      scadMint,
+      cosigner: cosigner.publicKey,
+    };
+    await program.methods
+      .payPrize(DRAW_INDEX, new anchor.BN(prize.toString()), 5) // jackpot bracket
+      .accounts(accounts)
+      .signers([cosigner])
+      .rpc();
+    const after = (await getAccount(provider.connection, winnerAta)).amount;
+    assert.equal(after - before, prize);
+
+    // Replay must fail (Payout PDA already initialized).
+    try {
+      await program.methods
+        .payPrize(DRAW_INDEX, new anchor.BN(prize.toString()), 5)
+        .accounts(accounts)
+        .signers([cosigner])
+        .rpc();
+      assert.fail('replay should have thrown');
+    } catch (e) {
+      assert.isTrue(/already in use|0x0/.test(String(e)));
+    }
+  });
+
+  it('burn_pool reduces $SCAD supply', async () => {
+    const burn = SCAD(20n);
+    const supplyBefore = (await getMint(provider.connection, scadMint)).supply;
+    await program.methods
+      .burnPool(DRAW_INDEX, new anchor.BN(burn.toString()))
+      .accounts({
+        config,
+        draw: drawPda(1),
+        treasuryScad: treasury,
+        scadMint,
         cosigner: cosigner.publicKey,
       })
       .signers([cosigner])
       .rpc();
-    const after = (await getAccount(provider.connection, winnerAta)).amount;
-    assert.equal(after - before, 3_000_000n);
+    const supplyAfter = (await getMint(provider.connection, scadMint)).supply;
+    assert.equal(supplyBefore - supplyAfter, burn);
   });
 });

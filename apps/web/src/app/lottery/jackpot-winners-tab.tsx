@@ -2,7 +2,6 @@
 
 import { Crown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { formatUsd } from '@/lib/format';
 import { useJackpotWinners } from '@/hooks/use-lottery';
 import { LotteryBalls } from './lottery-balls';
 import { PlayerCell } from './player-cell';
@@ -20,8 +19,8 @@ export function JackpotWinnersTab() {
         <Crown className="mx-auto h-8 w-8 text-amber-400/60" />
         <p className="text-sm font-semibold">No grand-prize winners yet</p>
         <p className="text-xs text-foreground-muted">
-          Be the first to match 5 numbers + the Jackpot Ball and take the{' '}
-          <span className="text-success font-semibold">$100,000</span> grand prize.
+          Be the first to match all 6 digits and take the{' '}
+          <span className="text-success font-semibold">jackpot</span> pool.
         </p>
       </Card>
     );
@@ -44,12 +43,12 @@ export function JackpotWinnersTab() {
           >
             <span className="text-xs font-mono text-foreground-muted">{w.gameNumber}</span>
             <PlayerCell player={w.player} />
-            <LotteryBalls main={w.mainNumbers} bonus={w.bonusNumber} size="sm" />
+            <LotteryBalls digits={w.digits} matchLen={w.matchLen} size="sm" />
             <span className="text-xs font-mono sm:text-center">
-              {w.matchedMain + w.matchedBonus}
+              {w.bracket !== null ? `Match ${w.bracket + 1}` : w.matchLen}
             </span>
             <span className="text-xs font-mono font-bold text-success sm:text-right">
-              {formatUsd(w.payoutUsd)}
+              {w.payoutScad.toLocaleString()} SCAD
             </span>
           </div>
         ))}

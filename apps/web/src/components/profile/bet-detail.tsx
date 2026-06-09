@@ -68,15 +68,18 @@ function ResultDetail({ bet }: { bet: BetRow }) {
         <>
           <Row
             k="Draw"
-            v={`${(r.drawMain as number[] | undefined)?.join(' ') ?? '—'}  +  ${r.drawBonus ?? '—'}`}
+            v={`${(r.drawDigits as number[] | undefined)?.join(' ') ?? '—'}`}
           />
           <Row
             k="Your ticket"
-            v={`${(r.ticketMain as number[] | undefined)?.join(' ') ?? '—'}  +  ${r.ticketBonus ?? '—'}`}
+            v={`${(r.digits as number[] | undefined)?.join(' ') ?? '—'}`}
           />
-          <Row k="Matched" v={`${r.matchedMain ?? 0} + ${r.matchedBonus ?? 0}`} />
-          <Row k="Tier" v={String(r.tier ?? 'none')} />
-          {r.prizeUsd ? <Row k="Prize" v={`$${r.prizeUsd}`} /> : null}
+          <Row k="Matched" v={`${r.matchLen ?? 0} digit(s)`} />
+          <Row
+            k="Bracket"
+            v={r.bracket != null ? `Match ${(r.bracket as number) + 1}` : 'none'}
+          />
+          {r.payoutScad ? <Row k="Prize" v={`${r.payoutScad} SCAD`} /> : null}
         </>
       );
     default:

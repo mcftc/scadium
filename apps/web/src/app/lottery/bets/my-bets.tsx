@@ -7,7 +7,6 @@ import { Card } from '@/components/ui/card';
 import { ConnectButton } from '@/components/wallet/connect-button';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/cn';
-import { formatUsd } from '@/lib/format';
 import {
   useFreeTickets,
   useMyLotteryStats,
@@ -77,7 +76,7 @@ export function MyBets() {
         />
         <StatCard
           label="Total Winning Prize"
-          value={stats.data ? `${formatUsd(stats.data.totalPrizeUsd)}` : '—'}
+          value={stats.data ? `${stats.data.totalPrizeScad.toLocaleString()} SCAD` : '—'}
           icon={<Coins className="h-5 w-5 text-success" />}
           valueClass="text-success"
         />
@@ -169,16 +168,10 @@ function BetRow({ t }: { t: MyLotteryTicket }) {
           {t.free ? ' · FREE' : ''}
         </div>
       </div>
-      <LotteryBalls
-        main={t.mainNumbers}
-        bonus={t.bonusNumber}
-        hits={settled ? t.drawMain : undefined}
-        bonusHit={settled && t.matchedBonus > 0}
-        size="sm"
-      />
+      <LotteryBalls digits={t.digits} matchLen={settled ? t.matchLen : 0} size="sm" />
       <span className="text-xs font-mono sm:text-center">
         {settled ? (
-          `${t.matchedMain} Matched${t.matchedBonus > 0 ? ' + bonus' : ''}`
+          `${t.matchLen} Matched${t.bracket !== null ? ` · Match ${t.bracket + 1}` : ''}`
         ) : (
           <span className="text-foreground-muted">pending</span>
         )}
@@ -189,7 +182,7 @@ function BetRow({ t }: { t: MyLotteryTicket }) {
           settled && t.won ? 'text-success' : 'text-foreground-muted',
         )}
       >
-        {settled ? formatUsd(t.payoutUsd) : '—'}
+        {settled ? `${t.payoutScad.toLocaleString()} SCAD` : '—'}
       </span>
     </div>
   );

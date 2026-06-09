@@ -1,21 +1,23 @@
 import { createHash } from 'node:crypto';
 
 /**
- * Provably-fair lottery draw: pick 5 distinct main numbers from 1..36 plus
- * one bonus number from 1..10, derived deterministically from the committed
- * seed pair AND a Solana slot hash that did not exist at commit time.
- * Reproducible by anyone via the /fairness verifier, and re-derived
- * INSIDE the on-chain program at reveal (the cosigner cannot pick numbers).
+ * Provably-fair lottery draw (PancakeSwap-v2 style): a single 6-digit winning
+ * number, each digit 0..9, derived deterministically from the committed seed
+ * pair AND a Solana slot hash that did not exist at commit time. A ticket is a
+ * 6-digit pick; it wins the highest bracket whose leading digits all match the
+ * winning number, LEFT-TO-RIGHT in order (match-first-1 .. match-first-6).
+ * Reproducible by anyone via the /fairness verifier, and re-derived INSIDE the
+ * on-chain program at reveal (the cosigner cannot pick the number).
  *
  * Canonical byte layout (must stay in lockstep with
  * `programs/scadium_lottery/src/lib.rs` and `apps/web/src/lib/fair-browser.ts`):
  *
  *   finalEntropy = sha256( utf8(serverSeedHex64) || slotHash[32] || clientSeed32 || u32le(nonce) )
- *   main slot i (0..4): h = sha256(finalEntropy || [0x6d, i])
- *                       r = u64_be(h[0..8]) % poolLen → take pool[r], remove (no replacement)
- *                       then sort ascending
- *   bonus:              h = sha256(finalEntropy || [0x62])
- *                       bonus = u64_be(h[0..8]) % 10 + 1
+ *   digit i (0..5): h = sha256(finalEntropy || [0x64, i])   // 0x64 = 'd'
+ *                   digit = u64_be(h[0..8]) % 10
+ *   winning number reads digit 0 as the most-significant (leftmost) digit.
+ *   encoded = 1_000_000 + value  (the leading "1" guards leading zeros, exactly
+ *   like PancakeSwap's `1xxxxxx` ticket encoding).
  *
  * - serverSeed: the 64 ASCII hex chars as utf8 bytes (= on-chain `revealed_seed[64]`).
  * - clientSeed32: utf8 bytes of the client seed hex string, zero-padded to 32
@@ -27,13 +29,13 @@ import { createHash } from 'node:crypto';
  * These spec constants are intentionally hard-coded here — they ARE the game
  * rules, and the in-browser verifier must use the identical values.
  */
-export const LOTTERY_MAIN_MAX = 36;
-export const LOTTERY_MAIN_COUNT = 5;
-export const LOTTERY_BONUS_MAX = 10;
+export const LOTTERY_DIGITS = 6; // 6-digit ticket / winning number
+export const LOTTERY_DIGIT_MAX = 10; // each digit is u64 % 10 → 0..9
+export const LOTTERY_TICKET_OFFSET = 1_000_000; // encoded = OFFSET + value
 
 export interface LotteryResult {
-  main: number[]; // 5 distinct numbers in 1..36, ascending
-  bonus: number; // 1..10
+  digits: number[]; // 6 digits, each 0..9, index 0 = leftmost (most significant)
+  encoded: number; // 1_000_000 + value (PancakeSwap-style 1xxxxxx encoding)
 }
 
 /** Zero-pad the utf8 bytes of a client-seed string to the on-chain 32-byte form. */
@@ -45,7 +47,7 @@ export function padClientSeed32(clientSeed: string): Buffer {
 
 /**
  * sha256( utf8(serverSeedHex) || slotHash || clientSeed32 || u32le(nonce) ) —
- * the 32-byte entropy every number is derived from. Exposed so callers
+ * the 32-byte entropy every digit is derived from. Exposed so callers
  * (engine, verifier) can display/compare it against the on-chain
  * `Draw.final_entropy`.
  */
@@ -73,6 +75,14 @@ function roll(finalEntropy: Buffer, tag: Uint8Array): bigint {
   return new DataView(h.buffer, h.byteOffset, 8).getBigUint64(0, false);
 }
 
+/** Encode the 6 digits to the canonical `1_000_000 + value` ticket number. */
+export function encodeLotteryNumber(digits: number[]): number {
+  if (digits.length !== LOTTERY_DIGITS) throw new Error('expected exactly 6 digits');
+  let value = 0;
+  for (const d of digits) value = value * 10 + d;
+  return LOTTERY_TICKET_OFFSET + value;
+}
+
 export function lotteryDraw(
   serverSeed: string,
   clientSeed32: Uint8Array,
@@ -81,18 +91,12 @@ export function lotteryDraw(
 ): LotteryResult {
   const entropy = lotteryFinalEntropy(serverSeed, clientSeed32, slotHash, nonce);
 
-  const pool = Array.from({ length: LOTTERY_MAIN_MAX }, (_, i) => i + 1);
-  const main: number[] = [];
-  for (let i = 0; i < LOTTERY_MAIN_COUNT; i++) {
-    const r = Number(roll(entropy, Uint8Array.from([0x6d, i])) % BigInt(pool.length));
-    main.push(pool[r]!);
-    pool.splice(r, 1);
+  const digits: number[] = [];
+  for (let i = 0; i < LOTTERY_DIGITS; i++) {
+    digits.push(Number(roll(entropy, Uint8Array.from([0x64, i])) % BigInt(LOTTERY_DIGIT_MAX)));
   }
-  main.sort((a, b) => a - b);
 
-  const bonus = Number(roll(entropy, Uint8Array.from([0x62])) % BigInt(LOTTERY_BONUS_MAX)) + 1;
-
-  return { main, bonus };
+  return { digits, encoded: encodeLotteryNumber(digits) };
 }
 
 /**
@@ -104,15 +108,25 @@ export function syntheticSlotHash(serverSeed: string, clientSeed: string): Buffe
   return createHash('sha256').update(`${serverSeed}:${clientSeed}`, 'utf8').digest();
 }
 
-/** Count how many of a ticket's picks match a draw. */
-export function lotteryMatches(
-  ticketMain: number[],
-  ticketBonus: number,
-  drawMain: number[],
-  drawBonus: number,
-): { matchedMain: number; matchedBonus: number } {
-  const drawn = new Set(drawMain);
-  const matchedMain = ticketMain.filter((n) => drawn.has(n)).length;
-  const matchedBonus = ticketBonus === drawBonus ? 1 : 0;
-  return { matchedMain, matchedBonus };
+/**
+ * Count how many leading digits of a ticket match the winning number,
+ * LEFT-TO-RIGHT and IN ORDER (PancakeSwap matching). Returns 0..6.
+ */
+export function lotteryLeadingMatch(ticketDigits: number[], drawDigits: number[]): number {
+  let matched = 0;
+  for (let i = 0; i < LOTTERY_DIGITS; i++) {
+    if (ticketDigits[i] !== drawDigits[i]) break;
+    matched++;
+  }
+  return matched;
+}
+
+/**
+ * Highest prize bracket (0..5) a ticket qualifies for given its leading-match
+ * count, or `null` if it matched zero leading digits. Bracket 0 = match-first-1,
+ * bracket 5 = match-all-6 (jackpot). A ticket wins ONLY this single bracket.
+ */
+export function lotteryBracket(matchLen: number): number | null {
+  if (matchLen < 1) return null;
+  return Math.min(matchLen, LOTTERY_DIGITS) - 1;
 }
