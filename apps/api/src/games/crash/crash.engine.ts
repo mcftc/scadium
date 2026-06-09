@@ -76,6 +76,7 @@ export class CrashEngine implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.recoverStrandedRounds();
+    await this.recoverScheduledBets();
     await this.startNewRound();
   }
 
@@ -336,21 +337,39 @@ export class CrashEngine implements OnModuleInit {
     for (const queued of this.nextRoundBets.values()) {
       try {
         this.placeBet(queued);
-        await this.prisma.crashBet.create({
-          data: {
-            roundId: this.current.id,
-            userId: queued.userId,
-            amountLamports: queued.amountLamports,
-            remainingLamports: queued.amountLamports,
-            autoCashoutMultiplier: queued.autoCashout,
-            payoutLamports: BigInt(0),
-            won: false,
-          },
+        // Bind the durable stake to this round and drop the ScheduledCrashBet in
+        // ONE tx (#72), so boot recovery can never see BOTH a CrashBet and a
+        // ScheduledCrashBet for the same user (which would double-refund).
+        await withSerializable(this.prisma, async (tx) => {
+          await tx.crashBet.create({
+            data: {
+              roundId: this.current.id,
+              userId: queued.userId,
+              amountLamports: queued.amountLamports,
+              remainingLamports: queued.amountLamports,
+              autoCashoutMultiplier: queued.autoCashout,
+              payoutLamports: BigInt(0),
+              won: false,
+            },
+          });
+          // `delete` (NOT deleteMany): if the row is already gone, a concurrent
+          // cancelScheduled won the race and already refunded this stake — the
+          // delete throws P2025, the whole tx (incl. the CrashBet create) rolls
+          // back, and the catch below pulls the user out of the round. Using
+          // deleteMany here would silently match 0 rows, let the CrashBet commit,
+          // and double-credit (round payout + cancel refund).
+          await tx.scheduledCrashBet.delete({ where: { userId: queued.userId } });
         });
       } catch (e) {
-        this.logger.error(
-          `scheduled bet for ${queued.userId} failed to place: ${e instanceof Error ? e.message : e}`,
+        // Durable write failed (DB error) OR the bet was cancelled concurrently
+        // (P2025 on the delete). Either way, undo the in-memory placement so the
+        // user does NOT ride this round on an unrecorded/refunded stake. If a
+        // ScheduledCrashBet row survives (DB error, not a cancel),
+        // recoverScheduledBets refunds it on the next boot — never both.
+        this.logger.warn(
+          `scheduled bet for ${queued.userId} not placed into round ${this.current.id}: ${e instanceof Error ? e.message : e}`,
         );
+        this.current.bets.delete(queued.userId);
       }
     }
     this.nextRoundBets.clear();
@@ -715,6 +734,64 @@ export class CrashEngine implements OnModuleInit {
         } catch (deadLetterErr) {
           this.logger.error(
             `crash recovery: failed to write SettlementFailure for ${round.id}: ${String(deadLetterErr)}`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Boot recovery for scheduled (next-round) bets (#72). The in-memory
+   * `nextRoundBets` queue is lost on restart, so every persisted
+   * `ScheduledCrashBet` is an orphan whose stake was debited but never bound to
+   * a round (a drained bet deletes its row atomically with the CrashBet write).
+   * Refund each and delete it in one tx. Idempotent: the row is gone after the
+   * refund, so a re-run credits nothing.
+   */
+  private async recoverScheduledBets(): Promise<void> {
+    let scheduled: { id: string; userId: string; amountLamports: bigint }[];
+    try {
+      scheduled = await this.prisma.scheduledCrashBet.findMany({
+        select: { id: true, userId: true, amountLamports: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `crash scheduled-bet recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (scheduled.length === 0) return;
+    this.logger.warn(`crash recovery: refunding ${scheduled.length} orphaned scheduled bet(s)`);
+
+    for (const s of scheduled) {
+      try {
+        await withSerializable(this.prisma, async (tx) => {
+          if (s.amountLamports > BigInt(0)) {
+            await applyBalanceDelta(tx, s.userId, s.amountLamports, {
+              reason: 'crash_scheduled_refund',
+              refType: 'CrashRound',
+              refId: null,
+            });
+          }
+          await tx.scheduledCrashBet.delete({ where: { id: s.id } });
+        });
+        this.logger.log(`crash recovery: refunded orphaned scheduled bet ${s.id}`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(`crash scheduled-bet recovery failed for ${s.id}: ${message}`);
+        try {
+          await this.prisma.settlementFailure.create({
+            data: {
+              gameType: 'crash',
+              roundId: s.id,
+              payloadJson: { scheduledBetId: s.id, userId: s.userId, path: 'scheduled-recovery' },
+              error: message,
+            },
+          });
+        } catch (deadLetterErr) {
+          this.logger.error(
+            `crash recovery: failed to write SettlementFailure for scheduled bet ${s.id}: ${String(deadLetterErr)}`,
           );
         }
       }
