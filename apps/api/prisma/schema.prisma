@@ -124,6 +124,7 @@ model User {
   bets           Bet[]
   chatMessages   ChatMessage[]
   crashBets      CrashBet[]
+  scheduledCrashBets ScheduledCrashBet[]
   coinflipsMade  CoinflipGame[] @relation("creator")
   coinflipsJoined CoinflipGame[] @relation("joiner")
   airdropClaims  AirdropClaim[]
@@ -307,6 +308,21 @@ model CrashBet {
   @@unique([roundId, userId])
   @@index([roundId])
   @@index([userId])
+}
+
+// A next-round crash bet whose stake has been DEBITED but whose round has not
+// opened yet. Persisted at schedule time (in the same tx as the debit) so a
+// restart in the window before `startNewRound` drains the in-memory queue can
+// still refund the stake (#72). The row is deleted atomically when the bet is
+// drained into a real CrashBet, when cancelled, or when refunded on boot
+// recovery. One scheduled bet per user (mirrors the engine's in-memory Map).
+model ScheduledCrashBet {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @db.Uuid @unique
+  user                  User     @relation(fields: [userId], references: [id])
+  amountLamports        BigInt
+  autoCashoutMultiplier Float?
+  createdAt             DateTime @default(now())
 }
 
 // ==================== COINFLIP ====================

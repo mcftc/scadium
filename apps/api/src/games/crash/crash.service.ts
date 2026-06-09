@@ -178,14 +178,36 @@ export class CrashService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    // Atomic conditional debit — see placeBet.
-    await withSerializable(this.prisma, (tx) =>
-      applyBalanceDelta(tx, params.userId, -params.amountLamports, {
-        reason: 'crash_bet',
-        refType: 'CrashRound',
-        refId: null,
-      }),
-    );
+    // Atomic conditional debit + durable scheduled-bet record (#72): the
+    // ScheduledCrashBet row is written in the SAME tx as the debit, so a crash
+    // before `startNewRound` drains the in-memory queue can still refund the
+    // stake on boot. The `@unique(userId)` enforces one scheduled bet per user
+    // durably — a duplicate create throws and rolls the debit back.
+    try {
+      await withSerializable(this.prisma, async (tx) => {
+        await applyBalanceDelta(tx, params.userId, -params.amountLamports, {
+          reason: 'crash_bet',
+          refType: 'CrashRound',
+          refId: null,
+        });
+        await tx.scheduledCrashBet.create({
+          data: {
+            userId: params.userId,
+            amountLamports: params.amountLamports,
+            autoCashoutMultiplier: params.autoCashout,
+          },
+        });
+      });
+    } catch (e) {
+      const dup = e instanceof Error && /unique|already exists|P2002/i.test(e.message);
+      throw new BadRequestException(
+        dup
+          ? 'You already have a bet scheduled for the next round'
+          : e instanceof Error
+            ? e.message
+            : 'Schedule rejected',
+      );
+    }
 
     try {
       this.engine.scheduleBet({
@@ -197,32 +219,45 @@ export class CrashService {
       });
       return { ok: true as const, scheduled: true as const };
     } catch (e) {
-      await withSerializable(this.prisma, (tx) =>
-        applyBalanceDelta(tx, params.userId, params.amountLamports, {
+      // In-memory placement rejected — refund AND drop the durable row together.
+      await withSerializable(this.prisma, async (tx) => {
+        await applyBalanceDelta(tx, params.userId, params.amountLamports, {
           reason: 'refund',
           refType: 'CrashRound',
           refId: null,
-        }),
-      );
+        });
+        await tx.scheduledCrashBet.deleteMany({ where: { userId: params.userId } });
+      });
       throw new BadRequestException(e instanceof Error ? e.message : 'Schedule rejected');
     }
   }
 
   /** Cancel the queued next-round bet and refund its stake. */
   async cancelScheduled(userId: string) {
-    let amount: bigint;
-    try {
-      ({ amountLamports: amount } = this.engine.cancelScheduled(userId));
-    } catch (e) {
-      throw new BadRequestException(e instanceof Error ? e.message : 'Nothing to cancel');
-    }
-    await withSerializable(this.prisma, (tx) =>
-      applyBalanceDelta(tx, userId, amount, {
+    // DB is the source of truth for the durable stake: refund + delete the
+    // ScheduledCrashBet row atomically FIRST. If the tx fails, both the row and
+    // the engine entry stay intact (the caller can retry) — the stake is never
+    // dropped from both in-memory and DB without a refund. Only after the refund
+    // commits do we drop the in-memory queue entry.
+    const refunded = await withSerializable(this.prisma, async (tx) => {
+      const row = await tx.scheduledCrashBet.findUnique({ where: { userId } });
+      if (!row) return null;
+      await applyBalanceDelta(tx, userId, row.amountLamports, {
         reason: 'refund',
         refType: 'CrashRound',
         refId: null,
-      }),
-    );
-    return { ok: true as const, refundedLamports: amount.toString() };
+      });
+      await tx.scheduledCrashBet.delete({ where: { userId } });
+      return row.amountLamports;
+    });
+    if (refunded === null) throw new BadRequestException('No scheduled bet to cancel');
+    // Best-effort: stop it from being drained into a round. If it's already gone
+    // (the round just opened and drained it), the row delete above is authoritative.
+    try {
+      this.engine.cancelScheduled(userId);
+    } catch {
+      /* already drained/removed */
+    }
+    return { ok: true as const, refundedLamports: refunded.toString() };
   }
 }
