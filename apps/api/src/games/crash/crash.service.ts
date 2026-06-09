@@ -54,6 +54,13 @@ export class CrashService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
+    // The waiting round exists before the bet — capture its id so we can persist
+    // a durable CrashBet row in the SAME tx as the debit (#14: a restart can
+    // then refund stranded stakes). ensureRoundPersisted re-asserts the round
+    // row exists (no-op in prod) so the CrashBet FK can never fail.
+    const roundId = this.engine.currentRoundId();
+    await this.engine.ensureRoundPersisted();
+
     // Crash is NOT single-tx (debit, then in-memory engine, then refund-on-throw).
     // Claim the key INSIDE the debit's serializable tx so key+debit are atomic.
     // A replay short-circuits WITHOUT debiting or touching the engine.
@@ -63,7 +70,26 @@ export class CrashService {
       await applyBalanceDelta(tx, params.userId, -params.amountLamports, {
         reason: 'crash_bet',
         refType: 'CrashRound',
-        refId: null,
+        refId: roundId,
+      });
+      // Durable bet row: remaining == stake until a cashout shrinks it. The
+      // engine.placeBet below still rejects (and we roll back) if the window
+      // closed between roundId capture and now. skipDuplicates so a racing
+      // double-bet's unique (roundId,userId) collision cannot abort the tx with
+      // a raw 23505 (the guarded debit above is the real one-bet guarantee).
+      await tx.crashBet.createMany({
+        data: [
+          {
+            roundId,
+            userId: params.userId,
+            amountLamports: params.amountLamports,
+            remainingLamports: params.amountLamports,
+            autoCashoutMultiplier: params.autoCashout,
+            payoutLamports: BigInt(0),
+            won: false,
+          },
+        ],
+        skipDuplicates: true,
       });
       return { replay: null };
     });
@@ -80,14 +106,18 @@ export class CrashService {
       });
     } catch (e) {
       // Roll back the debit on engine rejection — a separate atomic movement
-      // (its own ledger row), which is correct double-entry.
+      // (its own ledger row), which is correct double-entry. The CrashBet row
+      // committed alongside the debit, so delete it here too.
       await withSerializable(this.prisma, (tx) =>
         applyBalanceDelta(tx, params.userId, params.amountLamports, {
           reason: 'refund',
           refType: 'CrashRound',
-          refId: null,
+          refId: roundId,
         }),
       );
+      await this.prisma.crashBet
+        .deleteMany({ where: { roundId, userId: params.userId } })
+        .catch(() => undefined);
       // Also drop the key (best-effort) so a failed bet's key doesn't 409
       // forever — the client can retry with the same key.
       if (key) {
@@ -112,9 +142,9 @@ export class CrashService {
     return response;
   }
 
-  cashOut(userId: string, percent = 100) {
+  async cashOut(userId: string, percent = 100) {
     try {
-      return this.engine.cashOut(userId, percent);
+      return await this.engine.cashOut(userId, percent);
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Cashout rejected');
     }

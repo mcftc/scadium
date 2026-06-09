@@ -98,9 +98,125 @@ export class BlackjackEngine implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.recoverStrandedRounds();
     await this.createTable('Main Table', false, null);
     // Sweep idle private tables every minute.
     setInterval(() => this.sweepPrivateTables(), 60_000).unref();
+  }
+
+  /**
+   * Boot recovery (#14): a restart strands every unfinished round (endedAt
+   * IS NULL) — seat stakes are debited but the hand never settles, and the table
+   * sits non-'waiting' forever. The safe move is to REFUND the seat stakes
+   * (we cannot fairly resume a half-dealt hand): parse each round's persisted
+   * stateJson (snapshotted at deal time) for seated bets, total each user's
+   * debited stake (main + both side bets), and credit it back in ONE
+   * serializable tx with a ledger row, then write endedAt and flip the table
+   * 'waiting'. Per-round try/catch → SettlementFailure on error, continue.
+   *
+   * NOTE: a `double` taken after the deal-time snapshot adds extra stake that is
+   * not re-persisted, so a crash after a double under-refunds the doubled
+   * portion — documented minor gap (the originally-locked stakes are always
+   * refunded). Rounds that crashed during the betting window have an empty
+   * stateJson (`{}`); their stakes were refunded synchronously by the service on
+   * the failed bet path, so there is nothing to refund — we just close them.
+   */
+  private async recoverStrandedRounds(): Promise<void> {
+    let stranded: { id: string; tableId: string; stateJson: unknown }[];
+    try {
+      stranded = await this.prisma.blackjackRound.findMany({
+        where: { endedAt: null },
+        select: { id: true, tableId: true, stateJson: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `blackjack recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (stranded.length === 0) return;
+    this.logger.warn(`blackjack recovery: ${stranded.length} unfinished round(s) — refunding`);
+
+    for (const round of stranded) {
+      try {
+        const refunds = this.parseSeatStakes(round.stateJson);
+        await withSerializable(this.prisma, async (tx) => {
+          for (const r of refunds) {
+            if (r.stake > BigInt(0)) {
+              await applyBalanceDelta(tx, r.userId, r.stake, {
+                reason: 'blackjack_recovery_refund',
+                refType: 'BlackjackRound',
+                refId: round.id,
+              });
+            }
+          }
+          await tx.blackjackRound.update({
+            where: { id: round.id },
+            data: { endedAt: new Date() },
+          });
+          await tx.blackjackTable.update({
+            where: { id: round.tableId },
+            data: { status: 'waiting' },
+          });
+        });
+        this.logger.log(
+          `blackjack recovery: round ${round.id} refunded ${refunds.length} seat(s)`,
+        );
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(`blackjack recovery failed for round ${round.id}: ${message}`);
+        try {
+          await this.prisma.settlementFailure.create({
+            data: {
+              gameType: 'blackjack',
+              roundId: round.id,
+              payloadJson: { roundDbId: round.id, tableId: round.tableId, path: 'recovery' },
+              error: message,
+            },
+          });
+        } catch (deadLetterErr) {
+          this.logger.error(
+            `blackjack recovery: failed to write SettlementFailure for ${round.id}: ${String(deadLetterErr)}`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract per-user debited stake (main + both side bets) from a persisted
+   * round stateJson snapshot. Returns [] for an empty/partial snapshot (a round
+   * that crashed during the betting window, before deal-time persistence).
+   */
+  private parseSeatStakes(stateJson: unknown): { userId: string; stake: bigint }[] {
+    if (typeof stateJson !== 'object' || stateJson === null) return [];
+    const seats = (stateJson as { seats?: unknown }).seats;
+    if (!Array.isArray(seats)) return [];
+    const out: { userId: string; stake: bigint }[] = [];
+    for (const seat of seats) {
+      if (typeof seat !== 'object' || seat === null) continue;
+      const s = seat as { userId?: unknown; bet?: unknown };
+      if (typeof s.userId !== 'string') continue;
+      if (typeof s.bet !== 'object' || s.bet === null) continue;
+      const bet = s.bet as {
+        mainLamports?: unknown;
+        side21p3Lamports?: unknown;
+        sidePerfectPairsLamports?: unknown;
+      };
+      const stake =
+        this.toBigInt(bet.mainLamports) +
+        this.toBigInt(bet.side21p3Lamports) +
+        this.toBigInt(bet.sidePerfectPairsLamports);
+      out.push({ userId: s.userId, stake });
+    }
+    return out;
+  }
+
+  private toBigInt(v: unknown): bigint {
+    if (typeof v === 'string' && /^\d+$/.test(v)) return BigInt(v);
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return BigInt(v);
+    return BigInt(0);
   }
 
   // ---------- Table management ----------
@@ -453,6 +569,14 @@ export class BlackjackEngine implements OnModuleInit {
     t.phase = 'dealing';
     t.closeAt = null;
     this.broadcast(t);
+
+    // Persist a snapshot of the locked-in bets to the round NOW (before the
+    // hand plays out) so a restart mid-hand can refund seat stakes from
+    // stateJson (#14 recovery) — until settle the row otherwise holds only `{}`.
+    await this.prisma.blackjackRound.update({
+      where: { id: t.roundDbId! },
+      data: { stateJson: this.snapshot(t.id) as object },
+    });
 
     // Deal order (public, deterministic): pass 1 — each betting seat, then
     // the dealer's up-card; pass 2 — each seat again, then the hole card.

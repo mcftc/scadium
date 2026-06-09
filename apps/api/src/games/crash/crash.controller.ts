@@ -70,8 +70,8 @@ export class CrashController {
   @ApiOperation({
     summary: 'Cash out at the current multiplier — optionally a percentage (progressive)',
   })
-  cashOut(@CurrentUser() user: AuthContextLike, @Body() dto: CashOutDto) {
-    const { payoutLamports, multiplier, remainingLamports } = this.crash.cashOut(
+  async cashOut(@CurrentUser() user: AuthContextLike, @Body() dto: CashOutDto) {
+    const { payoutLamports, multiplier, remainingLamports } = await this.crash.cashOut(
       user.userId,
       dto?.percent ?? 100,
     );
