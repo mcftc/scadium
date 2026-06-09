@@ -133,6 +133,7 @@ model User {
   jackpotEntries JackpotEntry[]
   jackpotWins    JackpotRound[] @relation("jackpotWinner")
   linkedWallets  LinkedWallet[]
+  balanceLedger  BalanceLedger[]
 
   @@index([walletAddress])
   @@index([refCode])
@@ -163,6 +164,25 @@ model Session {
   createdAt    DateTime @default(now())
 
   @@index([userId])
+}
+
+// Append-only double-entry ledger (Phase G): one row per playBalance movement,
+// written in the SAME transaction as the mutation via `applyBalanceDelta`. This
+// makes `User.playBalanceLamports` a re-derivable projection — SUM(delta) per
+// user must equal the live balance, and `balanceAfter` is the running sum at the
+// time the row was written. Never updated or deleted by application code.
+model BalanceLedger {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id])
+  delta        BigInt
+  reason       String
+  refType      String
+  refId        String?
+  balanceAfter BigInt
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model AuthNonce {

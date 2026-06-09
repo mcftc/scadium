@@ -1,5 +1,6 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { AirdropGateway } from './airdrop.gateway';
 
 /**
@@ -85,10 +86,12 @@ export class AirdropEngine implements OnModuleInit {
     await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new Error('User not found');
-      if (user.playBalanceLamports < amountLamports) throw new Error('Insufficient balance');
-      await tx.user.update({
-        where: { id: userId },
-        data: { playBalanceLamports: { decrement: amountLamports } },
+      // Atomic conditional debit (single mutation point) — also writes the
+      // ledger row; rejects with 'Insufficient balance' if underfunded.
+      await applyBalanceDelta(tx, userId, -amountLamports, {
+        reason: 'airdrop_tip',
+        refType: 'AirdropPool',
+        refId: period,
       });
       await tx.airdropPool.update({
         where: { period },
@@ -165,12 +168,14 @@ export class AirdropEngine implements OnModuleInit {
           data: { totalLamports: total, participantCount: eligible.length },
         });
         for (const userId of eligible) {
-          await tx.user.update({
-            where: { id: userId },
-            data: { playBalanceLamports: { increment: share } },
-          });
-          await tx.airdropClaim.create({
+          const claim = await tx.airdropClaim.create({
             data: { eventId: event.id, userId, lamports: share },
+          });
+          // Credit through the single mutation point (ledger row in this tx).
+          await applyBalanceDelta(tx, userId, share, {
+            reason: 'airdrop_credit',
+            refType: 'AirdropClaim',
+            refId: claim.id,
           });
         }
       });

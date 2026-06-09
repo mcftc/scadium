@@ -174,10 +174,9 @@ describe('concurrency / money-safety (integration, real Postgres)', () => {
       await prisma.settlementFailure.count({ where: { gameType: 'crash', roundId: round.id } }),
     ).toBe(1);
 
-    // TODO(#7): once the append-only BalanceLedger lands, also assert
-    // SUM(BalanceLedger.delta) == playBalanceLamports here (no orphan ledger
-    // entries from the rolled-back settle). Until then the balance + row
-    // assertions above are the atomicity proof that holds today.
+    // #7: the BalanceLedger is part of the same rolled-back settlement tx, so
+    // no orphan ledger entries survive for the would-be-credited user.
+    expect(await prisma.balanceLedger.count({ where: { userId: valid.id } })).toBe(0);
   });
 });
 

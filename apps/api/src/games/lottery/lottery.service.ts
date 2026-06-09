@@ -8,7 +8,7 @@ import { LOTTERY } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
-import { debitPlayBalance } from '../../common/wallet.util';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
 /**
  * HTTP-facing facade for the lottery. Validates ticket picks, debits the
@@ -205,7 +205,11 @@ export class LotteryService {
     // Debit + create the ticket atomically. The conditional debit enforces
     // funds and closes the double-spend race.
     const ticket = await this.prisma.$transaction(async (tx) => {
-      await debitPlayBalance(tx, params.userId, price);
+      await applyBalanceDelta(tx, params.userId, -price, {
+        reason: 'lottery_ticket',
+        refType: 'LotteryDraw',
+        refId: open.id,
+      });
       return tx.lotteryTicket.create({
         data: {
           drawId: open.id,

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
-import { debitPlayBalance } from '../src/common/wallet.util';
+import { applyBalanceDelta } from '../src/prisma/apply-balance-delta';
+import { withSerializable } from '../src/prisma/with-serializable';
 
 // TODO(harness #9): fold this bootstrap into the shared concurrency harness.
 // Runs against a dedicated `scadium_test` DB so dev data is never clobbered.
@@ -9,6 +10,14 @@ const TEST_DB_URL =
   process.env.TEST_DATABASE_URL ??
   'postgresql://scadium:scadium@localhost:5432/scadium_test?schema=public';
 const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL } } });
+
+// Debit exactly as production does post-#7: a guarded conditional debit + its
+// ledger row, atomically. (applyBalanceDelta with a negative delta.)
+function debit(userId: string, amount: bigint): Promise<bigint> {
+  return withSerializable(prisma, (tx) =>
+    applyBalanceDelta(tx, userId, -amount, { reason: 'test_debit', refType: 'test' }),
+  );
+}
 
 const RUN = `${Date.now().toString(36)}`;
 let seq = 0;
@@ -37,7 +46,7 @@ describe('balance debit race (integration, real Postgres)', () => {
     const N = 20;
 
     const results = await Promise.allSettled(
-      Array.from({ length: N }, () => debitPlayBalance(prisma, user.id, bet)),
+      Array.from({ length: N }, () => debit(user.id, bet)),
     );
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejections = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
@@ -71,11 +80,11 @@ describe('balance debit race (integration, real Postgres)', () => {
   it('happy path: a single debit decrements exactly; an over-debit rejects and leaves the balance untouched', async () => {
     const user = await makeUser(1_000n);
 
-    await debitPlayBalance(prisma, user.id, 400n);
+    await debit(user.id, 400n);
     let after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(after.playBalanceLamports).toBe(600n);
 
-    await expect(debitPlayBalance(prisma, user.id, 1_000n)).rejects.toBeInstanceOf(
+    await expect(debit(user.id, 1_000n)).rejects.toBeInstanceOf(
       BadRequestException,
     );
     after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });

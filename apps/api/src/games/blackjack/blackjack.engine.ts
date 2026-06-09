@@ -16,6 +16,7 @@ import {
 import { BLACKJACK, SCAD, type Card } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
 import { BlackjackGateway } from './blackjack.gateway';
 
@@ -688,7 +689,6 @@ export class BlackjackEngine implements OnModuleInit {
           await tx.user.update({
             where: { id: s.userId },
             data: {
-              playBalanceLamports: { increment: d.payout },
               scadiumBalance: { increment: d.stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
               totalWagered: { increment: d.stake },
               totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
@@ -696,6 +696,15 @@ export class BlackjackEngine implements OnModuleInit {
               gamesPlayed: { increment: 1 },
             },
           });
+          // Credit the play balance through the single mutation point (ledger
+          // row in this tx). Skip a pure loss (payout 0) — no balance movement.
+          if (d.payout > BigInt(0)) {
+            await applyBalanceDelta(tx, s.userId, d.payout, {
+              reason: 'blackjack_settle',
+              refType: 'Bet',
+              refId: d.betId,
+            });
+          }
           await tx.bet.create({
             data: {
               id: d.betId,

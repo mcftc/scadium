@@ -9,6 +9,7 @@ import { JACKPOT, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
 import { JackpotGateway } from './jackpot.gateway';
 
@@ -174,9 +175,10 @@ export class JackpotEngine implements OnModuleInit {
       try {
         await withSerializable(this.prisma, async (tx) => {
           for (const e of entries) {
-            await tx.user.update({
-              where: { id: e.userId },
-              data: { playBalanceLamports: { increment: e.amountLamports } },
+            await applyBalanceDelta(tx, e.userId, e.amountLamports, {
+              reason: 'jackpot_refund',
+              refType: 'JackpotRound',
+              refId: roundId,
             });
           }
           await tx.jackpotRound.update({
@@ -286,7 +288,6 @@ export class JackpotEngine implements OnModuleInit {
           await tx.user.update({
             where: { id: userId },
             data: {
-              playBalanceLamports: { increment: credited },
               scadiumBalance: {
                 increment: info.amount * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
               },
@@ -296,6 +297,15 @@ export class JackpotEngine implements OnModuleInit {
               gamesPlayed: { increment: 1 },
             },
           });
+          // Credit the play balance through the single mutation point (ledger
+          // row in this tx). Only the winner is credited; losers move nothing.
+          if (credited > BigInt(0)) {
+            await applyBalanceDelta(tx, userId, credited, {
+              reason: 'jackpot_settle',
+              refType: 'Bet',
+              refId: job.betId,
+            });
+          }
           await tx.bet.create({
             data: {
               id: job.betId,
