@@ -4,6 +4,7 @@ import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } 
 import { CRASH, SCAD } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
 import { CrashGateway } from './crash.gateway';
 
@@ -418,7 +419,6 @@ export class CrashEngine implements OnModuleInit {
           await tx.user.update({
             where: { id: bet.userId },
             data: {
-              playBalanceLamports: { increment: payout },
               // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
               scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
               totalWagered: { increment: stake },
@@ -427,6 +427,17 @@ export class CrashEngine implements OnModuleInit {
               gamesPlayed: { increment: 1 },
             },
           });
+
+          // Credit the play balance through the single mutation point (writes a
+          // ledger row in this tx). Only when there's an actual payout — a pure
+          // loss has no balance movement.
+          if (payout > BigInt(0)) {
+            await applyBalanceDelta(tx, bet.userId, payout, {
+              reason: 'crash_settle',
+              refType: 'Bet',
+              refId: job.betId,
+            });
+          }
 
           await tx.crashBet.create({
             data: {

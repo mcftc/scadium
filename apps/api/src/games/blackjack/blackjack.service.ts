@@ -7,7 +7,8 @@ import {
 import { BLACKJACK } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlackjackEngine } from './blackjack.engine';
-import { debitPlayBalance } from '../../common/wallet.util';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
+import { withSerializable } from '../../prisma/with-serializable';
 
 /**
  * HTTP facade for the multiplayer blackjack tables. All balance movement
@@ -69,7 +70,7 @@ export class BlackjackService {
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Leave rejected');
     }
-    if (refund > BigInt(0)) await this.credit(userId, refund);
+    if (refund > BigInt(0)) await this.credit(userId, refund, tableId);
     return { ok: true as const, refundedLamports: refund.toString() };
   }
 
@@ -100,7 +101,7 @@ export class BlackjackService {
 
     // loadUser enforces banned/exists; the conditional debit enforces funds.
     await this.loadUser(params.userId);
-    await this.debit(params.userId, total);
+    await this.debit(params.userId, total, params.tableId);
     try {
       const { previousTotalLamports } = this.engine.placeBet({
         tableId: params.tableId,
@@ -108,10 +109,12 @@ export class BlackjackService {
         bet: { mainLamports, side21p3Lamports, sidePerfectPairsLamports },
       });
       // Replacing an earlier bet within the same window refunds the old stake.
-      if (previousTotalLamports > BigInt(0)) await this.credit(params.userId, previousTotalLamports);
+      if (previousTotalLamports > BigInt(0)) {
+        await this.credit(params.userId, previousTotalLamports, params.tableId);
+      }
       return { ok: true as const };
     } catch (e) {
-      await this.credit(params.userId, total);
+      await this.credit(params.userId, total, params.tableId);
       throw new BadRequestException(e instanceof Error ? e.message : 'Bet rejected');
     }
   }
@@ -123,7 +126,7 @@ export class BlackjackService {
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Clear rejected');
     }
-    await this.credit(userId, refund);
+    await this.credit(userId, refund, tableId);
     return { ok: true as const, refundedLamports: refund.toString() };
   }
 
@@ -138,12 +141,12 @@ export class BlackjackService {
       extra = BigInt(seat.bet.mainLamports);
       await this.loadUser(params.userId);
       // Conditional debit rejects with 'Insufficient balance' if underfunded.
-      await this.debit(params.userId, extra);
+      await this.debit(params.userId, extra, params.tableId);
     }
     try {
       return this.engine.action(params);
     } catch (e) {
-      if (extra > BigInt(0)) await this.credit(params.userId, extra);
+      if (extra > BigInt(0)) await this.credit(params.userId, extra, params.tableId);
       throw new BadRequestException(e instanceof Error ? e.message : 'Action rejected');
     }
   }
@@ -157,16 +160,28 @@ export class BlackjackService {
     return user;
   }
 
-  private debit(userId: string, amount: bigint) {
+  // The debit and any refund are SEPARATE atomic movements (two ledger rows) —
+  // correct double-entry. We never hold one tx across the in-memory engine call,
+  // so each is its own withSerializable closure writing one ledger row.
+  private debit(userId: string, amount: bigint, tableId: string) {
     // Atomic conditional debit (guarded updateMany) — closes the double-spend
     // race that plain decrement allowed between concurrent bets.
-    return debitPlayBalance(this.prisma, userId, amount);
+    return withSerializable(this.prisma, (tx) =>
+      applyBalanceDelta(tx, userId, -amount, {
+        reason: 'blackjack_bet',
+        refType: 'BlackjackTable',
+        refId: tableId,
+      }),
+    );
   }
 
-  private credit(userId: string, amount: bigint) {
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { playBalanceLamports: { increment: amount } },
-    });
+  private credit(userId: string, amount: bigint, tableId: string) {
+    return withSerializable(this.prisma, (tx) =>
+      applyBalanceDelta(tx, userId, amount, {
+        reason: 'refund',
+        refType: 'BlackjackTable',
+        refId: tableId,
+      }),
+    );
   }
 }

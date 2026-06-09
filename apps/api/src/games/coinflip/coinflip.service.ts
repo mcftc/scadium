@@ -16,7 +16,7 @@ import { COINFLIP, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { CoinflipGateway } from './coinflip.gateway';
-import { debitPlayBalance } from '../../common/wallet.util';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
 type Side = 'heads' | 'tails';
 
@@ -78,7 +78,12 @@ export class CoinflipService {
       if (user.banned) throw new ForbiddenException('Account banned');
 
       // Atomic conditional debit inside the tx — closes the double-spend race.
-      await debitPlayBalance(tx, params.userId, params.amountLamports);
+      // refId is null: the game row is created later in this same tx.
+      await applyBalanceDelta(tx, params.userId, -params.amountLamports, {
+        reason: 'coinflip_stake',
+        refType: 'CoinflipGame',
+        refId: null,
+      });
 
       // Commit a fresh seed per game so each flip has its own provably-fair
       // trail. serverSeed stays secret until resolve.
@@ -143,7 +148,11 @@ export class CoinflipService {
 
       // Deduct from joiner (creator already debited at create time) — atomic
       // conditional debit closes the double-spend race.
-      await debitPlayBalance(tx, params.userId, game.amountLamports);
+      await applyBalanceDelta(tx, params.userId, -game.amountLamports, {
+        reason: 'coinflip_stake',
+        refType: 'CoinflipGame',
+        refId: game.id,
+      });
 
       // Derive the result from the committed seed. Each flip has its own
       // dedicated server/client seed pair, so nonce is always 0 — no need
@@ -169,7 +178,6 @@ export class CoinflipService {
       await tx.user.update({
         where: { id: winnerId },
         data: {
-          playBalanceLamports: { increment: winnerPayout },
           scadiumBalance: {
             increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
           },
@@ -236,6 +244,14 @@ export class CoinflipService {
             },
           },
         ],
+      });
+
+      // Credit the winner's play balance through the single mutation point
+      // (writes a ledger row in this tx), referencing the winner's Bet row.
+      await applyBalanceDelta(tx, winnerId, winnerPayout, {
+        reason: 'coinflip_payout',
+        refType: 'Bet',
+        refId: creatorWins ? creatorBetId : joinerBetId,
       });
 
       // Reveal the server seed now that the round is settled
@@ -326,9 +342,10 @@ export class CoinflipService {
         throw new BadRequestException('Only open flips can be cancelled');
       }
 
-      await tx.user.update({
-        where: { id: game.creatorId },
-        data: { playBalanceLamports: { increment: game.amountLamports } },
+      await applyBalanceDelta(tx, game.creatorId, game.amountLamports, {
+        reason: 'refund',
+        refType: 'CoinflipGame',
+        refId: game.id,
       });
 
       const cancelled = await tx.coinflipGame.update({

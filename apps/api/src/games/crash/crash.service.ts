@@ -7,7 +7,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRASH } from '@scadium/shared';
 import { CrashEngine } from './crash.engine';
-import { debitPlayBalance } from '../../common/wallet.util';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
+import { withSerializable } from '../../prisma/with-serializable';
 
 /**
  * Thin facade that adapts HTTP DTOs to the in-memory CrashEngine.
@@ -48,9 +49,15 @@ export class CrashService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    // Atomic conditional debit — closes the double-spend race. A lone guarded
-    // updateMany is itself atomic, so no surrounding $transaction is needed.
-    await debitPlayBalance(this.prisma, params.userId, params.amountLamports);
+    // Atomic conditional debit — closes the double-spend race. Wrapped in a tx
+    // so the debit and its ledger row commit together.
+    await withSerializable(this.prisma, (tx) =>
+      applyBalanceDelta(tx, params.userId, -params.amountLamports, {
+        reason: 'crash_bet',
+        refType: 'CrashRound',
+        refId: null,
+      }),
+    );
 
     try {
       return this.engine.placeBet({
@@ -61,11 +68,15 @@ export class CrashService {
         autoCashout: params.autoCashout,
       });
     } catch (e) {
-      // Roll back the debit on engine rejection
-      await this.prisma.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { increment: params.amountLamports } },
-      });
+      // Roll back the debit on engine rejection — a separate atomic movement
+      // (its own ledger row), which is correct double-entry.
+      await withSerializable(this.prisma, (tx) =>
+        applyBalanceDelta(tx, params.userId, params.amountLamports, {
+          reason: 'refund',
+          refType: 'CrashRound',
+          refId: null,
+        }),
+      );
       throw new BadRequestException(e instanceof Error ? e.message : 'Bet rejected');
     }
   }
@@ -107,7 +118,13 @@ export class CrashService {
     if (user.banned) throw new ForbiddenException('Account banned');
 
     // Atomic conditional debit — see placeBet.
-    await debitPlayBalance(this.prisma, params.userId, params.amountLamports);
+    await withSerializable(this.prisma, (tx) =>
+      applyBalanceDelta(tx, params.userId, -params.amountLamports, {
+        reason: 'crash_bet',
+        refType: 'CrashRound',
+        refId: null,
+      }),
+    );
 
     try {
       this.engine.scheduleBet({
@@ -119,10 +136,13 @@ export class CrashService {
       });
       return { ok: true as const, scheduled: true as const };
     } catch (e) {
-      await this.prisma.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { increment: params.amountLamports } },
-      });
+      await withSerializable(this.prisma, (tx) =>
+        applyBalanceDelta(tx, params.userId, params.amountLamports, {
+          reason: 'refund',
+          refType: 'CrashRound',
+          refId: null,
+        }),
+      );
       throw new BadRequestException(e instanceof Error ? e.message : 'Schedule rejected');
     }
   }
@@ -135,10 +155,13 @@ export class CrashService {
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Nothing to cancel');
     }
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { playBalanceLamports: { increment: amount } },
-    });
+    await withSerializable(this.prisma, (tx) =>
+      applyBalanceDelta(tx, userId, amount, {
+        reason: 'refund',
+        refType: 'CrashRound',
+        refId: null,
+      }),
+    );
     return { ok: true as const, refundedLamports: amount.toString() };
   }
 }

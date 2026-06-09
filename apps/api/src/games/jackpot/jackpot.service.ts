@@ -7,7 +7,7 @@ import {
 import { JACKPOT } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JackpotEngine } from './jackpot.engine';
-import { debitPlayBalance } from '../../common/wallet.util';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
 /**
  * HTTP facade for the jackpot. Validates entries, debits the play-money
@@ -72,7 +72,11 @@ export class JackpotService {
 
     await this.prisma.$transaction(async (tx) => {
       // Atomic conditional debit inside the tx — closes the double-spend race.
-      await debitPlayBalance(tx, params.userId, amount);
+      await applyBalanceDelta(tx, params.userId, -amount, {
+        reason: 'jackpot_entry',
+        refType: 'JackpotRound',
+        refId: open.id,
+      });
       await tx.jackpotEntry.create({
         data: { roundId: open.id, userId: params.userId, amountLamports: amount },
       });
