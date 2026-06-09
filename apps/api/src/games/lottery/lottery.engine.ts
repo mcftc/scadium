@@ -73,6 +73,10 @@ export class LotteryEngine implements OnModuleInit {
   private current!: CurrentDraw;
   private lastResult: LastResult | null = null;
   private drawTimer: NodeJS.Timeout | null = null;
+  /** True while replaying stranded draws on boot — suppresses the chained
+   * openNewDraw() in drawAndSettle so onModuleInit opens exactly one fresh draw
+   * after all stranded draws settle. */
+  private recovering = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -81,7 +85,80 @@ export class LotteryEngine implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.recoverStrandedDraws();
     await this.openNewDraw();
+  }
+
+  /**
+   * Boot recovery (#14): a restart strands every draw left 'open' — its tickets
+   * are sold but the draw never resolves and sits 'open' forever. For each,
+   * reconstruct `this.current` from the DB draw + its Seed and call the existing
+   * transactional `drawAndSettle()` (it has a synthetic-slot-hash fallback when
+   * no on-chain entropy, so it always settles). The chained openNewDraw() at the
+   * end of drawAndSettle is suppressed via `recovering` so onModuleInit opens
+   * exactly one fresh draw after all stranded draws settle. Per-draw try/catch →
+   * SettlementFailure on error, continue.
+   */
+  private async recoverStrandedDraws(): Promise<void> {
+    let stranded: { id: string; drawIndex: bigint | null; seedId: string }[];
+    try {
+      stranded = await this.prisma.lotteryDraw.findMany({
+        where: { status: 'open' },
+        select: { id: true, drawIndex: true, seedId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `lottery recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (stranded.length === 0) return;
+    this.logger.warn(`lottery recovery: ${stranded.length} stranded draw(s) — settling`);
+
+    this.recovering = true;
+    try {
+      for (const d of stranded) {
+        try {
+          const seed = await this.prisma.seed.findUniqueOrThrow({ where: { id: d.seedId } });
+          this.current = {
+            id: d.id,
+            drawIndex: d.drawIndex ?? BigInt(0),
+            seedId: seed.id,
+            serverSeed: seed.serverSeed ?? '',
+            serverSeedHash: seed.serverSeedHash,
+            clientSeed: seed.clientSeed,
+            nonce: seed.nonce,
+            drawAt: Date.now(),
+            status: 'open',
+            ticketCount: 0,
+            potLamports: BigInt(0),
+            commitTxSignature: null,
+          };
+          await this.drawAndSettle();
+          this.logger.log(`lottery recovery: draw ${d.id} settled`);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          this.logger.error(`lottery recovery failed for draw ${d.id}: ${message}`);
+          try {
+            await this.prisma.settlementFailure.create({
+              data: {
+                gameType: 'lottery',
+                roundId: d.id,
+                payloadJson: { drawId: d.id, path: 'recovery' },
+                error: message,
+              },
+            });
+          } catch (deadLetterErr) {
+            this.logger.error(
+              `lottery recovery: failed to write SettlementFailure for ${d.id}: ${String(deadLetterErr)}`,
+            );
+          }
+        }
+      }
+    } finally {
+      this.recovering = false;
+    }
   }
 
   // ---------- Public API consumed by LotteryService ----------
@@ -492,6 +569,6 @@ export class LotteryEngine implements OnModuleInit {
     );
 
     // Open the next draw immediately (also materializes the free tickets).
-    await this.openNewDraw();
+    if (!this.recovering) await this.openNewDraw();
   }
 }

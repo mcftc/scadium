@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
 import { CRASH, SCAD } from '@scadium/shared';
@@ -9,6 +10,11 @@ import { ChainService } from '../../solana/chain.service';
 import { CrashGateway } from './crash.gateway';
 
 type Phase = 'waiting' | 'running' | 'busted';
+
+/** True when `e` is a Prisma unique-constraint violation (P2002). */
+function isUniqueViolation(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
+}
 
 interface LiveBet {
   userId: string;
@@ -69,10 +75,64 @@ export class CrashEngine implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.recoverStrandedRounds();
     await this.startNewRound();
   }
 
   // ---------- Public API consumed by CrashService ----------
+
+  /**
+   * The id of the round currently accepting bets (the waiting round). The
+   * service needs this to persist a CrashBet row in the same tx as the debit.
+   */
+  currentRoundId(): string {
+    return this.current.id;
+  }
+
+  /**
+   * Re-assert that the current round's CrashRound (+ its Seed) row exists before
+   * a CrashBet is persisted against it. In production this is a no-op fast path
+   * (the round was created in startNewRound and only advances after settle) — it
+   * exists solely so the bet-time CrashBet insert's FK can never fail if the row
+   * was removed out-of-band (e.g. a test harness truncating tables under the
+   * live in-RAM round). Idempotent: re-creates round+seed by their known ids.
+   */
+  async ensureRoundPersisted(): Promise<void> {
+    const exists = await this.prisma.crashRound.findUnique({
+      where: { id: this.current.id },
+      select: { id: true },
+    });
+    if (exists) return;
+    // Re-create seed + round by their known ids. Concurrent callers race here
+    // (e.g. 20 simultaneous bets after a harness truncate), so swallow the
+    // unique-violation (P2002) that the loser of the create race sees — the row
+    // now exists either way, which is all this method promises.
+    try {
+      await this.prisma.seed.create({
+        data: {
+          id: this.current.seedId,
+          serverSeed: this.current.serverSeed,
+          serverSeedHash: this.current.serverSeedHash,
+          clientSeed: this.current.clientSeed,
+          nonce: this.current.nonce,
+        },
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+    }
+    try {
+      await this.prisma.crashRound.create({
+        data: {
+          id: this.current.id,
+          seedId: this.current.seedId,
+          nonce: this.current.nonce,
+          status: this.current.phase === 'waiting' ? 'waiting' : 'running',
+        },
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+    }
+  }
 
   snapshot() {
     return {
@@ -162,7 +222,10 @@ export class CrashEngine implements OnModuleInit {
    * multiplier — solpump's "Progressive Cashout". 100% (default) exits the
    * round; partials keep the rest riding.
    */
-  cashOut(userId: string, percent = 100): { payoutLamports: bigint; multiplier: number; remainingLamports: bigint } {
+  async cashOut(
+    userId: string,
+    percent = 100,
+  ): Promise<{ payoutLamports: bigint; multiplier: number; remainingLamports: bigint }> {
     if (this.current.phase !== 'running') {
       throw new Error('Cash out only allowed while running');
     }
@@ -184,6 +247,19 @@ export class CrashEngine implements OnModuleInit {
     bet.amountLamports -= portion;
     bet.payoutLamports += payout;
     if (bet.amountLamports === BigInt(0)) bet.cashedOutAt = m; // fully out
+
+    // Persist the (partial) cashout to the durable CrashBet row so a restart
+    // mid-round refunds only the STILL-RIDING stake and honors locked-in
+    // payouts. The row was created at bet time keyed by (roundId, userId).
+    const roundId = this.current.id;
+    await this.prisma.crashBet.update({
+      where: { roundId_userId: { roundId, userId } },
+      data: {
+        remainingLamports: bet.amountLamports,
+        payoutLamports: bet.payoutLamports,
+        cashoutMultiplier: bet.cashedOutAt ?? m,
+      },
+    });
 
     this.gateway.emitCashedOut(this.current.id, {
       userId,
@@ -254,10 +330,23 @@ export class CrashEngine implements OnModuleInit {
 
     // Drain scheduled bets into the fresh round. Balances were debited at
     // schedule time, so placement cannot fail; emit AFTER round-start so
-    // clients see the bets land in the new round.
+    // clients see the bets land in the new round. A durable CrashBet row is
+    // created per placed bet (the round id is only known now) so a restart can
+    // refund the stranded stake — mirroring placeBet's bet-time persistence.
     for (const queued of this.nextRoundBets.values()) {
       try {
         this.placeBet(queued);
+        await this.prisma.crashBet.create({
+          data: {
+            roundId: this.current.id,
+            userId: queued.userId,
+            amountLamports: queued.amountLamports,
+            remainingLamports: queued.amountLamports,
+            autoCashoutMultiplier: queued.autoCashout,
+            payoutLamports: BigInt(0),
+            won: false,
+          },
+        });
       } catch (e) {
         this.logger.error(
           `scheduled bet for ${queued.userId} failed to place: ${e instanceof Error ? e.message : e}`,
@@ -283,10 +372,11 @@ export class CrashEngine implements OnModuleInit {
 
     // Tick loop at 20 Hz — server authoritative
     const tickInterval = 1000 / CRASH.TICK_RATE_HZ;
-    const tick = () => {
+    const tick = async (): Promise<void> => {
       const m = this.currentMultiplier();
 
-      // Auto-cashouts (full exit of whatever is still riding)
+      // Auto-cashouts (full exit of whatever is still riding). Awaited so the
+      // CrashBet row is persisted before bust settles the round.
       for (const bet of this.current.bets.values()) {
         if (
           bet.cashedOutAt === null &&
@@ -295,7 +385,7 @@ export class CrashEngine implements OnModuleInit {
           m >= bet.autoCashout
         ) {
           try {
-            this.cashOut(bet.userId);
+            await this.cashOut(bet.userId);
           } catch {
             /* noop */
           }
@@ -307,9 +397,9 @@ export class CrashEngine implements OnModuleInit {
         return;
       }
       this.gateway.emitTick(this.current.id, m);
-      setTimeout(tick, tickInterval);
+      setTimeout(() => void tick(), tickInterval);
     };
-    setTimeout(tick, tickInterval);
+    setTimeout(() => void tick(), tickInterval);
   }
 
   private async bust(): Promise<void> {
@@ -439,14 +529,26 @@ export class CrashEngine implements OnModuleInit {
             });
           }
 
-          await tx.crashBet.create({
-            data: {
+          // The CrashBet row exists from bet time (unique on roundId+userId);
+          // UPSERT it with the final outcome — update in production, create as a
+          // fallback for direct-engine paths that didn't persist at bet time.
+          // Any stake still riding at bust is lost, so remainingLamports → 0.
+          await tx.crashBet.upsert({
+            where: { roundId_userId: { roundId: this.current.id, userId: bet.userId } },
+            update: {
+              cashoutMultiplier: bet.cashedOutAt,
+              payoutLamports: payout,
+              remainingLamports: BigInt(0),
+              won,
+            },
+            create: {
               roundId: this.current.id,
               userId: bet.userId,
               amountLamports: stake,
               autoCashoutMultiplier: bet.autoCashout,
               cashoutMultiplier: bet.cashedOutAt,
               payoutLamports: payout,
+              remainingLamports: BigInt(0),
               won,
             },
           });
@@ -522,5 +624,100 @@ export class CrashEngine implements OnModuleInit {
     }
 
     return { settleJobs };
+  }
+
+  /**
+   * Boot recovery (#14): a restart strands every round left 'waiting'/'running'
+   * — debited stakes (and any in-RAM cashout that was persisted to the CrashBet
+   * row) would otherwise be lost. For each stranded round, in ONE serializable
+   * tx: credit each bet's locked-in payout PLUS refund its still-riding
+   * remaining stake, mark the CrashBet terminal, write the unified Bet row, then
+   * flip the round 'busted' + reveal the seed. Value-conserving: a never-cashed
+   * bet refunds its full original stake (net zero); a cashed bet keeps winnings
+   * plus any remaining stake. Defensive per-round: a failure dead-letters a
+   * SettlementFailure and continues so boot never hangs or throws.
+   */
+  private async recoverStrandedRounds(): Promise<void> {
+    let stranded: { id: string; seedId: string }[];
+    try {
+      stranded = await this.prisma.crashRound.findMany({
+        where: { status: { in: ['waiting', 'running'] } },
+        select: { id: true, seedId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (e) {
+      this.logger.error(`crash recovery scan failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (stranded.length === 0) return;
+    this.logger.warn(`crash recovery: ${stranded.length} stranded round(s) — settling`);
+
+    for (const round of stranded) {
+      try {
+        const bets = await this.prisma.crashBet.findMany({ where: { roundId: round.id } });
+        await withSerializable(this.prisma, async (tx) => {
+          for (const bet of bets) {
+            const payout = bet.payoutLamports; // locked-in (partial) cashouts
+            const refund = bet.remainingLamports; // still-riding stake
+            const credit = payout + refund;
+            const won = payout > BigInt(0);
+            if (credit > BigInt(0)) {
+              await applyBalanceDelta(tx, bet.userId, credit, {
+                reason: 'crash_recovery_refund',
+                refType: 'CrashRound',
+                refId: round.id,
+              });
+            }
+            await tx.crashBet.update({
+              where: { id: bet.id },
+              data: { payoutLamports: payout, remainingLamports: BigInt(0), won },
+            });
+            await tx.bet.create({
+              data: {
+                userId: bet.userId,
+                gameType: 'crash',
+                amountLamports: bet.amountLamports,
+                payoutLamports: credit,
+                multiplier:
+                  bet.amountLamports > BigInt(0) && credit > BigInt(0)
+                    ? Number(credit) / Number(bet.amountLamports)
+                    : null,
+                status: won ? 'won' : 'lost',
+                seedId: round.seedId,
+                nonce: 0,
+                resultJson: {
+                  recovered: true,
+                  payoutLamports: payout.toString(),
+                  refundedLamports: refund.toString(),
+                },
+              },
+            });
+          }
+          await tx.crashRound.update({
+            where: { id: round.id },
+            data: { status: 'busted', endedAt: new Date() },
+          });
+          await tx.seed.update({ where: { id: round.seedId }, data: { revealedAt: new Date() } });
+        });
+        this.logger.log(`crash recovery: round ${round.id} settled (${bets.length} bet(s))`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.error(`crash recovery failed for round ${round.id}: ${message}`);
+        try {
+          await this.prisma.settlementFailure.create({
+            data: {
+              gameType: 'crash',
+              roundId: round.id,
+              payloadJson: { roundId: round.id, path: 'recovery' },
+              error: message,
+            },
+          });
+        } catch (deadLetterErr) {
+          this.logger.error(
+            `crash recovery: failed to write SettlementFailure for ${round.id}: ${String(deadLetterErr)}`,
+          );
+        }
+      }
+    }
   }
 }

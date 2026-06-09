@@ -55,6 +55,10 @@ export class JackpotEngine implements OnModuleInit {
   private readonly logger = new Logger(JackpotEngine.name);
   private current!: CurrentRound;
   private lastResult: LastResult | null = null;
+  /** True while replaying stranded rounds on boot — suppresses the chained
+   * openNewRound() in drawAndSettle so onModuleInit opens exactly one fresh
+   * round after all stranded rounds settle. */
+  private recovering = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -63,7 +67,64 @@ export class JackpotEngine implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.recoverStrandedRounds();
     await this.openNewRound();
+  }
+
+  /**
+   * Boot recovery (#14): a restart strands every round left 'open' — its
+   * entries are debited but never drawn/refunded, and the round sits 'open'
+   * forever. For each, reconstruct `this.current` from the DB round + its Seed
+   * and call the existing transactional `drawAndSettle()`, which draws (≥
+   * MIN_PLAYERS) or refunds (< MIN_PLAYERS) atomically with ledger entries and
+   * marks the round terminal. NOTE: drawAndSettle calls openNewRound at the end,
+   * so we set a flag to suppress that during recovery (onModuleInit opens the
+   * fresh round once, after all stranded rounds are settled). Per-round
+   * try/catch → SettlementFailure on error, continue.
+   */
+  private async recoverStrandedRounds(): Promise<void> {
+    let stranded: { id: string; seedId: string }[];
+    try {
+      stranded = await this.prisma.jackpotRound.findMany({
+        where: { status: 'open' },
+        select: { id: true, seedId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (e) {
+      this.logger.error(
+        `jackpot recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (stranded.length === 0) return;
+    this.logger.warn(`jackpot recovery: ${stranded.length} stranded round(s) — settling`);
+
+    this.recovering = true;
+    try {
+      for (const r of stranded) {
+        try {
+          const seed = await this.prisma.seed.findUniqueOrThrow({ where: { id: r.seedId } });
+          this.current = {
+            id: r.id,
+            seedId: seed.id,
+            serverSeed: seed.serverSeed ?? '',
+            serverSeedHash: seed.serverSeedHash,
+            clientSeed: seed.clientSeed,
+            nonce: seed.nonce,
+            closeAt: Date.now(),
+            status: 'open',
+            totalLamports: BigInt(0),
+            players: new Set(),
+          };
+          await this.drawAndSettle();
+          this.logger.log(`jackpot recovery: round ${r.id} settled`);
+        } catch (e) {
+          await this.recordSettlementFailure(r.id, e, { roundId: r.id, path: 'recovery' });
+        }
+      }
+    } finally {
+      this.recovering = false;
+    }
   }
 
   getOpenRound(): { id: string; closeAt: number } | null {
@@ -215,7 +276,7 @@ export class JackpotEngine implements OnModuleInit {
         serverSeed,
       });
       this.logger.log(`Jackpot ${roundId} refunded (${distinctPlayers.size} players)`);
-      await this.openNewRound();
+      if (!this.recovering) await this.openNewRound();
       return;
     }
 
@@ -395,7 +456,7 @@ export class JackpotEngine implements OnModuleInit {
     this.logger.log(
       `Jackpot ${roundId} → winner ${winnerName ?? winner.userId} takes ${payout} of ${total}`,
     );
-    await this.openNewRound();
+    if (!this.recovering) await this.openNewRound();
   }
 
   /**

@@ -294,12 +294,17 @@ model CrashBet {
   userId                String   @db.Uuid
   user                  User     @relation(fields: [userId], references: [id])
   amountLamports        BigInt
+  // Stake still riding (RAM-only until persisted at bet/cashout time). Shrinks
+  // to 0 on a full cashout and on settle/recovery; recovery refunds whatever
+  // remains so a crashed mid-round bet is never stranded.
+  remainingLamports     BigInt   @default(0)
   autoCashoutMultiplier Float?
   cashoutMultiplier     Float?
   payoutLamports        BigInt   @default(0)
   won                   Boolean  @default(false)
   createdAt             DateTime @default(now())
 
+  @@unique([roundId, userId])
   @@index([roundId])
   @@index([userId])
 }
