@@ -1,38 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { JACKPOT, ticketPriceScadBase } from '@scadium/shared';
-import { CrashEngine } from '../src/games/crash/crash.engine';
-import { JackpotEngine } from '../src/games/jackpot/jackpot.engine';
-import { LotteryEngine } from '../src/games/lottery/lottery.engine';
-import { BlackjackEngine } from '../src/games/blackjack/blackjack.engine';
+import {
+  prisma,
+  makeUser,
+  makeSeed,
+  makeCrashEngine,
+  makeJackpotEngine,
+  makeLotteryEngine,
+  makeBlackjackEngine,
+} from './engine-harness';
 
-// TODO(harness #9): fold this bootstrap into the shared concurrency harness.
-const TEST_DB_URL =
-  process.env.TEST_DATABASE_URL ??
-  'postgresql://scadium:scadium@localhost:5432/scadium_test?schema=public';
-const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL } } });
-
-const gw = () => new Proxy({}, { get: () => () => undefined }) as never;
-const offChain = { enabled: false, lotteryEnabled: false } as never;
-
-const RUN = `${Date.now().toString(36)}`;
-let seq = 0;
-async function makeUser(balance: bigint) {
-  seq += 1;
-  return prisma.user.create({
-    data: {
-      walletAddress: `rec-${RUN}-${seq}`,
-      refCode: `rec-ref-${RUN}-${seq}`,
-      playBalanceLamports: balance,
-    },
-  });
-}
-async function makeSeed() {
-  const s = `${RUN}-${seq++}`;
-  return prisma.seed.create({
-    data: { serverSeed: `srv-${s}`, serverSeedHash: `hash-${s}`, clientSeed: `cli-${s}`, nonce: 0 },
-  });
-}
 const recover = (engine: unknown, method = 'recoverStrandedRounds') =>
   (engine as Record<string, () => Promise<unknown>>)[method]!();
 
@@ -73,7 +50,7 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       },
     });
 
-    await recover(new CrashEngine(prisma as never, gw(), offChain));
+    await recover(makeCrashEngine());
 
     // u1: full stake refunded (0 + 100). u2: locked payout + remaining (180 + 40).
     expect((await prisma.user.findUniqueOrThrow({ where: { id: u1.id } })).playBalanceLamports).toBe(
@@ -109,7 +86,7 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       });
     }
 
-    await recover(new JackpotEngine(prisma as never, gw(), offChain));
+    await recover(makeJackpotEngine());
 
     const after = await prisma.jackpotRound.findUniqueOrThrow({ where: { id: round.id } });
     expect(after.status).not.toBe('open'); // drawn or refunded
@@ -142,7 +119,7 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       },
     });
 
-    await recover(new LotteryEngine(prisma as never, gw(), offChain), 'recoverStrandedDraws');
+    await recover(makeLotteryEngine(), 'recoverStrandedDraws');
 
     expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: draw.id } })).status).not.toBe(
       'open',
@@ -152,7 +129,7 @@ describe('round recovery on boot (integration, real Postgres)', () => {
   it('blackjack: unfinished round → seat stakes refunded with ledger, table back to waiting', async () => {
     const table = await prisma.blackjackTable.create({
       data: {
-        name: `rec-${RUN}`,
+        name: `rec-${Date.now().toString(36)}`,
         status: 'player_turns',
         minBetLamports: 1_000n,
         maxBetLamports: 1_000_000_000n,
@@ -177,7 +154,7 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       },
     });
 
-    await recover(new BlackjackEngine(prisma as never, gw()));
+    await recover(makeBlackjackEngine());
 
     expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).playBalanceLamports).toBe(
       150n,

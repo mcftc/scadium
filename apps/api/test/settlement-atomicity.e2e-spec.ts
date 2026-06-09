@@ -1,34 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { withSerializable } from '../src/prisma/with-serializable';
-import { CrashEngine } from '../src/games/crash/crash.engine';
-
-// TODO(harness #9): fold this bootstrap into the shared concurrency harness.
-const TEST_DB_URL =
-  process.env.TEST_DATABASE_URL ??
-  'postgresql://scadium:scadium@localhost:5432/scadium_test?schema=public';
-const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL } } });
-
-const RUN = `${Date.now().toString(36)}`;
-let seq = 0;
-async function makeUser(balance: bigint) {
-  seq += 1;
-  return prisma.user.create({
-    data: {
-      walletAddress: `settle-${RUN}-${seq}`,
-      refCode: `settle-ref-${RUN}-${seq}`,
-      playBalanceLamports: balance,
-    },
-  });
-}
-
-async function makeSeed() {
-  const s = `${RUN}-${seq++}`;
-  return prisma.seed.create({
-    data: { serverSeed: `srv-${s}`, serverSeedHash: `hash-${s}`, clientSeed: `cli-${s}`, nonce: 0 },
-  });
-}
+import { prisma, makeUser, makeSeed, makeCrashEngine } from './engine-harness';
 
 describe('settlement atomicity (integration, real Postgres)', () => {
   beforeAll(async () => {
@@ -97,12 +70,6 @@ describe('settlement atomicity (integration, real Postgres)', () => {
   });
 
   // ---- Real engine: crash settleRound() end-to-end ----
-
-  function makeCrashEngine() {
-    const gateway = { emitTick() {}, emitBust() {}, emitCreated() {} } as never;
-    const chain = { enabled: false } as never;
-    return new CrashEngine(prisma as never, gateway, chain);
-  }
 
   function liveBet(userId: string, walletAddress: string, stake: bigint, payout: bigint) {
     return {
