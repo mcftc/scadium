@@ -8,6 +8,7 @@ import {
 import { JACKPOT, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { JackpotGateway } from './jackpot.gateway';
 
@@ -166,25 +167,40 @@ export class JackpotEngine implements OnModuleInit {
     const distinctPlayers = new Set(entries.map((e) => e.userId));
     const total = entries.reduce((s, e) => s + e.amountLamports, BigInt(0));
 
-    await this.prisma.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
-
     // Not enough distinct players → refund everyone, roll the round over.
     if (distinctPlayers.size < JACKPOT.MIN_PLAYERS) {
-      this.current.status = 'refunded';
-      const ops: Promise<unknown>[] = entries.map((e) =>
-        this.prisma.user.update({
-          where: { id: e.userId },
-          data: { playBalanceLamports: { increment: e.amountLamports } },
-        }),
-      );
-      ops.push(
-        this.prisma.jackpotRound.update({
-          where: { id: roundId },
-          data: { status: 'refunded', totalLamports: total, drawnAt: new Date() },
-        }),
-      );
-      await Promise.allSettled(ops);
+      // Refund every entry + flip the round 'refunded' + reveal the seed in ONE
+      // serializable transaction — no partial refunds, no terminal-without-money.
+      try {
+        await withSerializable(this.prisma, async (tx) => {
+          for (const e of entries) {
+            await tx.user.update({
+              where: { id: e.userId },
+              data: { playBalanceLamports: { increment: e.amountLamports } },
+            });
+          }
+          await tx.jackpotRound.update({
+            where: { id: roundId },
+            data: { status: 'refunded', totalLamports: total, drawnAt: new Date() },
+          });
+          await tx.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
+        });
+      } catch (e) {
+        await this.recordSettlementFailure(roundId, e, {
+          roundId,
+          path: 'refund',
+          total: total.toString(),
+          entries: entries.map((en) => ({
+            userId: en.userId,
+            amount: en.amountLamports.toString(),
+          })),
+        });
+        // Leave the round non-terminal (status stays 'open' in the DB) and do
+        // NOT open a new round — the recovery worker re-settles it.
+        return;
+      }
 
+      this.current.status = 'refunded';
       this.setLastResult({ roundId, status: 'refunded', winnerName: null, payout: BigInt(0), total, ticket: null });
       this.gateway.emitDrawResult({
         roundId,
@@ -202,7 +218,6 @@ export class JackpotEngine implements OnModuleInit {
     }
 
     // Draw the winning ticket and walk cumulative ranges to find the winner.
-    this.current.status = 'drawn';
     const ticket = jackpotWinningTicket(serverSeed, clientSeed, nonce, Number(total));
     let cumulative = 0;
     let winner = entries[0]!;
@@ -234,7 +249,8 @@ export class JackpotEngine implements OnModuleInit {
       byUser.set(e.userId, cur);
     }
 
-    const ops: Promise<unknown>[] = [];
+    // Pre-generate bet ids + collect on-chain settle jobs as DATA ONLY; the
+    // chain calls fire AFTER the tx commits.
     const settleJobs: {
       betId: string;
       walletAddress: string;
@@ -242,72 +258,92 @@ export class JackpotEngine implements OnModuleInit {
       payout: bigint;
       multiplier: number;
     }[] = [];
-    for (const [userId, info] of byUser) {
-      const won = userId === winner.userId;
-      const credited = won ? payout : BigInt(0);
-      const profit = credited - info.amount;
-      ops.push(
-        this.prisma.user.update({
-          where: { id: userId },
-          data: {
-            playBalanceLamports: { increment: credited },
-            scadiumBalance: {
-              increment: info.amount * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-            },
-            totalWagered: { increment: info.amount },
-            totalWon: { increment: profit > BigInt(0) ? profit : BigInt(0) },
-            totalLost: { increment: profit < BigInt(0) ? -profit : BigInt(0) },
-            gamesPlayed: { increment: 1 },
-          },
-        }),
-      );
-      const betId = randomUUID();
-      ops.push(
-        this.prisma.bet.create({
-          data: {
-            id: betId,
-            userId,
-            gameType: 'jackpot',
-            amountLamports: info.amount,
-            payoutLamports: credited,
-            multiplier: info.amount > BigInt(0) ? Number(credited) / Number(info.amount) : 0,
-            status: won ? 'won' : 'lost',
-            seedId,
-            nonce,
-            resultJson: { totalLamports: total.toString(), winningTicket: ticket, won },
-          },
-        }),
-      );
-
+    for (const [, info] of byUser) {
       settleJobs.push({
-        betId,
+        betId: randomUUID(),
         walletAddress: info.walletAddress,
         stake: info.amount,
-        payout: credited,
-        multiplier: info.amount > BigInt(0) ? Number(credited) / Number(info.amount) : 0,
+        payout: BigInt(0), // filled below per winner/loser
+        multiplier: 0,
       });
     }
-    ops.push(
-      this.prisma.jackpotRound.update({
-        where: { id: roundId },
-        data: {
-          status: 'drawn',
-          totalLamports: total,
-          winnerId: winner.userId,
-          winningTicket: BigInt(ticket),
-          payoutLamports: payout,
-          drawnAt: new Date(),
-        },
-      }),
-    );
 
+    // Settle every player (ledger update + Bet row) + the round 'drawn' flip +
+    // the seed reveal in ONE serializable transaction.
     try {
-      await Promise.all(ops);
+      await withSerializable(this.prisma, async (tx) => {
+        let i = 0;
+        for (const [userId, info] of byUser) {
+          const job = settleJobs[i]!;
+          i += 1;
+          const won = userId === winner.userId;
+          const credited = won ? payout : BigInt(0);
+          const profit = credited - info.amount;
+          const multiplier = info.amount > BigInt(0) ? Number(credited) / Number(info.amount) : 0;
+          job.payout = credited;
+          job.multiplier = multiplier;
+
+          await tx.user.update({
+            where: { id: userId },
+            data: {
+              playBalanceLamports: { increment: credited },
+              scadiumBalance: {
+                increment: info.amount * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
+              },
+              totalWagered: { increment: info.amount },
+              totalWon: { increment: profit > BigInt(0) ? profit : BigInt(0) },
+              totalLost: { increment: profit < BigInt(0) ? -profit : BigInt(0) },
+              gamesPlayed: { increment: 1 },
+            },
+          });
+          await tx.bet.create({
+            data: {
+              id: job.betId,
+              userId,
+              gameType: 'jackpot',
+              amountLamports: info.amount,
+              payoutLamports: credited,
+              multiplier,
+              status: won ? 'won' : 'lost',
+              seedId,
+              nonce,
+              resultJson: { totalLamports: total.toString(), winningTicket: ticket, won },
+            },
+          });
+        }
+        await tx.jackpotRound.update({
+          where: { id: roundId },
+          data: {
+            status: 'drawn',
+            totalLamports: total,
+            winnerId: winner.userId,
+            winningTicket: BigInt(ticket),
+            payoutLamports: payout,
+            drawnAt: new Date(),
+          },
+        });
+        await tx.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
+      });
     } catch (e) {
-      this.logger.error(`Jackpot settle failed: ${e instanceof Error ? e.message : e}`);
+      await this.recordSettlementFailure(roundId, e, {
+        roundId,
+        path: 'draw',
+        total: total.toString(),
+        winnerId: winner.userId,
+        winningTicket: ticket,
+        payout: payout.toString(),
+        players: [...byUser.entries()].map(([userId, info]) => ({
+          userId,
+          amount: info.amount.toString(),
+        })),
+      });
+      // Leave the round non-terminal and do NOT open a new round.
+      return;
     }
 
-    // On-chain settlement receipts AFTER the bet rows exist (fire-and-forget,
+    this.current.status = 'drawn';
+
+    // On-chain settlement receipts AFTER the bet rows commit (fire-and-forget,
     // no-op when disabled — never blocks the round loop).
     if (this.chain.enabled) {
       for (const job of settleJobs) {
@@ -350,6 +386,31 @@ export class JackpotEngine implements OnModuleInit {
       `Jackpot ${roundId} → winner ${winnerName ?? winner.userId} takes ${payout} of ${total}`,
     );
     await this.openNewRound();
+  }
+
+  /**
+   * Best-effort dead-letter write when a settlement exhausts its retries. Must
+   * never throw — a logging failure can't be allowed to crash the round loop.
+   */
+  private async recordSettlementFailure(
+    roundId: string,
+    error: unknown,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Jackpot settle failed for ${roundId} after retries: ${message}`);
+    try {
+      await this.prisma.settlementFailure.create({
+        data: {
+          gameType: 'jackpot',
+          roundId,
+          payloadJson: payload as object,
+          error: message,
+        },
+      });
+    } catch (e) {
+      this.logger.error(`Failed to write SettlementFailure for jackpot ${roundId}: ${String(e)}`);
+    }
   }
 
   private setLastResult(p: {

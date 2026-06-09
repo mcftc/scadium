@@ -504,3 +504,18 @@ model LeaderboardSnapshot {
 
   @@index([period, capturedAt, rank])
 }
+
+// Dead-letter record for a game settlement that exhausted its serializable
+// retries. The round is left non-terminal so a recovery worker (Phase H) can
+// re-settle it; payloadJson captures a JSON-safe summary (BigInts stringified)
+// of the round/bets so the failure can be replayed or audited.
+model SettlementFailure {
+  id          String   @id @default(uuid()) @db.Uuid
+  gameType    GameType
+  roundId     String
+  payloadJson Json
+  error       String
+  createdAt   DateTime @default(now())
+
+  @@index([gameType, createdAt])
+}
