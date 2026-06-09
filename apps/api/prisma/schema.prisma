@@ -134,6 +134,9 @@ model User {
   jackpotWins    JackpotRound[] @relation("jackpotWinner")
   linkedWallets  LinkedWallet[]
   balanceLedger  BalanceLedger[]
+  reconciliationDrifts ReconciliationDrift[]
+  auditLogsAsActor  AuditLog[] @relation("auditActor")
+  auditLogsAsTarget AuditLog[] @relation("auditTarget")
 
   @@index([walletAddress])
   @@index([refCode])
@@ -183,6 +186,41 @@ model BalanceLedger {
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Reconciliation drift log (Phase G): the hourly reconciliation job recomputes
+// per-user aggregates from `Bet` + `BalanceLedger` and, for each User column
+// that disagrees with the recomputed value, appends one flag row here. The job
+// NEVER mutates the User row — it only flags. `storedValue`/`derivedValue` are
+// stringified (lamports are BigInt; gamesPlayed is an Int) for safe transport.
+model ReconciliationDrift {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id])
+  field        String
+  storedValue  String
+  derivedValue String
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Append-only audit log (Phase G) for privileged admin actions (ban / unban /
+// forced airdrop distribution). Written in the SAME transaction as the action
+// it records so the audit row commits (or rolls back) atomically with the
+// effect. Never updated or deleted by application code.
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorUserId  String   @db.Uuid
+  actor        User     @relation("auditActor", fields: [actorUserId], references: [id])
+  action       String
+  targetUserId String?  @db.Uuid
+  target       User?    @relation("auditTarget", fields: [targetUserId], references: [id])
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
 }
 
 model AuthNonce {

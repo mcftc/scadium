@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { AirdropGateway } from './airdrop.gateway';
@@ -110,8 +111,15 @@ export class AirdropEngine implements OnModuleInit {
   /**
    * Split the elapsed hour's pool among eligible users. Public so the admin
    * test endpoint can force a run; normally fired by the hourly timer.
+   *
+   * `forcedByUserId` is set ONLY on the admin-triggered forceDistribute path —
+   * when present (and a distribution actually pays out) a `forced_airdrop`
+   * `AuditLog` row is written in the SAME transaction as the payout. The hourly
+   * auto-distribute (timer) is NOT a privileged action and writes no audit row.
    */
-  async distribute(): Promise<{ participantCount: number; totalLamports: string }> {
+  async distribute(
+    forcedByUserId?: string,
+  ): Promise<{ participantCount: number; totalLamports: string }> {
     // The pool being distributed is the hour that JUST ended when fired by
     // the timer; when forced mid-hour it's the current one.
     const period = this.periodFor(Date.now() - 60_000);
@@ -149,14 +157,34 @@ export class AirdropEngine implements OnModuleInit {
       if (eligible.length === 0) {
         // Nobody qualified — roll the pool into the next hour instead of burning it.
         const nextPeriod = this.periodFor(Date.now() + 3_600_000 - 60_000);
-        await this.prisma.$transaction([
+        const ops: Prisma.PrismaPromise<unknown>[] = [
           this.prisma.airdropPool.update({ where: { period }, data: { distributed: true } }),
           this.prisma.airdropPool.upsert({
             where: { period: nextPeriod },
             update: { baseLamports: { increment: total } },
             create: { period: nextPeriod, baseLamports: this.baseLamports + total },
           }),
-        ]);
+        ];
+        // Forced run still records the privileged action even though it rolled
+        // over (no eligible users) — atomic with the rollover.
+        if (forcedByUserId) {
+          ops.push(
+            this.prisma.auditLog.create({
+              data: {
+                actorUserId: forcedByUserId,
+                action: 'forced_airdrop',
+                targetUserId: null,
+                metadataJson: {
+                  period,
+                  participantCount: 0,
+                  totalLamports: total.toString(),
+                  rolledOver: true,
+                },
+              },
+            }),
+          );
+        }
+        await this.prisma.$transaction(ops);
         this.logger.log(`airdrop ${period}: no eligible users — ${total} rolled over`);
         return result;
       }
@@ -176,6 +204,22 @@ export class AirdropEngine implements OnModuleInit {
             reason: 'airdrop_credit',
             refType: 'AirdropClaim',
             refId: claim.id,
+          });
+        }
+        // Admin-forced distribution → append the privileged-action audit row in
+        // the same tx as the payout (atomic with the credits + event).
+        if (forcedByUserId) {
+          await tx.auditLog.create({
+            data: {
+              actorUserId: forcedByUserId,
+              action: 'forced_airdrop',
+              targetUserId: null,
+              metadataJson: {
+                period,
+                participantCount: eligible.length,
+                totalLamports: total.toString(),
+              },
+            },
           });
         }
       });

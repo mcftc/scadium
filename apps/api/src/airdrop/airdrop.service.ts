@@ -55,7 +55,9 @@ export class AirdropService {
     });
     if (!user) throw new NotFoundException('User not found');
     if (user.role !== 'admin') throw new ForbiddenException('Admin access required');
-    return this.engine.distribute();
+    // Pass the actor so the engine writes a `forced_airdrop` audit row inside
+    // the payout transaction (only the admin-forced path is privileged).
+    return this.engine.distribute(userId);
   }
 
   async checkEligibility(userId: string) {

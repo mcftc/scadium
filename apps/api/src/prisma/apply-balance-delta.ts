@@ -6,9 +6,12 @@ import type { PrismaService } from './prisma.service';
  * Single mutation point for `User.playBalanceLamports`. EVERY play-balance
  * movement (credit or debit) must go through this helper so an append-only
  * `BalanceLedger` row is written in the SAME transaction as the balance change.
- * That makes the live balance a re-derivable projection: `SUM(delta)` per user
- * always equals `User.playBalanceLamports`, and each row's `balanceAfter` is the
- * running sum at the time it was written.
+ * That makes the live balance a re-derivable projection: each row's
+ * `balanceAfter` is the live balance immediately after that movement, so the
+ * latest row's `balanceAfter` equals `User.playBalanceLamports` for an
+ * untampered user. (`SUM(delta)` reconstructs the balance NET of the opening
+ * balance — new users start at a 10 SOL default that is not ledgered, so
+ * reconciliation compares against the latest `balanceAfter`, not `SUM(delta)`.)
  *
  * MUST be called on a transaction client (`tx`) so the balance mutation and the
  * ledger row commit (or roll back) atomically. A rolled-back settlement leaves
