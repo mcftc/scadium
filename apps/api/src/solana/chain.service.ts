@@ -60,8 +60,6 @@ export class ChainService implements OnModuleInit {
       this.scadMint = scadMint ? new PublicKey(scadMint) : null;
       const lotteryProgramId = this.config.get<string>('LOTTERY_PROGRAM_ID');
       this.lotteryProgramId = lotteryProgramId ? new PublicKey(lotteryProgramId) : null;
-      const usdtMint = this.config.get<string>('USDT_MINT');
-      this.usdtMint = usdtMint ? new PublicKey(usdtMint) : null;
       this.enabled = true;
       this.logger.log(
         `On-chain settlement enabled — program ${programId}, cosigner ${this.cosigner.publicKey.toBase58()}`,
@@ -152,16 +150,17 @@ export class ChainService implements OnModuleInit {
   // ------------------------------------------------------------ lottery
 
   private lotteryProgramId: PublicKey | null = null;
-  private usdtMint: PublicKey | null = null;
 
+  // The lottery is denominated in $SCAD (the role CAKE plays in PancakeSwap):
+  // tickets, prizes, burn and injection all move the SCAD mint.
   get lotteryEnabled(): boolean {
-    return this.enabled && !!this.lotteryProgramId && !!this.usdtMint;
+    return this.enabled && !!this.lotteryProgramId && !!this.scadMint;
   }
   get lotteryProgramIdBase58(): string | null {
     return this.lotteryProgramId?.toBase58() ?? null;
   }
-  get usdtMintBase58(): string | null {
-    return this.usdtMint?.toBase58() ?? null;
+  get scadMintBase58(): string | null {
+    return this.scadMint?.toBase58() ?? null;
   }
 
   lotteryConfigPda(): PublicKey {
@@ -170,6 +169,12 @@ export class ChainService implements OnModuleInit {
   lotteryDrawPda(index: bigint): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from('draw'), u64le(index)],
+      this.lotteryProgramId!,
+    )[0];
+  }
+  lotteryPayoutPda(index: bigint, winner: PublicKey): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from('payout'), u64le(index), winner.toBuffer()],
       this.lotteryProgramId!,
     )[0];
   }
@@ -220,8 +225,7 @@ export class ChainService implements OnModuleInit {
     serverSeedHex: string; // 64-char hex → 64 utf8 bytes on-chain
   }): Promise<{
     signature: string;
-    main: number[];
-    bonus: number;
+    digits: number[];
     slotHashHex: string;
     finalEntropyHex: string;
   } | null> {
@@ -247,27 +251,26 @@ export class ChainService implements OnModuleInit {
 
       // Draw layout after the 8-byte discriminator (programs/scadium_lottery):
       // index u64 | seed_hash 32 | client_seed 32 | revealed_seed 64 |
-      // slot u64 | slot_hash 32 | final_entropy 32 | main 5 | bonus 1 | …
+      // slot u64 | slot_hash 32 | final_entropy 32 | winning_digits 6 | …
       const info = await this.connection.getAccountInfo(drawPda, 'confirmed');
       if (!info) throw new Error('Draw account missing after reveal');
       const buf = info.data;
       const slotHashHex = buf.subarray(152, 184).toString('hex');
       const finalEntropyHex = buf.subarray(184, 216).toString('hex');
-      const main = Array.from(buf.subarray(216, 221));
-      const bonus = buf[221]!;
-      return { signature, main, bonus, slotHashHex, finalEntropyHex };
+      const digits = Array.from(buf.subarray(216, 222));
+      return { signature, digits, slotHashHex, finalEntropyHex };
     } catch (e) {
       this.logger.error(`reveal_draw ${params.drawIndex} failed: ${(e as Error).message}`);
       return null;
     }
   }
 
-  /** Pay a fixed-tier USDT prize from the lottery treasury. */
+  /** Pay a winner its equal share of a bracket's $SCAD slice (idempotent via the Payout PDA). */
   async lotteryPayPrize(params: {
     drawIndex: bigint;
     walletAddress: string;
-    amountUsdtBase: bigint;
-    tier: number;
+    amountScadBase: bigint;
+    bracket: number;
   }): Promise<string | null> {
     if (!this.lotteryEnabled || !this.cosigner) return null;
     try {
@@ -276,8 +279,8 @@ export class ChainService implements OnModuleInit {
       const data = Buffer.concat([
         anchorDiscriminator('pay_prize'),
         u64le(params.drawIndex),
-        u64le(params.amountUsdtBase),
-        Buffer.from([params.tier]),
+        u64le(params.amountScadBase),
+        Buffer.from([params.bracket]),
       ]);
       const ix = new TransactionInstruction({
         programId: this.lotteryProgramId!,
@@ -285,9 +288,10 @@ export class ChainService implements OnModuleInit {
           { pubkey: config, isSigner: false, isWritable: false },
           { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
           { pubkey: winner, isSigner: false, isWritable: false },
-          { pubkey: ata(this.usdtMint!, config), isSigner: false, isWritable: true },
-          { pubkey: ata(this.usdtMint!, winner), isSigner: false, isWritable: true },
-          { pubkey: this.usdtMint!, isSigner: false, isWritable: false },
+          { pubkey: this.lotteryPayoutPda(params.drawIndex, winner), isSigner: false, isWritable: true },
+          { pubkey: ata(this.scadMint!, config), isSigner: false, isWritable: true },
+          { pubkey: ata(this.scadMint!, winner), isSigner: false, isWritable: true },
+          { pubkey: this.scadMint!, isSigner: false, isWritable: false },
           { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
           { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
           { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -302,13 +306,72 @@ export class ChainService implements OnModuleInit {
     }
   }
 
-  /** Devnet faucet: cosigner transfers demo USDT to a user. */
-  async usdtFaucet(walletAddress: string, amountBase: bigint): Promise<string | null> {
+  /** Burn the round's treasury slice — a real $SCAD token burn (PancakeSwap treasuryFee). */
+  async lotteryBurnPool(params: { drawIndex: bigint; amountScadBase: bigint }): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner || params.amountScadBase <= BigInt(0)) return null;
+    try {
+      const config = this.lotteryConfigPda();
+      const data = Buffer.concat([
+        anchorDiscriminator('burn_pool'),
+        u64le(params.drawIndex),
+        u64le(params.amountScadBase),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.lotteryProgramId!,
+        keys: [
+          { pubkey: config, isSigner: false, isWritable: false },
+          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
+          { pubkey: ata(this.scadMint!, config), isSigner: false, isWritable: true },
+          { pubkey: this.scadMint!, isSigner: false, isWritable: true },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(`burn_pool ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Inject house $SCAD into a round's pool (PancakeSwap injection). */
+  async lotteryInject(params: { drawIndex: bigint; amountScadBase: bigint }): Promise<string | null> {
+    if (!this.lotteryEnabled || !this.cosigner || params.amountScadBase <= BigInt(0)) return null;
+    try {
+      const config = this.lotteryConfigPda();
+      const data = Buffer.concat([
+        anchorDiscriminator('inject'),
+        u64le(params.drawIndex),
+        u64le(params.amountScadBase),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.lotteryProgramId!,
+        keys: [
+          { pubkey: config, isSigner: false, isWritable: false },
+          { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
+          { pubkey: ata(this.scadMint!, this.cosigner.publicKey), isSigner: false, isWritable: true },
+          { pubkey: ata(this.scadMint!, config), isSigner: false, isWritable: true },
+          { pubkey: this.scadMint!, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(`inject ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Devnet faucet: cosigner transfers demo $SCAD to a user. */
+  async scadFaucet(walletAddress: string, amountBase: bigint): Promise<string | null> {
     if (!this.lotteryEnabled || !this.cosigner) return null;
     try {
       const to = new PublicKey(walletAddress);
-      const fromAta = ata(this.usdtMint!, this.cosigner.publicKey);
-      const toAta = ata(this.usdtMint!, to);
+      const fromAta = ata(this.scadMint!, this.cosigner.publicKey);
+      const toAta = ata(this.scadMint!, to);
       const ixs: TransactionInstruction[] = [];
       const exists = await this.connection.getAccountInfo(toAta);
       if (!exists) {
@@ -320,7 +383,7 @@ export class ChainService implements OnModuleInit {
               { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
               { pubkey: toAta, isSigner: false, isWritable: true },
               { pubkey: to, isSigner: false, isWritable: false },
-              { pubkey: this.usdtMint!, isSigner: false, isWritable: false },
+              { pubkey: this.scadMint!, isSigner: false, isWritable: false },
               { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
               { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
             ],
@@ -346,7 +409,7 @@ export class ChainService implements OnModuleInit {
         maxRetries: 3,
       });
     } catch (e) {
-      this.logger.error(`usdt faucet failed: ${(e as Error).message}`);
+      this.logger.error(`scad faucet failed: ${(e as Error).message}`);
       return null;
     }
   }
@@ -360,8 +423,7 @@ export class ChainService implements OnModuleInit {
     {
       drawIndex: bigint;
       buyer: string;
-      main: number[];
-      bonus: number;
+      digits: number[];
     }[]
   > {
     if (!this.lotteryEnabled) return [];
@@ -372,16 +434,17 @@ export class ChainService implements OnModuleInit {
       });
       if (!tx?.meta || tx.meta.err) return [];
       const disc = createHash('sha256').update('event:TicketBought').digest().subarray(0, 8);
-      const events: { drawIndex: bigint; buyer: string; main: number[]; bonus: number }[] = [];
+      const events: { drawIndex: bigint; buyer: string; digits: number[] }[] = [];
       for (const log of tx.meta.logMessages ?? []) {
         if (!log.startsWith('Program data: ')) continue;
         const buf = Buffer.from(log.slice('Program data: '.length), 'base64');
-        if (buf.length < 8 + 8 + 32 + 5 + 1 || !buf.subarray(0, 8).equals(disc)) continue;
+        // event TicketBought: draw_index u64 | buyer 32 | digits[6]
+        // (after the 8-byte event discriminator).
+        if (buf.length < 8 + 8 + 32 + 6 || !buf.subarray(0, 8).equals(disc)) continue;
         events.push({
           drawIndex: buf.readBigUInt64LE(8),
           buyer: new PublicKey(buf.subarray(16, 48)).toBase58(),
-          main: Array.from(buf.subarray(48, 53)),
-          bonus: buf[53]!,
+          digits: Array.from(buf.subarray(48, 54)),
         });
       }
       return events;

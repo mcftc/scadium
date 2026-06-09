@@ -2,16 +2,15 @@
 
 import { Eraser, Minus, Plus, Shuffle, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { formatUsd } from '@/lib/format';
 import { NumberPicker } from './number-picker';
 
 export interface TicketRow {
-  main: number[];
-  bonus: number | null;
+  digits: number[]; // length 6, each 0..9
 }
 
-export function isCompleteTicket(t: TicketRow, mainCount: number): boolean {
-  return t.main.length === mainCount && t.bonus !== null;
+// A 6-digit ticket is ALWAYS valid — any six digits is a complete ticket.
+export function isCompleteTicket(_t: TicketRow): boolean {
+  return true;
 }
 
 /**
@@ -28,10 +27,7 @@ export function TicketListBuilder({
   autoCount,
   completedCount,
   maxManualRows,
-  mainCount,
-  mainMax,
-  bonusMax,
-  priceUsd,
+  totalPriceScad,
   presets,
   disabled,
   onSetQuantity,
@@ -41,18 +37,14 @@ export function TicketListBuilder({
   onClearRow,
   onClearAll,
   onQuickPickAll,
-  onToggleMain,
-  onPickBonus,
+  onSetDigit,
 }: {
   tickets: TicketRow[];
   quantity: number;
   autoCount: number;
   completedCount: number;
   maxManualRows: number;
-  mainCount: number;
-  mainMax: number;
-  bonusMax: number;
-  priceUsd: number;
+  totalPriceScad: number;
   presets: number[];
   disabled?: boolean;
   onSetQuantity: (n: number) => void;
@@ -62,8 +54,7 @@ export function TicketListBuilder({
   onClearRow: (i: number) => void;
   onClearAll: () => void;
   onQuickPickAll: () => void;
-  onToggleMain: (i: number, n: number) => void;
-  onPickBonus: (i: number, n: number) => void;
+  onSetDigit: (rowIndex: number, position: number, digit: number) => void;
 }) {
   const manualCount = tickets.length;
 
@@ -155,33 +146,20 @@ export function TicketListBuilder({
       {/* Ticket cards, pickers always open (bc.game 2-column layout). */}
       <div className="grid sm:grid-cols-2 gap-3">
         {tickets.map((t, i) => {
-          const picked = t.main.length + (t.bonus !== null ? 1 : 0);
-          const complete = isCompleteTicket(t, mainCount);
           return (
             <div
               key={i}
-              className={cn(
-                'rounded-xl border bg-surface-elevated/40 p-3 space-y-3 transition-colors',
-                complete ? 'border-primary-400/40' : 'border-border',
-              )}
+              className="rounded-xl border border-primary-400/40 bg-surface-elevated/40 p-3 space-y-3 transition-colors"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono text-foreground-muted">#{i + 1}</span>
-                  <span
-                    className={cn(
-                      'text-[10px] font-mono',
-                      complete ? 'text-success' : 'text-foreground-muted',
-                    )}
-                  >
-                    {picked}/{mainCount + 1}
-                  </span>
                 </div>
                 <div className="flex items-center gap-0.5">
                   <RowAction
                     label="Clear this ticket"
                     onClick={() => onClearRow(i)}
-                    disabled={disabled || picked === 0}
+                    disabled={disabled}
                   >
                     <Eraser className="h-3.5 w-3.5" />
                   </RowAction>
@@ -202,13 +180,8 @@ export function TicketListBuilder({
                 </div>
               </div>
               <NumberPicker
-                mainMax={mainMax}
-                mainCount={mainCount}
-                bonusMax={bonusMax}
-                main={t.main}
-                bonus={t.bonus}
-                onToggleMain={(n) => onToggleMain(i, n)}
-                onPickBonus={(n) => onPickBonus(i, n)}
+                digits={t.digits}
+                onSetDigit={(position, digit) => onSetDigit(i, position, digit)}
                 disabled={disabled}
               />
             </div>
@@ -237,7 +210,7 @@ export function TicketListBuilder({
             <span className="font-bold text-foreground">{quantity} tickets</span>
             <span className="text-foreground-muted"> · </span>
             <span className="font-mono font-bold text-foreground">
-              {formatUsd(quantity * priceUsd)} USDT
+              {totalPriceScad.toLocaleString()} SCAD
             </span>
           </span>
         ) : (
@@ -247,7 +220,7 @@ export function TicketListBuilder({
             </span>
             <span className="text-foreground-muted"> · </span>
             <span className="font-mono font-bold text-foreground">
-              {formatUsd(quantity * priceUsd)} USDT
+              {totalPriceScad.toLocaleString()} SCAD
             </span>
           </span>
         )}

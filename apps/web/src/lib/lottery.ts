@@ -2,10 +2,11 @@ import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { ata } from './swap';
 
 /**
- * Client-side builder for the scadium_lottery user-signed `buy_ticket`
- * instruction: transfers 0.1 USDT from the buyer into the lottery treasury
- * and records the picks in a TicketBought event. Same hand-rolled Anchor
- * encoding pattern as lib/vault.ts / lib/swap.ts.
+ * Client-side builder for the scadium_lottery user-signed `buy_ticket(s)`
+ * instructions: transfer $SCAD from the buyer into the lottery treasury and
+ * record the 6-digit picks in a TicketBought event. Same hand-rolled Anchor
+ * encoding pattern as lib/vault.ts / lib/swap.ts. Instruction names are
+ * unchanged, so the discriminators are stable.
  */
 
 const DISC_BUY_TICKET = Uint8Array.from([11, 24, 17, 193, 168, 116, 164, 169]);
@@ -20,20 +21,32 @@ export function lotteryPdas(programId: PublicKey, drawIndex: bigint) {
   return { config, draw };
 }
 
+function buyKeys(programId: PublicKey, scadMint: PublicKey, buyer: PublicKey, drawIndex: bigint) {
+  const { config, draw } = lotteryPdas(programId, drawIndex);
+  return [
+    { pubkey: config, isSigner: false, isWritable: false },
+    { pubkey: draw, isSigner: false, isWritable: true },
+    { pubkey: ata(scadMint, buyer), isSigner: false, isWritable: true },
+    { pubkey: ata(scadMint, config), isSigner: false, isWritable: true },
+    { pubkey: scadMint, isSigner: false, isWritable: false },
+    { pubkey: buyer, isSigner: true, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+}
+
 /**
- * Batch purchase via `buy_tickets`: up to 20 picks in ONE transaction — a
- * single USDT transfer of n×price and one TicketBought event per pick.
- * Borsh layout: u64le drawIndex + Vec<TicketPick> (u32le len, then 6 bytes
- * per pick: main[5] + bonus).
+ * Batch purchase via `buy_tickets`: up to MAX_TICKETS_PER_TX picks in ONE
+ * transaction — a single bulk-discounted $SCAD transfer and one TicketBought
+ * event per pick. Borsh layout: u64le drawIndex + Vec<TicketPick> (u32le len,
+ * then 6 bytes per pick: digits[6]).
  */
 export function buildBuyTicketsTx(
   programId: PublicKey,
-  usdtMint: PublicKey,
+  scadMint: PublicKey,
   buyer: PublicKey,
   drawIndex: bigint,
-  picks: { main: number[]; bonus: number }[],
+  picks: { digits: number[] }[],
 ): Transaction {
-  const { config, draw } = lotteryPdas(programId, drawIndex);
   const idx = new Uint8Array(8);
   new DataView(idx.buffer).setBigUint64(0, drawIndex, true);
   const len = new Uint8Array(4);
@@ -42,19 +55,11 @@ export function buildBuyTicketsTx(
     DISC_BUY_TICKETS,
     idx,
     len,
-    ...picks.map((p) => Uint8Array.from([...p.main, p.bonus])),
+    ...picks.map((p) => Uint8Array.from(p.digits)),
   ]);
   const ix = new TransactionInstruction({
     programId,
-    keys: [
-      { pubkey: config, isSigner: false, isWritable: false },
-      { pubkey: draw, isSigner: false, isWritable: true },
-      { pubkey: ata(usdtMint, buyer), isSigner: false, isWritable: true },
-      { pubkey: ata(usdtMint, config), isSigner: false, isWritable: true },
-      { pubkey: usdtMint, isSigner: false, isWritable: false },
-      { pubkey: buyer, isSigner: true, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
+    keys: buyKeys(programId, scadMint, buyer, drawIndex),
     data,
   });
   return new Transaction().add(ix);
@@ -62,32 +67,17 @@ export function buildBuyTicketsTx(
 
 export function buildBuyTicketTx(
   programId: PublicKey,
-  usdtMint: PublicKey,
+  scadMint: PublicKey,
   buyer: PublicKey,
   drawIndex: bigint,
-  main: number[],
-  bonus: number,
+  digits: number[],
 ): Transaction {
-  const { config, draw } = lotteryPdas(programId, drawIndex);
   const idx = new Uint8Array(8);
   new DataView(idx.buffer).setBigUint64(0, drawIndex, true);
-  const data = Buffer.concat([
-    DISC_BUY_TICKET,
-    idx,
-    Uint8Array.from(main),
-    Uint8Array.from([bonus]),
-  ]);
+  const data = Buffer.concat([DISC_BUY_TICKET, idx, Uint8Array.from(digits)]);
   const ix = new TransactionInstruction({
     programId,
-    keys: [
-      { pubkey: config, isSigner: false, isWritable: false },
-      { pubkey: draw, isSigner: false, isWritable: true },
-      { pubkey: ata(usdtMint, buyer), isSigner: false, isWritable: true },
-      { pubkey: ata(usdtMint, config), isSigner: false, isWritable: true },
-      { pubkey: usdtMint, isSigner: false, isWritable: false },
-      { pubkey: buyer, isSigner: true, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
+    keys: buyKeys(programId, scadMint, buyer, drawIndex),
     data,
   });
   return new Transaction().add(ix);

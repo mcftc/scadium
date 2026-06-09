@@ -361,12 +361,23 @@ model LotteryDraw {
   seed         Seed              @relation(fields: [seedId], references: [id])
   nonce        Int               @default(0)
   status       LotteryDrawStatus @default(open)
-  // Result (null until drawn): 5 main numbers (1..36) + 1 bonus (1..10)
-  mainNumbers  Int[]
-  bonusNumber  Int?
+  // Result (empty until drawn): the 6 winning digits (each 0..9), index 0 =
+  // leftmost. Tickets win the highest bracket whose leading digits all match.
+  winningDigits Int[]
   // Hex of the 32-byte slot hash mixed into the draw entropy (null until
   // drawn; synthetic sha256(seed:clientSeed) when the chain is disabled).
   slotHash     String?
+  // PancakeSwap-style $SCAD economy (all base units, 9 decimals):
+  ticketPriceScadBase     BigInt   @default(0) // price per ticket this round
+  injectionScadBase       BigInt   @default(0) // house injection added to the pool
+  rolloverScadBase        BigInt   @default(0) // unwon slices carried in from prior round
+  totalPoolScadBase       BigInt   @default(0) // sales(discounted) + injection + rollover
+  burnScadBase            BigInt   @default(0) // 20% treasury slice burned at settle
+  bracketWinnerCounts     Int[]                // [6] winners per bracket
+  bracketAmountsScadBase  BigInt[]             // [6] slice per bracket
+  bracketRolloverScadBase BigInt[]             // [6] unwon slice rolled forward
+  // SOL-equivalent of the round's ticket sales — kept ONLY for the unified Bet
+  // ledger / aggregates (real value moves in $SCAD).
   potLamports  BigInt            @default(0)
   ticketCount  Int               @default(0)
   drawAt       DateTime // when this draw is scheduled to resolve
@@ -384,23 +395,22 @@ model LotteryTicket {
   draw           LotteryDraw @relation(fields: [drawId], references: [id])
   userId         String      @db.Uuid
   user           User        @relation(fields: [userId], references: [id])
-  mainNumbers    Int[] // the 5 picked main numbers
-  bonusNumber    Int // the picked bonus number
+  digits         Int[] // the 6 picked digits (each 0..9), index 0 = leftmost
+  // SOL-equiv mirrors for the unified Bet ledger; real value is the *ScadBase.
   costLamports   BigInt
-  matchedMain    Int         @default(0)
-  matchedBonus   Int         @default(0)
   payoutLamports BigInt      @default(0)
+  costScadBase   BigInt      @default(0) // $SCAD actually paid (after bulk-discount share)
+  payoutScadBase BigInt      @default(0) // $SCAD prize from its bracket's equal split
+  matchLen       Int         @default(0) // leading digits matched (0..6)
+  bracket        Int? // highest bracket won (0..5), null if no win
   won            Boolean     @default(false)
-  // On-chain era (Phase E): purchase tx (user-signed USDT transfer), prize
-  // payout tx, bc.game tier, USDT amounts, and the free-ticket flag
-  // (zero-match tickets re-enter the next draw on the house).
+  // On-chain era: purchase tx (user-signed $SCAD transfer), prize payout tx,
+  // and the free-ticket flag (loyalty entry on the house).
   // A bulk buy_tickets tx records N tickets under one signature — txIndex is
   // the ticket's position in the batch; (txSignature, txIndex) blocks replays.
   txSignature    String?
   txIndex        Int         @default(0)
   prizeTxSignature String?
-  tier           String?
-  payoutUsdtBase BigInt      @default(0)
   free           Boolean     @default(false)
   createdAt      DateTime    @default(now())
 

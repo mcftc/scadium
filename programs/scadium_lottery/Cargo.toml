@@ -1,7 +1,7 @@
 [package]
 name = "scadium-lottery"
 version = "0.1.0"
-description = "Scadium on-chain 5/36+1/10 USDT lottery"
+description = "Scadium on-chain PancakeSwap-style 6-digit $SCAD lottery"
 edition = "2021"
 
 [lib]

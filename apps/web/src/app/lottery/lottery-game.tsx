@@ -7,18 +7,18 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ConnectButton } from '@/components/wallet/connect-button';
 import { useAuthStore } from '@/store/auth-store';
-import { formatUsd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   useLottery,
   useBuyBulkTickets,
-  useUsdtBalance,
-  useUsdtFaucet,
+  useBulkPrice,
+  useScadBalance,
+  useScadFaucet,
   useFreeTickets,
   useUseFreeTicket,
   type TicketPicks,
 } from '@/hooks/use-lottery';
-import { TicketListBuilder, isCompleteTicket, type TicketRow } from './ticket-list-builder';
+import { TicketListBuilder, type TicketRow } from './ticket-list-builder';
 import { LotteryPageHeader } from './lottery-page-header';
 import { ResultsTab } from './results-tab';
 import { JackpotWinnersTab } from './jackpot-winners-tab';
@@ -26,7 +26,11 @@ import { PrizeTable } from './prize-table';
 import { MyTickets } from './my-tickets';
 import { LotteryFairness } from './lottery-fairness';
 
-const EMPTY_ROW: TicketRow = { main: [], bonus: null };
+const EMPTY_ROW: TicketRow = { digits: [0, 0, 0, 0, 0, 0] };
+
+function randomDigits(): number[] {
+  return Array.from({ length: 6 }, () => Math.floor(Math.random() * 10));
+}
 
 type Tab = 'buy' | 'results' | 'jackpot';
 
@@ -84,34 +88,21 @@ function TabButton({
 function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
   const token = useAuthStore((s) => s.accessToken);
   const buyBulk = useBuyBulkTickets(snap);
-  const usdtBalance = useUsdtBalance(snap);
-  const faucet = useUsdtFaucet();
+  const scadBalance = useScadBalance(snap);
+  const faucet = useScadFaucet();
   const freeTickets = useFreeTickets();
   const useFree = useUseFreeTicket();
   const qc = useQueryClient();
 
-  const mainCount = snap?.config.mainCount ?? 5;
-  const mainMax = snap?.config.mainMax ?? 36;
-  const bonusMax = snap?.config.bonusMax ?? 10;
   const maxManualRows = snap?.config.maxManualRows ?? 10;
   const perTx = snap?.config.batchTicketsPerTx ?? 12;
 
   function randomPicks(): TicketPicks {
-    const pool = Array.from({ length: mainMax }, (_, i) => i + 1);
-    const picks: number[] = [];
-    for (let i = 0; i < mainCount; i++) {
-      const idx = Math.floor(Math.random() * pool.length);
-      picks.push(pool.splice(idx, 1)[0]!);
-    }
-    return {
-      mainNumbers: picks.sort((a, b) => a - b),
-      bonusNumber: Math.floor(Math.random() * bonusMax) + 1,
-    };
+    return { digits: randomDigits() };
   }
 
   function randomRow(): TicketRow {
-    const t = randomPicks();
-    return { main: t.mainNumbers, bonus: t.bonusNumber };
+    return { digits: randomDigits() };
   }
 
   // bc.game ticket list: up to `maxManualRows` always-open picker cards;
@@ -151,15 +142,19 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     setTickets((cur) => cur.map((t, idx) => (idx === i ? patch(t) : t)));
   }
 
-  const completedCount = tickets.filter((t) => isCompleteTicket(t, mainCount)).length;
-  const allComplete = completedCount === tickets.length;
+  // Every 6-digit ticket is always complete (any six digits is valid).
+  const completedCount = tickets.length;
+  const allComplete = true;
   const firstRow = tickets[0];
-  const firstRowReady = firstRow != null && isCompleteTicket(firstRow, mainCount);
+  const firstRowReady = firstRow != null;
 
-  const priceUsd = snap?.ticketPriceUsd ?? 0;
+  const priceScad = snap?.ticketPriceScad ?? 0;
   const onChain = !!snap?.chain.enabled;
-  const usdtBal = usdtBalance.data ? Number(BigInt(usdtBalance.data)) / 1e6 : null;
-  const totalUsd = quantity * priceUsd;
+  const scadBal = scadBalance.data ? Number(BigInt(scadBalance.data)) / 1e9 : null;
+  // Server is the source of truth for the bulk-discounted total; fall back to
+  // the undiscounted unit × quantity until the price query resolves.
+  const bulkPrice = useBulkPrice(quantity);
+  const totalScad = bulkPrice.data?.totalScad ?? quantity * priceScad;
   const txCount = Math.ceil(quantity / perTx);
 
   /**
@@ -170,27 +165,22 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
   async function buyAll() {
     setError(null);
     setNotice(null);
-    if (!allComplete) {
-      setError(`Complete every ticket — pick ${mainCount} numbers + Jackpot Ball on each card`);
-      return;
-    }
     const seen = new Set<string>();
     const picks: TicketPicks[] = [];
     for (const t of tickets) {
-      const main = [...t.main].sort((a, b) => a - b);
-      seen.add(`${main.join(',')}:${t.bonus}`);
-      picks.push({ mainNumbers: main, bonusNumber: t.bonus! });
+      seen.add(t.digits.join(''));
+      picks.push({ digits: t.digits });
     }
     while (picks.length < quantity) {
       const t = randomPicks();
-      const key = `${t.mainNumbers.join(',')}:${t.bonusNumber}`;
+      const key = t.digits.join('');
       if (seen.has(key)) continue;
       seen.add(key);
       picks.push(t);
     }
-    if (onChain && usdtBal != null && usdtBal < totalUsd) {
+    if (onChain && scadBal != null && scadBal < totalScad) {
       setError(
-        `Insufficient USDT — ${quantity} tickets cost ${formatUsd(totalUsd)} USDT, you have ${formatUsd(usdtBal)}`,
+        `Insufficient SCAD — ${quantity} tickets cost ${totalScad.toLocaleString()} SCAD, you have ${scadBal.toLocaleString()}`,
       );
       return;
     }
@@ -218,7 +208,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
       );
       if (progressDone > 0) {
         qc.invalidateQueries({ queryKey: ['lottery', 'my-tickets'] });
-        qc.invalidateQueries({ queryKey: ['lottery', 'usdt'] });
+        qc.invalidateQueries({ queryKey: ['lottery', 'scad'] });
         qc.invalidateQueries({ queryKey: ['me'] });
       }
     } finally {
@@ -231,10 +221,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     setError(null);
     setNotice(null);
     try {
-      await useFree.mutateAsync({
-        mainNumbers: [...firstRow!.main].sort((a, b) => a - b),
-        bonusNumber: firstRow!.bonus!,
-      });
+      await useFree.mutateAsync({ digits: firstRow!.digits });
       updateRow(0, () => EMPTY_ROW);
       setNotice('Free ticket entered with your first card picks');
     } catch (e) {
@@ -255,7 +242,10 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
               Ticket Numbers
             </h3>
             <div className="text-xs text-foreground-muted">
-              1 Ticket = <span className="font-mono text-foreground">{formatUsd(priceUsd)}</span>
+              1 Ticket ={' '}
+              <span className="font-mono text-foreground">
+                {priceScad.toLocaleString()} SCAD
+              </span>
             </div>
           </div>
 
@@ -265,10 +255,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
             autoCount={autoCount}
             completedCount={completedCount}
             maxManualRows={maxManualRows}
-            mainCount={mainCount}
-            mainMax={mainMax}
-            bonusMax={bonusMax}
-            priceUsd={priceUsd}
+            totalPriceScad={totalScad}
             presets={snap?.config.ticketPresets ?? [5, 10, 20, 50]}
             disabled={busy}
             onSetQuantity={setQty}
@@ -287,17 +274,13 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
               setError(null);
               setTickets((cur) => cur.map(() => randomRow()));
             }}
-            onToggleMain={(i, n) =>
-              updateRow(i, (t) => ({
-                ...t,
-                main: t.main.includes(n)
-                  ? t.main.filter((x) => x !== n)
-                  : t.main.length < mainCount
-                    ? [...t.main, n]
-                    : t.main,
-              }))
+            onSetDigit={(i, position, digit) =>
+              updateRow(i, (t) => {
+                const next = [...t.digits];
+                next[position] = digit;
+                return { ...t, digits: next };
+              })
             }
-            onPickBonus={(i, n) => updateRow(i, (t) => ({ ...t, bonus: n }))}
           />
 
           {error && (
@@ -320,33 +303,40 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
             <div className="flex items-center justify-between text-xs">
               <span className="text-foreground-muted">Price</span>
               <span className="font-mono">
-                {formatUsd(priceUsd)} × {quantity}
+                {priceScad.toLocaleString()} × {quantity}
+                {bulkPrice.data && bulkPrice.data.discountBps > 0 && (
+                  <span className="ml-1 text-success">
+                    −{(bulkPrice.data.discountBps / 100).toFixed(1)}%
+                  </span>
+                )}
               </span>
             </div>
             <div className="flex items-center justify-between border-t border-border pt-2 text-xs">
               <span className="text-foreground-muted">Total Bet Amount</span>
               <span className="font-mono font-bold text-foreground">
-                {formatUsd(totalUsd)} USDT
+                {totalScad.toLocaleString()} SCAD
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs">
               <div className="text-foreground-muted">
-                {onChain && usdtBal != null && (
+                {onChain && scadBal != null && (
                   <span>
                     Balance{' '}
-                    <span className="font-mono text-foreground">{formatUsd(usdtBal)} USDT</span>
+                    <span className="font-mono text-foreground">
+                      {scadBal.toLocaleString()} SCAD
+                    </span>
                   </span>
                 )}
               </div>
-              {onChain && token && (usdtBal ?? 0) < totalUsd && (
+              {onChain && token && (scadBal ?? 0) < totalScad && (
                 <button
                   type="button"
                   onClick={() => faucet.mutate()}
                   disabled={faucet.isPending}
                   className="text-xs font-semibold text-primary-400 hover:text-primary-300 disabled:opacity-50"
                 >
-                  {faucet.isPending ? 'Sending…' : 'Get 10 USDT (devnet)'}
+                  {faucet.isPending ? 'Sending…' : 'Get SCAD (devnet)'}
                 </button>
               )}
             </div>
@@ -379,9 +369,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
                     disabled={!allComplete || busy}
                   >
                     <Ticket className="h-5 w-5" />
-                    {allComplete
-                      ? `Buy ${quantity} ticket${quantity === 1 ? '' : 's'} · ${formatUsd(totalUsd)} USDT`
-                      : `Complete ${tickets.length - completedCount} more ticket${tickets.length - completedCount === 1 ? '' : 's'}`}
+                    {`Buy ${quantity} ticket${quantity === 1 ? '' : 's'} · ${totalScad.toLocaleString()} SCAD`}
                   </Button>
                 )}
                 {onChain && txCount > 1 && !bulkProgress && (
@@ -420,8 +408,9 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
           </h3>
           <PrizeTable snap={snap} />
           <p className="mt-3 text-[11px] text-foreground-muted">
-            Fixed USDT prizes, bc.game rules — the bonus only matters for the grand prize.
-            Every draw is provably fair — numbers are committed before tickets open.
+            Pooled $SCAD prizes — match your digits left-to-right; the more leading digits hit, the
+            higher your bracket. Every draw is provably fair — numbers are committed before tickets
+            open.
           </p>
         </Card>
       </div>

@@ -121,7 +121,7 @@ export async function lotteryDraw(
   clientSeed: string,
   slotHashHex: string,
   nonce: number,
-): Promise<{ main: number[]; bonus: number }> {
+): Promise<{ digits: number[]; encoded: number }> {
   const enc = new TextEncoder();
   const clientSeed32 = new Uint8Array(32);
   clientSeed32.set(enc.encode(clientSeed).slice(0, 32));
@@ -139,16 +139,15 @@ export async function lotteryDraw(
     return new DataView(h.buffer, h.byteOffset, 8).getBigUint64(0, false);
   };
 
-  const pool = Array.from({ length: 36 }, (_, i) => i + 1);
-  const main: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    const r = Number((await roll([0x6d, i])) % BigInt(pool.length));
-    main.push(pool[r]!);
-    pool.splice(r, 1);
+  // Six independent digits 0..9, derived via tag [0x64, i] ('d'); digit 0 is
+  // the leftmost (most-significant) digit. encoded = 1_000_000 + value.
+  const digits: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    digits.push(Number((await roll([0x64, i])) % 10n));
   }
-  main.sort((a, b) => a - b);
-  const bonus = Number((await roll([0x62])) % 10n) + 1;
-  return { main, bonus };
+  let value = 0;
+  for (const d of digits) value = value * 10 + d;
+  return { digits, encoded: 1_000_000 + value };
 }
 
 /**
