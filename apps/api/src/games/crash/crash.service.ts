@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRASH } from '@scadium/shared';
 import { CrashEngine } from './crash.engine';
+import { debitPlayBalance } from '../../common/wallet.util';
 
 /**
  * Thin facade that adapts HTTP DTOs to the in-memory CrashEngine.
@@ -46,14 +47,10 @@ export class CrashService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
-    if (user.playBalanceLamports < params.amountLamports) {
-      throw new BadRequestException('Insufficient balance');
-    }
 
-    await this.prisma.user.update({
-      where: { id: params.userId },
-      data: { playBalanceLamports: { decrement: params.amountLamports } },
-    });
+    // Atomic conditional debit — closes the double-spend race. A lone guarded
+    // updateMany is itself atomic, so no surrounding $transaction is needed.
+    await debitPlayBalance(this.prisma, params.userId, params.amountLamports);
 
     try {
       return this.engine.placeBet({
@@ -108,14 +105,9 @@ export class CrashService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
-    if (user.playBalanceLamports < params.amountLamports) {
-      throw new BadRequestException('Insufficient balance');
-    }
 
-    await this.prisma.user.update({
-      where: { id: params.userId },
-      data: { playBalanceLamports: { decrement: params.amountLamports } },
-    });
+    // Atomic conditional debit — see placeBet.
+    await debitPlayBalance(this.prisma, params.userId, params.amountLamports);
 
     try {
       this.engine.scheduleBet({
