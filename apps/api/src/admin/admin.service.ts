@@ -47,17 +47,52 @@ export class AdminService {
     };
   }
 
-  async banUser(targetId: string, reason?: string) {
-    await this.prisma.user.update({
-      where: { id: targetId },
-      data: { banned: true, banReason: reason ?? 'Banned by admin' },
+  /**
+   * Ban a user and write the audit row in the SAME transaction so the audit
+   * trail can never diverge from the effect (both commit or both roll back).
+   */
+  async banUser(actorUserId: string, targetId: string, reason?: string) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: targetId },
+        data: { banned: true, banReason: reason ?? 'Banned by admin' },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          action: 'ban',
+          targetUserId: targetId,
+          metadataJson: reason ? { reason } : undefined,
+        },
+      });
     });
   }
 
-  async unbanUser(targetId: string) {
-    await this.prisma.user.update({
-      where: { id: targetId },
-      data: { banned: false, banReason: null },
+  async unbanUser(actorUserId: string, targetId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: targetId },
+        data: { banned: false, banReason: null },
+      });
+      await tx.auditLog.create({
+        data: { actorUserId, action: 'unban', targetUserId: targetId },
+      });
+    });
+  }
+
+  /** Recent reconciliation drift flags, newest first. */
+  async recentDrift(take = 100) {
+    return this.prisma.reconciliationDrift.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+  }
+
+  /** Recent privileged-action audit log, newest first. */
+  async recentAuditLog(take = 100) {
+    return this.prisma.auditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
     });
   }
 }

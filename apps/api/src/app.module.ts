@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HealthController } from './health/health.controller';
 import { FairnessModule } from './fairness/fairness.module';
@@ -20,6 +21,7 @@ import { SolanaModule } from './solana/solana.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 
 @Module({
   imports: [
@@ -27,6 +29,7 @@ import { PlatformModule } from './platform/platform.module';
       isGlobal: true,
       envFilePath: ['../../.env', '.env'],
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
         ttl: Number(process.env.THROTTLE_TTL ?? 60) * 1000,
@@ -51,6 +54,7 @@ import { PlatformModule } from './platform/platform.module';
     AffiliatesModule,
     AdminModule,
     PlatformModule,
+    ReconciliationModule,
   ],
   controllers: [HealthController],
 })
