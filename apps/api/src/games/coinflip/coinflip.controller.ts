@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   ParseUUIDPipe,
   Post,
@@ -35,20 +36,31 @@ export class CoinflipController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a new flip (locks balance)' })
-  create(@CurrentUser() user: AuthContextLike, @Body() dto: CreateCoinflipDto) {
-    return this.coinflip.create({
-      userId: user.userId,
-      side: dto.side,
-      amountLamports: BigInt(dto.amountLamports),
-    });
+  create(
+    @CurrentUser() user: AuthContextLike,
+    @Body() dto: CreateCoinflipDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.coinflip.create(
+      {
+        userId: user.userId,
+        side: dto.side,
+        amountLamports: BigInt(dto.amountLamports),
+      },
+      key,
+    );
   }
 
   @Post(':id/join')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Join an open flip — triggers resolution' })
-  join(@CurrentUser() user: AuthContextLike, @Param('id', new ParseUUIDPipe()) id: string) {
-    return this.coinflip.join({ userId: user.userId, gameId: id });
+  join(
+    @CurrentUser() user: AuthContextLike,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.coinflip.join({ userId: user.userId, gameId: id }, key);
   }
 
   @Post(':id/cancel')

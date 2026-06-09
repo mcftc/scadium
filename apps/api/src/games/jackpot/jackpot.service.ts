@@ -4,10 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { JACKPOT } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JackpotEngine } from './jackpot.engine';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
+import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
 /**
  * HTTP facade for the jackpot. Validates entries, debits the play-money
@@ -54,7 +56,7 @@ export class JackpotService {
     return { ...meta, players };
   }
 
-  async enter(params: { userId: string; amountLamports: bigint }) {
+  async enter(params: { userId: string; amountLamports: bigint }, key?: string) {
     const amount = params.amountLamports;
     if (
       amount < BigInt(JACKPOT.MIN_ENTRY_LAMPORTS) ||
@@ -70,26 +72,48 @@ export class JackpotService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    await this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, params.userId, 'jackpot_enter', key);
+      if (replay) return { response: replay as ReturnType<typeof this.serializeEnter>, replayed: true };
+
       // Atomic conditional debit inside the tx — closes the double-spend race.
       await applyBalanceDelta(tx, params.userId, -amount, {
         reason: 'jackpot_entry',
         refType: 'JackpotRound',
         refId: open.id,
       });
-      await tx.jackpotEntry.create({
-        data: { roundId: open.id, userId: params.userId, amountLamports: amount },
+      try {
+        await tx.jackpotEntry.create({
+          data: { roundId: open.id, userId: params.userId, amountLamports: amount },
+        });
+      } catch (e) {
+        // Unique (roundId, userId): reject a second entry with a clear 400.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw new BadRequestException('Already entered this round');
+        }
+        throw e;
+      }
+
+      const response = this.serializeEnter(open.id, amount);
+      await storeIdempotency(tx, params.userId, 'jackpot_enter', key, response);
+      return { response, replayed: false };
+    });
+
+    // Skip the engine update on replay — the original entry already registered it.
+    if (!outcome.replayed) {
+      await this.engine.onEntry({
+        userId: user.id,
+        username: user.username,
+        walletAddress: user.walletAddress,
+        amountLamports: amount,
       });
-    });
+    }
 
-    await this.engine.onEntry({
-      userId: user.id,
-      username: user.username,
-      walletAddress: user.walletAddress,
-      amountLamports: amount,
-    });
+    return outcome.response;
+  }
 
-    return { ok: true, roundId: open.id, amountLamports: amount.toString() };
+  private serializeEnter(roundId: string, amount: bigint) {
+    return { ok: true, roundId, amountLamports: amount.toString() };
   }
 
   async myEntries(userId: string, limit = 20) {

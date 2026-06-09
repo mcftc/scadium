@@ -419,6 +419,7 @@ model JackpotEntry {
   amountLamports BigInt
   createdAt      DateTime     @default(now())
 
+  @@unique([roundId, userId])
   @@index([roundId])
   @@index([userId, createdAt])
 }
@@ -576,4 +577,22 @@ model SettlementFailure {
   createdAt   DateTime @default(now())
 
   @@index([gameType, createdAt])
+}
+
+// Idempotency keys (Phase G): opt-in client-supplied request dedupe. When a
+// command receives an `Idempotency-Key` header, it claims a row keyed by
+// (userId, scope, clientKey) at the TOP of its transaction and stores the
+// JSON-safe response at the end. A retry with the same key replays the stored
+// response instead of re-executing — the unique constraint makes the claim a
+// compare-and-swap. `responseJson` is null while in-flight (a concurrent retry
+// then 409s) and set once the command commits.
+model IdempotencyKey {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  scope        String
+  clientKey    String
+  responseJson Json?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, scope, clientKey])
 }
