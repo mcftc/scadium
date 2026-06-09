@@ -15,6 +15,7 @@ import {
 } from '@scadium/fair';
 import { BLACKJACK, SCAD, type Card } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { BlackjackGateway } from './blackjack.gateway';
 
@@ -604,7 +605,18 @@ export class BlackjackEngine implements OnModuleInit {
     const dealerBust = isBust(t.dealerCards);
     const dealerTotal = handValue(t.dealerCards).total;
 
-    const ops: Promise<unknown>[] = [];
+    // Phase 1 (pure, in-memory): compute each seat's result + payout. These
+    // mutations determine the money moved and feed the persisted round state,
+    // so they happen before the transaction. Collect per-seat ledger data +
+    // on-chain settle jobs (DATA ONLY — chain fires after commit).
+    const seatData: {
+      seat: Seat;
+      betId: string;
+      stake: bigint;
+      payout: bigint;
+      multiplier: number;
+      won: boolean;
+    }[] = [];
     for (const s of players) {
       const bet = s.bet!;
       // Main hand.
@@ -649,88 +661,128 @@ export class BlackjackEngine implements OnModuleInit {
       const payout = mainPayout + sidePayout;
       s.payoutLamports = payout;
       const stake = this.betTotal(bet);
-      const netProfit = payout - stake;
       const won = payout > stake;
+      seatData.push({
+        seat: s,
+        betId: randomUUID(),
+        stake,
+        payout,
+        multiplier: stake > BigInt(0) ? Number(payout) / Number(stake) : 0,
+        won,
+      });
+    }
 
-      ops.push(
-        this.prisma.user.update({
-          where: { id: s.userId },
-          data: {
-            playBalanceLamports: { increment: payout },
-            scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
-            totalWagered: { increment: stake },
-            totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
-            totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
-            gamesPlayed: { increment: 1 },
-          },
-        }),
-      );
+    // Flip the in-memory phase to 'settled' BEFORE building the snapshot so the
+    // persisted stateJson reveals the serverSeed (snapshot gates on phase). On
+    // a settlement failure we roll this back to 'dealer_turn' below.
+    t.phase = 'settled';
+    const roundStateJson = this.snapshot(t.id) as object;
 
-      const betId = randomUUID();
-      ops.push(
-        this.prisma.bet.create({
-          data: {
-            id: betId,
-            userId: s.userId,
-            gameType: 'blackjack',
-            amountLamports: stake,
-            payoutLamports: payout,
-            multiplier: stake > BigInt(0) ? Number(payout) / Number(stake) : 0,
-            status: won ? 'won' : payout === stake && stake > BigInt(0) ? 'won' : 'lost',
-            seedId: t.seedId!,
-            nonce: t.nonce,
-            resultJson: {
-              tableId: t.id,
-              seatIndex: s.index,
-              result: s.result,
-              playerCards: s.cards as unknown as object,
-              dealerCards: t.dealerCards as unknown as object,
-              doubled: s.doubled,
-              side21p3: s.side21p3Outcome,
-              sidePerfectPairs: s.sidePerfectPairsOutcome,
+    // Phase 2: persist every seat (ledger update + Bet row) + the seed reveal +
+    // the round state + the table 'waiting' flip in ONE serializable tx.
+    try {
+      await withSerializable(this.prisma, async (tx) => {
+        for (const d of seatData) {
+          const s = d.seat;
+          const netProfit = d.payout - d.stake;
+          await tx.user.update({
+            where: { id: s.userId },
+            data: {
+              playBalanceLamports: { increment: d.payout },
+              scadiumBalance: { increment: d.stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
+              totalWagered: { increment: d.stake },
+              totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
+              totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
+              gamesPlayed: { increment: 1 },
             },
-          },
-        }),
-      );
+          });
+          await tx.bet.create({
+            data: {
+              id: d.betId,
+              userId: s.userId,
+              gameType: 'blackjack',
+              amountLamports: d.stake,
+              payoutLamports: d.payout,
+              multiplier: d.multiplier,
+              status:
+                d.won ? 'won' : d.payout === d.stake && d.stake > BigInt(0) ? 'won' : 'lost',
+              seedId: t.seedId!,
+              nonce: t.nonce,
+              resultJson: {
+                tableId: t.id,
+                seatIndex: s.index,
+                result: s.result,
+                playerCards: s.cards as unknown as object,
+                dealerCards: t.dealerCards as unknown as object,
+                doubled: s.doubled,
+                side21p3: s.side21p3Outcome,
+                sidePerfectPairs: s.sidePerfectPairsOutcome,
+              },
+            },
+          });
+        }
 
-      if (this.chain.enabled) {
+        await tx.seed.update({ where: { id: t.seedId! }, data: { revealedAt: new Date() } });
+        await tx.blackjackRound.update({
+          where: { id: t.roundDbId! },
+          data: { stateJson: roundStateJson, endedAt: new Date() },
+        });
+        await tx.blackjackTable.update({ where: { id: t.id }, data: { status: 'waiting' } });
+      });
+    } catch (e) {
+      // Roll the in-memory phase back so the table is not left terminal, and
+      // dead-letter the failure. Do NOT start the settle-pause/idle timer —
+      // the round stays non-terminal for the recovery worker.
+      t.phase = 'dealer_turn';
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`blackjack settle failed for table ${t.id} after retries: ${message}`);
+      try {
+        await this.prisma.settlementFailure.create({
+          data: {
+            gameType: 'blackjack',
+            roundId: t.roundDbId ?? t.id,
+            payloadJson: {
+              tableId: t.id,
+              roundDbId: t.roundDbId,
+              seats: seatData.map((d) => ({
+                userId: d.seat.userId,
+                seatIndex: d.seat.index,
+                stake: d.stake.toString(),
+                payout: d.payout.toString(),
+                result: d.seat.result,
+              })),
+            },
+            error: message,
+          },
+        });
+      } catch (deadLetterErr) {
+        this.logger.error(
+          `Failed to write SettlementFailure for blackjack table ${t.id}: ${String(deadLetterErr)}`,
+        );
+      }
+      return;
+    }
+
+    // On-chain settlement receipts AFTER the ledger tx commits (fire-and-forget,
+    // no-op when disabled).
+    if (this.chain.enabled) {
+      for (const d of seatData) {
         void this.chain
           .settleBet({
-            betId,
-            walletAddress: s.walletAddress,
+            betId: d.betId,
+            walletAddress: d.seat.walletAddress,
             game: 'blackjack',
-            stakeLamports: stake,
-            payoutLamports: payout,
-            multiplier: stake > BigInt(0) ? Number(payout) / Number(stake) : 0,
+            stakeLamports: d.stake,
+            payoutLamports: d.payout,
+            multiplier: d.multiplier,
           })
           .then(async (sig) => {
             if (sig) {
-              await this.prisma.bet.update({ where: { id: betId }, data: { txSignature: sig } });
+              await this.prisma.bet.update({ where: { id: d.betId }, data: { txSignature: sig } });
             }
           })
           .catch((e: unknown) => this.logger.error(`bj settle receipt failed: ${String(e)}`));
       }
-    }
-
-    // Reveal the seed + persist the full round state for auditing.
-    ops.push(
-      this.prisma.seed.update({ where: { id: t.seedId! }, data: { revealedAt: new Date() } }),
-    );
-    t.phase = 'settled';
-    ops.push(
-      this.prisma.blackjackRound.update({
-        where: { id: t.roundDbId! },
-        data: { stateJson: this.snapshot(t.id) as object, endedAt: new Date() },
-      }),
-    );
-    ops.push(
-      this.prisma.blackjackTable.update({ where: { id: t.id }, data: { status: 'waiting' } }),
-    );
-
-    try {
-      await Promise.all(ops);
-    } catch (e) {
-      this.logger.error('blackjack settle failed', e);
     }
 
     this.broadcast(t);

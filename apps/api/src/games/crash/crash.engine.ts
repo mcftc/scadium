@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
 import { CRASH, SCAD } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { CrashGateway } from './crash.gateway';
 
@@ -316,21 +317,17 @@ export class CrashEngine implements OnModuleInit {
     this.history.unshift({ bustPoint: bustM, roundId: this.current.id });
     this.history = this.history.slice(0, 50);
 
-    await this.prisma.crashRound.update({
-      where: { id: this.current.id },
-      data: {
-        status: 'busted',
-        bustMultiplier: bustM,
-        endedAt: new Date(),
-      },
-    });
-    await this.prisma.seed.update({
-      where: { id: this.current.seedId },
-      data: { revealedAt: new Date() },
-    });
+    // Settle the ledger for all bets. The `busted` round flip + seed reveal now
+    // happen INSIDE this transaction (see settleRound) so a round is never
+    // marked terminal without its ledger writes landing atomically.
+    const settled = await this.settleRound();
 
-    // Settle the ledger for all bets
-    await this.settleRound();
+    if (!settled) {
+      // Unrecoverable settlement failure: the round stays non-terminal
+      // (status left 'running'/'waiting', seed unrevealed) for the recovery
+      // worker. Do NOT emit bust and do NOT advance to a new round.
+      return;
+    }
 
     this.gateway.emitBust({
       roundId: this.current.id,
@@ -338,108 +335,181 @@ export class CrashEngine implements OnModuleInit {
       serverSeed: this.current.serverSeed,
     });
 
-    // Short gap then next round
-    setTimeout(() => {
-      void this.startNewRound();
-    }, 3_000);
-  }
-
-  private async settleRound(): Promise<void> {
-    const ops: Promise<unknown>[] = [];
-    for (const bet of this.current.bets.values()) {
-      // Progressive cashout: payouts accumulated across partial exits; any
-      // stake still riding at bust is lost. won = walked away with anything.
-      const stake = bet.originalAmountLamports;
-      const payout = bet.payoutLamports;
-      const won = payout > BigInt(0);
-      const netProfit = payout - stake;
-
-      ops.push(
-        this.prisma.user.update({
-          where: { id: bet.userId },
-          data: {
-            playBalanceLamports: { increment: payout },
-            // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
-            scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
-            totalWagered: { increment: stake },
-            totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
-            totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
-            gamesPlayed: { increment: 1 },
-          },
-        }),
-      );
-
-      ops.push(
-        this.prisma.crashBet.create({
-          data: {
-            roundId: this.current.id,
-            userId: bet.userId,
-            amountLamports: stake,
-            autoCashoutMultiplier: bet.autoCashout,
-            cashoutMultiplier: bet.cashedOutAt,
-            payoutLamports: payout,
-            won,
-          },
-        }),
-      );
-
-      // Pre-generate the bet id so the on-chain settlement receipt can carry
-      // it without waiting for the insert round-trip.
-      const betId = randomUUID();
-      ops.push(
-        this.prisma.bet.create({
-          data: {
-            id: betId,
-            userId: bet.userId,
-            gameType: 'crash',
-            amountLamports: stake,
-            payoutLamports: payout,
-            multiplier:
-              stake > BigInt(0) && payout > BigInt(0)
-                ? Number(payout) / Number(stake)
-                : bet.cashedOutAt ?? this.current.bustPoint,
-            status: won ? 'won' : 'lost',
-            seedId: this.current.seedId,
-            nonce: this.current.nonce,
-            resultJson: {
-              bustPoint: this.current.bustPoint,
-              cashedOutAt: bet.cashedOutAt,
-              partialPayouts: payout.toString(),
-            },
-          },
-        }),
-      );
-
-      // Fire-and-forget on-chain settlement receipt (no-op when disabled).
-      // Never blocks the game loop; on success the Solscan link lands on
-      // Bet.txSignature.
-      if (this.chain.enabled) {
+    // Fire on-chain settlement receipts AFTER the ledger tx commits
+    // (fire-and-forget — never blocks the loop; no-op when disabled).
+    if (this.chain.enabled) {
+      for (const job of settled.settleJobs) {
         void this.chain
           .settleBet({
-            betId,
-            walletAddress: bet.walletAddress,
+            betId: job.betId,
+            walletAddress: job.walletAddress,
             game: 'crash',
-            stakeLamports: stake,
-            payoutLamports: payout,
-            multiplier: bet.cashedOutAt ?? this.current.bustPoint,
+            stakeLamports: job.stake,
+            payoutLamports: job.payout,
+            multiplier: job.multiplier,
           })
           .then(async (sig) => {
             if (sig) {
               await this.prisma.bet.update({
-                where: { id: betId },
+                where: { id: job.betId },
                 data: { txSignature: sig },
               });
             }
           })
           .catch((e: unknown) =>
-            this.logger.error(`on-chain settle failed for ${betId}: ${String(e)}`),
+            this.logger.error(`on-chain settle failed for ${job.betId}: ${String(e)}`),
           );
       }
     }
+
+    // Short gap then next round — ONLY on a committed settlement.
+    setTimeout(() => {
+      void this.startNewRound();
+    }, 3_000);
+  }
+
+  /**
+   * Settle every bet of the busted round in ONE serializable transaction:
+   * per-user ledger update + CrashBet row + Bet row + the round `busted` flip +
+   * the seed reveal. Returns the on-chain settle jobs (data only) on success,
+   * or null if the transaction failed after retries (a SettlementFailure
+   * dead-letter row is written and the round is left non-terminal).
+   */
+  private async settleRound(): Promise<{
+    settleJobs: {
+      betId: string;
+      walletAddress: string;
+      stake: bigint;
+      payout: bigint;
+      multiplier: number;
+    }[];
+  } | null> {
+    const bets = Array.from(this.current.bets.values());
+    const bustM = this.current.bustPoint;
+
+    // Pre-generate bet ids so the post-commit on-chain receipts can reference
+    // them without re-querying, and collect chain jobs as DATA ONLY.
+    const settleJobs: {
+      betId: string;
+      walletAddress: string;
+      stake: bigint;
+      payout: bigint;
+      multiplier: number;
+    }[] = bets.map((bet) => ({
+      betId: randomUUID(),
+      walletAddress: bet.walletAddress,
+      stake: bet.originalAmountLamports,
+      payout: bet.payoutLamports,
+      multiplier: bet.cashedOutAt ?? bustM,
+    }));
+
     try {
-      await Promise.all(ops);
+      await withSerializable(this.prisma, async (tx) => {
+        for (let i = 0; i < bets.length; i += 1) {
+          const bet = bets[i]!;
+          const job = settleJobs[i]!;
+          // Progressive cashout: payouts accumulated across partial exits; any
+          // stake still riding at bust is lost. won = walked away with anything.
+          const stake = bet.originalAmountLamports;
+          const payout = bet.payoutLamports;
+          const won = payout > BigInt(0);
+          const netProfit = payout - stake;
+
+          await tx.user.update({
+            where: { id: bet.userId },
+            data: {
+              playBalanceLamports: { increment: payout },
+              // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
+              scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
+              totalWagered: { increment: stake },
+              totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
+              totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
+              gamesPlayed: { increment: 1 },
+            },
+          });
+
+          await tx.crashBet.create({
+            data: {
+              roundId: this.current.id,
+              userId: bet.userId,
+              amountLamports: stake,
+              autoCashoutMultiplier: bet.autoCashout,
+              cashoutMultiplier: bet.cashedOutAt,
+              payoutLamports: payout,
+              won,
+            },
+          });
+
+          await tx.bet.create({
+            data: {
+              id: job.betId,
+              userId: bet.userId,
+              gameType: 'crash',
+              amountLamports: stake,
+              payoutLamports: payout,
+              multiplier:
+                stake > BigInt(0) && payout > BigInt(0)
+                  ? Number(payout) / Number(stake)
+                  : bet.cashedOutAt ?? bustM,
+              status: won ? 'won' : 'lost',
+              seedId: this.current.seedId,
+              nonce: this.current.nonce,
+              resultJson: {
+                bustPoint: bustM,
+                cashedOutAt: bet.cashedOutAt,
+                partialPayouts: payout.toString(),
+              },
+            },
+          });
+        }
+
+        // Round terminal flip + seed reveal: INSIDE the tx so the round can
+        // never be 'busted' without its ledger writes (and vice versa).
+        await tx.crashRound.update({
+          where: { id: this.current.id },
+          data: { status: 'busted', bustMultiplier: bustM, endedAt: new Date() },
+        });
+        await tx.seed.update({
+          where: { id: this.current.seedId },
+          data: { revealedAt: new Date() },
+        });
+      });
     } catch (e) {
-      this.logger.error('Failed to settle crash round', e);
+      this.logger.error(
+        `Failed to settle crash round ${this.current.id} after retries: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      // Best-effort dead-letter write — must never crash the loop itself.
+      try {
+        await this.prisma.settlementFailure.create({
+          data: {
+            gameType: 'crash',
+            roundId: this.current.id,
+            payloadJson: {
+              roundId: this.current.id,
+              bustPoint: bustM,
+              bets: bets.map((b) => ({
+                userId: b.userId,
+                stake: b.originalAmountLamports.toString(),
+                payout: b.payoutLamports.toString(),
+                cashedOutAt: b.cashedOutAt,
+                autoCashout: b.autoCashout,
+              })),
+            },
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      } catch (deadLetterErr) {
+        this.logger.error(
+          `Failed to write SettlementFailure for crash round ${this.current.id}: ${String(
+            deadLetterErr,
+          )}`,
+        );
+      }
+      return null;
     }
+
+    return { settleJobs };
   }
 }

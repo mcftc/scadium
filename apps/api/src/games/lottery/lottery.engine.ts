@@ -18,6 +18,7 @@ import {
   nextLotteryDrawAt,
 } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryGateway } from './lottery.gateway';
 
@@ -225,7 +226,6 @@ export class LotteryEngine implements OnModuleInit {
 
 
   private async drawAndSettle(): Promise<void> {
-    this.current.status = 'drawn';
     const drawIndex = this.current.drawIndex;
     const { serverSeed, clientSeed, nonce } = this.current;
 
@@ -276,7 +276,6 @@ export class LotteryEngine implements OnModuleInit {
     let winnersCount = 0;
     let topPrizeUsdtBase = BigInt(0);
     const freeTickets = 0; // zero-match rule removed — free tickets now come from wager loyalty
-    const ops: Promise<unknown>[] = [];
     const prizeJobs: {
       ticketId: string;
       walletAddress: string;
@@ -284,6 +283,16 @@ export class LotteryEngine implements OnModuleInit {
       tier: string;
     }[] = [];
 
+    // Phase 1 (pure): match every ticket + tally winners. No DB writes yet.
+    const ticketResults: {
+      ticket: (typeof tickets)[number];
+      matchedMain: number;
+      matchedBonus: number;
+      tier: string;
+      prizeUsdtBase: bigint;
+      payoutLamportsEq: bigint;
+      won: boolean;
+    }[] = [];
     for (const t of tickets) {
       const { matchedMain, matchedBonus } = lotteryMatches(
         t.mainNumbers,
@@ -303,60 +312,15 @@ export class LotteryEngine implements OnModuleInit {
         BigInt(USD_PER_SOL) /
         BigInt(10 ** LOTTERY.USDT_DECIMALS);
 
-      ops.push(
-        this.prisma.user.update({
-          where: { id: t.userId },
-          data: {
-            scadiumBalance: {
-              increment: t.costLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-            },
-            totalWagered: { increment: t.costLamports },
-            totalWon: { increment: won ? payoutLamportsEq : BigInt(0) },
-            totalLost: { increment: won ? BigInt(0) : t.costLamports },
-            gamesPlayed: { increment: 1 },
-          },
-        }),
-      );
-
-      ops.push(
-        this.prisma.lotteryTicket.update({
-          where: { id: t.id },
-          data: {
-            matchedMain,
-            matchedBonus,
-            tier,
-            payoutUsdtBase: prizeUsdtBase,
-            payoutLamports: payoutLamportsEq,
-            won,
-          },
-        }),
-      );
-
-      ops.push(
-        this.prisma.bet.create({
-          data: {
-            userId: t.userId,
-            gameType: 'lottery',
-            amountLamports: t.costLamports,
-            payoutLamports: payoutLamportsEq,
-            multiplier: null,
-            status: won ? 'won' : 'lost',
-            seedId: this.current.seedId,
-            nonce: this.current.nonce,
-            resultJson: {
-              drawIndex: drawIndex.toString(),
-              drawMain: main,
-              drawBonus: bonus,
-              ticketMain: t.mainNumbers,
-              ticketBonus: t.bonusNumber,
-              matchedMain,
-              matchedBonus,
-              tier,
-              prizeUsd: Number(prizeUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
-            },
-          },
-        }),
-      );
+      ticketResults.push({
+        ticket: t,
+        matchedMain,
+        matchedBonus,
+        tier,
+        prizeUsdtBase,
+        payoutLamportsEq,
+        won,
+      });
 
       if (won && this.chain.lotteryEnabled) {
         prizeJobs.push({
@@ -368,33 +332,115 @@ export class LotteryEngine implements OnModuleInit {
       }
     }
 
-    ops.push(
-      this.prisma.lotteryDraw.update({
-        where: { id: this.current.id },
-        data: {
-          status: 'drawn',
-          mainNumbers: main,
-          bonusNumber: bonus,
-          slotHash: slotHashHex,
-          drawnAt: new Date(),
-          revealTxSignature,
-        },
-      }),
-    );
-    ops.push(
-      this.prisma.seed.update({
-        where: { id: this.current.seedId },
-        data: { revealedAt: new Date() },
-      }),
-    );
-
+    // Phase 2: per-ticket ledger update + ticket update + Bet row + the draw
+    // 'drawn' flip + the seed reveal in ONE serializable transaction.
     try {
-      await Promise.all(ops);
+      await withSerializable(this.prisma, async (tx) => {
+        for (const r of ticketResults) {
+          const t = r.ticket;
+          await tx.user.update({
+            where: { id: t.userId },
+            data: {
+              scadiumBalance: {
+                increment: t.costLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
+              },
+              totalWagered: { increment: t.costLamports },
+              totalWon: { increment: r.won ? r.payoutLamportsEq : BigInt(0) },
+              totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
+              gamesPlayed: { increment: 1 },
+            },
+          });
+          await tx.lotteryTicket.update({
+            where: { id: t.id },
+            data: {
+              matchedMain: r.matchedMain,
+              matchedBonus: r.matchedBonus,
+              tier: r.tier,
+              payoutUsdtBase: r.prizeUsdtBase,
+              payoutLamports: r.payoutLamportsEq,
+              won: r.won,
+            },
+          });
+          await tx.bet.create({
+            data: {
+              userId: t.userId,
+              gameType: 'lottery',
+              amountLamports: t.costLamports,
+              payoutLamports: r.payoutLamportsEq,
+              multiplier: null,
+              status: r.won ? 'won' : 'lost',
+              seedId: this.current.seedId,
+              nonce: this.current.nonce,
+              resultJson: {
+                drawIndex: drawIndex.toString(),
+                drawMain: main,
+                drawBonus: bonus,
+                ticketMain: t.mainNumbers,
+                ticketBonus: t.bonusNumber,
+                matchedMain: r.matchedMain,
+                matchedBonus: r.matchedBonus,
+                tier: r.tier,
+                prizeUsd: Number(r.prizeUsdtBase) / 10 ** LOTTERY.USDT_DECIMALS,
+              },
+            },
+          });
+        }
+
+        await tx.lotteryDraw.update({
+          where: { id: this.current.id },
+          data: {
+            status: 'drawn',
+            mainNumbers: main,
+            bonusNumber: bonus,
+            slotHash: slotHashHex,
+            drawnAt: new Date(),
+            revealTxSignature,
+          },
+        });
+        await tx.seed.update({
+          where: { id: this.current.seedId },
+          data: { revealedAt: new Date() },
+        });
+      });
     } catch (e) {
-      this.logger.error(`Lottery settle failed: ${e instanceof Error ? e.message : e}`);
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Lottery settle failed for ${this.current.id} after retries: ${message}`);
+      // Best-effort dead-letter; leave the draw non-terminal and do NOT open a
+      // new draw — the recovery worker re-settles it.
+      try {
+        await this.prisma.settlementFailure.create({
+          data: {
+            gameType: 'lottery',
+            roundId: this.current.id,
+            payloadJson: {
+              drawId: this.current.id,
+              drawIndex: drawIndex.toString(),
+              main,
+              bonus,
+              slotHash: slotHashHex,
+              tickets: ticketResults.map((r) => ({
+                ticketId: r.ticket.id,
+                userId: r.ticket.userId,
+                cost: r.ticket.costLamports.toString(),
+                tier: r.tier,
+                payoutUsdtBase: r.prizeUsdtBase.toString(),
+                won: r.won,
+              })),
+            },
+            error: message,
+          },
+        });
+      } catch (deadLetterErr) {
+        this.logger.error(
+          `Failed to write SettlementFailure for lottery ${this.current.id}: ${String(deadLetterErr)}`,
+        );
+      }
+      return;
     }
 
-    // On-chain USDT prize payouts AFTER the rows exist (fire-and-forget).
+    this.current.status = 'drawn';
+
+    // On-chain USDT prize payouts AFTER the rows commit (fire-and-forget).
     for (const job of prizeJobs) {
       void this.chain
         .lotteryPayPrize({
