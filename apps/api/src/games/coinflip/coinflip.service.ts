@@ -16,6 +16,7 @@ import { COINFLIP, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { CoinflipGateway } from './coinflip.gateway';
+import { debitPlayBalance } from '../../common/wallet.util';
 
 type Side = 'heads' | 'tails';
 
@@ -75,14 +76,9 @@ export class CoinflipService {
       const user = await tx.user.findUnique({ where: { id: params.userId } });
       if (!user) throw new NotFoundException('User not found');
       if (user.banned) throw new ForbiddenException('Account banned');
-      if (user.playBalanceLamports < params.amountLamports) {
-        throw new BadRequestException('Insufficient balance');
-      }
 
-      await tx.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { decrement: params.amountLamports } },
-      });
+      // Atomic conditional debit inside the tx — closes the double-spend race.
+      await debitPlayBalance(tx, params.userId, params.amountLamports);
 
       // Commit a fresh seed per game so each flip has its own provably-fair
       // trail. serverSeed stays secret until resolve.
@@ -128,23 +124,26 @@ export class CoinflipService {
         },
       });
       if (!game) throw new NotFoundException('Flip not found');
-      if (game.status !== 'open') throw new BadRequestException('Flip not joinable');
       if (game.creatorId === params.userId) {
         throw new BadRequestException("Can't join your own flip");
       }
 
+      // Compare-and-swap the status open→resolving so only ONE concurrent
+      // joiner can claim this flip. Without it two joiners both read
+      // status='open' and the single creator stake funds two payouts.
+      const claimed = await tx.coinflipGame.updateMany({
+        where: { id: params.gameId, status: 'open' },
+        data: { status: 'resolving' },
+      });
+      if (claimed.count === 0) throw new BadRequestException('Flip not joinable');
+
       const joiner = await tx.user.findUnique({ where: { id: params.userId } });
       if (!joiner) throw new NotFoundException('User not found');
       if (joiner.banned) throw new ForbiddenException('Account banned');
-      if (joiner.playBalanceLamports < game.amountLamports) {
-        throw new BadRequestException('Insufficient balance');
-      }
 
-      // Deduct from joiner (creator already debited at create time)
-      await tx.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { decrement: game.amountLamports } },
-      });
+      // Deduct from joiner (creator already debited at create time) — atomic
+      // conditional debit closes the double-spend race.
+      await debitPlayBalance(tx, params.userId, game.amountLamports);
 
       // Derive the result from the committed seed. Each flip has its own
       // dedicated server/client seed pair, so nonce is always 0 — no need

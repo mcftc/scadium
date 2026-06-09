@@ -7,6 +7,7 @@ import {
 import { BLACKJACK } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlackjackEngine } from './blackjack.engine';
+import { debitPlayBalance } from '../../common/wallet.util';
 
 /**
  * HTTP facade for the multiplayer blackjack tables. All balance movement
@@ -97,9 +98,8 @@ export class BlackjackService {
     }
     const total = mainLamports + side21p3Lamports + sidePerfectPairsLamports;
 
-    const user = await this.loadUser(params.userId);
-    if (user.playBalanceLamports < total) throw new BadRequestException('Insufficient balance');
-
+    // loadUser enforces banned/exists; the conditional debit enforces funds.
+    await this.loadUser(params.userId);
     await this.debit(params.userId, total);
     try {
       const { previousTotalLamports } = this.engine.placeBet({
@@ -136,10 +136,8 @@ export class BlackjackService {
       const seat = snap.seats.find((s) => s.userId === params.userId);
       if (!seat?.bet) throw new BadRequestException('No active bet');
       extra = BigInt(seat.bet.mainLamports);
-      const user = await this.loadUser(params.userId);
-      if (user.playBalanceLamports < extra) {
-        throw new BadRequestException('Insufficient balance to double');
-      }
+      await this.loadUser(params.userId);
+      // Conditional debit rejects with 'Insufficient balance' if underfunded.
       await this.debit(params.userId, extra);
     }
     try {
@@ -160,10 +158,9 @@ export class BlackjackService {
   }
 
   private debit(userId: string, amount: bigint) {
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { playBalanceLamports: { decrement: amount } },
-    });
+    // Atomic conditional debit (guarded updateMany) — closes the double-spend
+    // race that plain decrement allowed between concurrent bets.
+    return debitPlayBalance(this.prisma, userId, amount);
   }
 
   private credit(userId: string, amount: bigint) {

@@ -7,6 +7,7 @@ import {
 import { JACKPOT } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JackpotEngine } from './jackpot.engine';
+import { debitPlayBalance } from '../../common/wallet.util';
 
 /**
  * HTTP facade for the jackpot. Validates entries, debits the play-money
@@ -68,13 +69,10 @@ export class JackpotService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
-    if (user.playBalanceLamports < amount) throw new BadRequestException('Insufficient balance');
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { decrement: amount } },
-      });
+      // Atomic conditional debit inside the tx — closes the double-spend race.
+      await debitPlayBalance(tx, params.userId, amount);
       await tx.jackpotEntry.create({
         data: { roundId: open.id, userId: params.userId, amountLamports: amount },
       });

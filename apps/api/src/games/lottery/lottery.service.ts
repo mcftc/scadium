@@ -8,6 +8,7 @@ import { LOTTERY } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
+import { debitPlayBalance } from '../../common/wallet.util';
 
 /**
  * HTTP-facing facade for the lottery. Validates ticket picks, debits the
@@ -200,16 +201,11 @@ export class LotteryService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
-    if (user.playBalanceLamports < price) {
-      throw new BadRequestException('Insufficient balance');
-    }
 
-    // Debit + create the ticket atomically.
+    // Debit + create the ticket atomically. The conditional debit enforces
+    // funds and closes the double-spend race.
     const ticket = await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: params.userId },
-        data: { playBalanceLamports: { decrement: price } },
-      });
+      await debitPlayBalance(tx, params.userId, price);
       return tx.lotteryTicket.create({
         data: {
           drawId: open.id,
