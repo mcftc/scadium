@@ -25,6 +25,9 @@ COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/prisma ./apps/api/prisma
 COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/apps/api/docker-entrypoint.sh ./apps/api/docker-entrypoint.sh
 EXPOSE 4000
 WORKDIR /app/apps/api
-CMD ["node", "dist/main.js"]
+# Entrypoint runs `prisma migrate deploy` before `node dist/main.js`; a migration
+# failure aborts the boot (non-zero exit) instead of serving a stale schema.
+ENTRYPOINT ["sh", "/app/apps/api/docker-entrypoint.sh"]

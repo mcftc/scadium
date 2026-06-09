@@ -41,6 +41,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Bootstrap guard (#16 — dev builds workspace pkgs first + migrate-on-deploy wired)
+        run: bash scripts/check-bootstrap.sh
+
       - name: Prisma migrate
         run: pnpm --filter @scadium/api exec prisma migrate deploy
 
