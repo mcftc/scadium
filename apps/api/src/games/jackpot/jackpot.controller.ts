@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
@@ -34,7 +34,14 @@ export class JackpotController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Enter the current jackpot round with a SOL amount' })
-  enter(@CurrentUser() user: AuthContextLike, @Body() dto: EnterJackpotDto) {
-    return this.jackpot.enter({ userId: user.userId, amountLamports: BigInt(dto.amountLamports) });
+  enter(
+    @CurrentUser() user: AuthContextLike,
+    @Body() dto: EnterJackpotDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.jackpot.enter(
+      { userId: user.userId, amountLamports: BigInt(dto.amountLamports) },
+      key,
+    );
   }
 }

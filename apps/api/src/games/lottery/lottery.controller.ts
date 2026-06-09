@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -79,12 +80,19 @@ export class LotteryController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Buy a ticket for the current draw (5 of 36 + 1 of 10)' })
-  buyTicket(@CurrentUser() user: AuthContextLike, @Body() dto: BuyTicketDto) {
-    return this.lottery.buyTicket({
-      userId: user.userId,
-      mainNumbers: dto.mainNumbers,
-      bonusNumber: dto.bonusNumber,
-    });
+  buyTicket(
+    @CurrentUser() user: AuthContextLike,
+    @Body() dto: BuyTicketDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.lottery.buyTicket(
+      {
+        userId: user.userId,
+        mainNumbers: dto.mainNumbers,
+        bonusNumber: dto.bonusNumber,
+      },
+      key,
+    );
   }
 
   @Post('confirm')

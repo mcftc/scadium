@@ -80,8 +80,8 @@ export class AirdropService {
     };
   }
 
-  async openDailyCase(userId: string) {
-    return this.rewards.openDailyCase(userId);
+  async openDailyCase(userId: string, key?: string) {
+    return this.rewards.openDailyCase(userId, key);
   }
 
   async caseStatus(userId: string) {

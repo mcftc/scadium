@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -29,12 +29,19 @@ export class CrashController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Place a bet in the current waiting round' })
-  async placeBet(@CurrentUser() user: AuthContextLike, @Body() dto: PlaceCrashBetDto) {
-    return this.crash.placeBet({
-      userId: user.userId,
-      amountLamports: BigInt(dto.amountLamports),
-      autoCashout: dto.autoCashout ?? null,
-    });
+  async placeBet(
+    @CurrentUser() user: AuthContextLike,
+    @Body() dto: PlaceCrashBetDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.crash.placeBet(
+      {
+        userId: user.userId,
+        amountLamports: BigInt(dto.amountLamports),
+        autoCashout: dto.autoCashout ?? null,
+      },
+      key,
+    );
   }
 
   @Post('schedule')

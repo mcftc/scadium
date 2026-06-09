@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsNumberString } from 'class-validator';
 import { AirdropService } from './airdrop.service';
@@ -63,7 +63,10 @@ export class AirdropController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Open the daily case for a random reward' })
-  openCase(@CurrentUser() user: AuthContextLike) {
-    return this.airdrop.openDailyCase(user.userId);
+  openCase(
+    @CurrentUser() user: AuthContextLike,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.airdrop.openDailyCase(user.userId, key);
   }
 }

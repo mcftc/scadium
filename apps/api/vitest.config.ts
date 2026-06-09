@@ -8,10 +8,15 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/**/*.spec.ts', 'test/**/*.e2e-spec.ts'],
-    // The umbrella concurrency suite boots the full NestJS AppModule, which
-    // needs decorator metadata for constructor DI — only the swc-enabled
-    // `vitest.integration.config.ts` provides that. Run it via `test:integration`.
-    exclude: ['**/node_modules/**', '**/dist/**', 'test/concurrency.e2e-spec.ts'],
+    // App-booting suites (full NestJS AppModule) need decorator metadata for
+    // constructor DI — only the swc-enabled `vitest.integration.config.ts`
+    // provides that. Run those via `test:integration`.
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'test/concurrency.e2e-spec.ts',
+      'test/idempotency.e2e-spec.ts',
+    ],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     fileParallelism: false,

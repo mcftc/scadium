@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { CoinflipGateway } from './coinflip.gateway';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
+import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
 type Side = 'heads' | 'tails';
 
@@ -69,10 +70,15 @@ export class CoinflipService {
   }
 
   // ------------ Commands ------------
-  async create(params: { userId: string; side: Side; amountLamports: bigint }) {
+  async create(params: { userId: string; side: Side; amountLamports: bigint }, key?: string) {
     this.assertBetRange(params.amountLamports);
 
-    const game = await this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, params.userId, 'coinflip_create', key);
+      if (replay) {
+        return { dto: replay as ReturnType<typeof this.serialize>, replayed: true };
+      }
+
       const user = await tx.user.findUnique({ where: { id: params.userId } });
       if (!user) throw new NotFoundException('User not found');
       if (user.banned) throw new ForbiddenException('Account banned');
@@ -98,7 +104,7 @@ export class CoinflipService {
         },
       });
 
-      return tx.coinflipGame.create({
+      const game = await tx.coinflipGame.create({
         data: {
           creatorId: params.userId,
           creatorSide: params.side,
@@ -112,15 +118,37 @@ export class CoinflipService {
           seed: true,
         },
       });
+
+      const dto = this.serialize(game);
+      await storeIdempotency(tx, params.userId, 'coinflip_create', key, dto);
+      return { dto, replayed: false };
     });
 
-    const dto = this.serialize(game);
-    this.gateway.emitCreated(dto);
-    return dto;
+    // Skip the realtime broadcast on replay — the original create already fired.
+    if (!outcome.replayed) this.gateway.emitCreated(outcome.dto);
+    return outcome.dto;
   }
 
-  async join(params: { userId: string; gameId: string }) {
+  async join(params: { userId: string; gameId: string }, key?: string) {
     const settled = await this.prisma.$transaction(async (tx) => {
+      // Claim/replay happens INSIDE the ledger tx so a thrown settle rolls the
+      // claim back too. A replay returns the stored dto and fires NO chain
+      // receipts (the original join already fired them).
+      const replay = await claimIdempotency(tx, params.userId, 'coinflip_join', key);
+      if (replay) {
+        return {
+          dto: replay as ReturnType<typeof this.serialize>,
+          replayed: true as const,
+          stake: BigInt(0),
+          settles: [] as {
+            betId: string;
+            walletAddress: string;
+            payout: bigint;
+            multiplier: number;
+          }[],
+        };
+      }
+
       const game = await tx.coinflipGame.findUnique({
         where: { id: params.gameId },
         include: {
@@ -175,27 +203,27 @@ export class CoinflipService {
         BigInt(100);
       // House take = pot - winnerPayout (retained by the protocol)
 
+      const profit = winnerPayout - game.amountLamports;
+
       await tx.user.update({
         where: { id: winnerId },
         data: {
           scadiumBalance: {
             increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
           },
-          totalWon: { increment: winnerPayout - game.amountLamports },
+          totalWon: { increment: profit },
           totalWagered: { increment: game.amountLamports },
           gamesPlayed: { increment: 1 },
-          biggestWin: {
-            // Only bumped by the service layer after reading current; Prisma
-            // doesn't support conditional increment so we accept it may
-            // understate "biggest win" until a follow-up reconcile.
-            set:
-              (await tx.user.findUnique({ where: { id: winnerId } }))!.biggestWin >
-              winnerPayout - game.amountLamports
-                ? (await tx.user.findUnique({ where: { id: winnerId } }))!.biggestWin
-                : winnerPayout - game.amountLamports,
-          },
         },
       });
+      // biggestWin = max(current, profit) as a SINGLE atomic SQL update.
+      // GREATEST runs under the row's write lock, so concurrent winning flips
+      // for the same user can't clobber each other via a stale read-then-write
+      // (the prior nested-findUnique bug) — no understatement under concurrency.
+      await tx.$executeRaw`
+        UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${profit})
+        WHERE "id" = ${winnerId}::uuid
+      `;
       await tx.user.update({
         where: { id: loserId },
         data: {
@@ -282,8 +310,10 @@ export class CoinflipService {
 
       const dto = this.serialize(updated);
       this.gateway.emitResolved(dto);
+      await storeIdempotency(tx, params.userId, 'coinflip_join', key, dto);
       return {
         dto,
+        replayed: false as const,
         stake: game.amountLamports,
         settles: [
           {
@@ -303,8 +333,9 @@ export class CoinflipService {
     });
 
     // On-chain settlement receipts fire AFTER the ledger transaction commits
-    // (fire-and-forget — never blocks the response; no-op when disabled).
-    if (this.chain.enabled) {
+    // (fire-and-forget — never blocks the response; no-op when disabled). On a
+    // replay there are no settles, so receipts are inherently skipped.
+    if (!settled.replayed && this.chain.enabled) {
       for (const s of settled.settles) {
         void this.chain
           .settleBet({

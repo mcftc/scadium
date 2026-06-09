@@ -4,11 +4,13 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRASH } from '@scadium/shared';
 import { CrashEngine } from './crash.engine';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { withSerializable } from '../../prisma/with-serializable';
+import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
 /**
  * Thin facade that adapts HTTP DTOs to the in-memory CrashEngine.
@@ -26,11 +28,14 @@ export class CrashService {
     return this.engine.snapshot();
   }
 
-  async placeBet(params: {
-    userId: string;
-    amountLamports: bigint;
-    autoCashout: number | null;
-  }) {
+  async placeBet(
+    params: {
+      userId: string;
+      amountLamports: bigint;
+      autoCashout: number | null;
+    },
+    key?: string,
+  ) {
     if (
       params.amountLamports < BigInt(CRASH.MIN_BET_LAMPORTS) ||
       params.amountLamports > BigInt(CRASH.MAX_BET_LAMPORTS)
@@ -49,18 +54,24 @@ export class CrashService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    // Atomic conditional debit — closes the double-spend race. Wrapped in a tx
-    // so the debit and its ledger row commit together.
-    await withSerializable(this.prisma, (tx) =>
-      applyBalanceDelta(tx, params.userId, -params.amountLamports, {
+    // Crash is NOT single-tx (debit, then in-memory engine, then refund-on-throw).
+    // Claim the key INSIDE the debit's serializable tx so key+debit are atomic.
+    // A replay short-circuits WITHOUT debiting or touching the engine.
+    const claim = await withSerializable(this.prisma, async (tx) => {
+      const replay = await claimIdempotency(tx, params.userId, 'crash_bet', key);
+      if (replay) return { replay: replay as { ok: true; roundId: string } };
+      await applyBalanceDelta(tx, params.userId, -params.amountLamports, {
         reason: 'crash_bet',
         refType: 'CrashRound',
         refId: null,
-      }),
-    );
+      });
+      return { replay: null };
+    });
+    if (claim.replay) return claim.replay;
 
+    let response: { ok: true; roundId: string };
     try {
-      return this.engine.placeBet({
+      response = this.engine.placeBet({
         userId: params.userId,
         username: user.username,
         walletAddress: user.walletAddress,
@@ -77,8 +88,28 @@ export class CrashService {
           refId: null,
         }),
       );
+      // Also drop the key (best-effort) so a failed bet's key doesn't 409
+      // forever — the client can retry with the same key.
+      if (key) {
+        await this.prisma.idempotencyKey
+          .deleteMany({ where: { userId: params.userId, scope: 'crash_bet', clientKey: key } })
+          .catch(() => undefined);
+      }
       throw new BadRequestException(e instanceof Error ? e.message : 'Bet rejected');
     }
+
+    // Persist the response for replay (response is JSON-safe: roundId is a
+    // string, ok is a boolean — no BigInt). A single update needs no tx.
+    if (key) {
+      await storeIdempotency(
+        this.prisma as unknown as Prisma.TransactionClient,
+        params.userId,
+        'crash_bet',
+        key,
+        response,
+      );
+    }
+    return response;
   }
 
   cashOut(userId: string, percent = 100) {

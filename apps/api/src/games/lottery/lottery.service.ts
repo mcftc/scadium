@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
+import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
 /**
  * HTTP-facing facade for the lottery. Validates ticket picks, debits the
@@ -175,7 +176,10 @@ export class LotteryService {
     return { signature: sig, amountUsdtBase: '10000000' };
   }
 
-  async buyTicket(params: { userId: string; mainNumbers: number[]; bonusNumber: number }) {
+  async buyTicket(
+    params: { userId: string; mainNumbers: number[]; bonusNumber: number },
+    key?: string,
+  ) {
     // When the on-chain lottery is live, the play-money path is closed —
     // tickets must be real wallet-signed USDT purchases (POST /confirm).
     if (this.chain.lotteryEnabled) {
@@ -204,13 +208,18 @@ export class LotteryService {
 
     // Debit + create the ticket atomically. The conditional debit enforces
     // funds and closes the double-spend race.
-    const ticket = await this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, params.userId, 'lottery_buy', key);
+      if (replay) {
+        return { response: replay as ReturnType<typeof this.serializeTicket>, replayed: true };
+      }
+
       await applyBalanceDelta(tx, params.userId, -price, {
         reason: 'lottery_ticket',
         refType: 'LotteryDraw',
         refId: open.id,
       });
-      return tx.lotteryTicket.create({
+      const ticket = await tx.lotteryTicket.create({
         data: {
           drawId: open.id,
           userId: params.userId,
@@ -219,10 +228,25 @@ export class LotteryService {
           costLamports: price,
         },
       });
+
+      const response = this.serializeTicket(ticket);
+      await storeIdempotency(tx, params.userId, 'lottery_buy', key, response);
+      return { response, replayed: false };
     });
 
-    await this.engine.onTicketSold(price);
+    // Skip the pot/ticket-count engine update on replay — already counted.
+    if (!outcome.replayed) await this.engine.onTicketSold(price);
 
+    return outcome.response;
+  }
+
+  private serializeTicket(ticket: {
+    id: string;
+    drawId: string;
+    mainNumbers: number[];
+    bonusNumber: number;
+    costLamports: bigint;
+  }) {
     return {
       id: ticket.id,
       drawId: ticket.drawId,

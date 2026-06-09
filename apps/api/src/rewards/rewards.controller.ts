@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsIn } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -26,8 +26,12 @@ export class RewardsController {
 
   @Post('claim')
   @ApiOperation({ summary: 'Claim accrued $SCAD (wager rewards or cashback)' })
-  claim(@CurrentUser() ctx: AuthContext, @Body() dto: ClaimDto) {
-    return this.rewards.claim(ctx.userId, dto.kind);
+  claim(
+    @CurrentUser() ctx: AuthContext,
+    @Body() dto: ClaimDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return this.rewards.claim(ctx.userId, dto.kind, key);
   }
 
   @Get('claims')

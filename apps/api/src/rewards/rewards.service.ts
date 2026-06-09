@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { SCAD } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
+import { claimIdempotency, storeIdempotency } from '../prisma/idempotency';
 
 /**
  * $SCAD reward accrual + claims (Phase C).
@@ -41,10 +42,16 @@ export class RewardsService {
     };
   }
 
-  async claim(userId: string, kind: 'wagerReward' | 'cashback') {
+  async claim(userId: string, kind: 'wagerReward' | 'cashback', key?: string) {
     const period = BigInt(Date.now());
+    const scope = `reward_claim_${kind}`;
 
-    const { amount, walletAddress, claimId } = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, userId, scope, key);
+      if (replay) {
+        return { response: replay as ReturnType<typeof this.serializeClaim>, replayed: true };
+      }
+
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new NotFoundException('User not found');
 
@@ -68,15 +75,32 @@ export class RewardsService {
       const claim = await tx.rewardClaim.create({
         data: { userId, kind, period, amountScad: amount },
       });
-      return { amount, walletAddress: user.walletAddress, claimId: claim.id };
+      const response = this.serializeClaim(kind, amount, claim.id);
+      await storeIdempotency(tx, userId, scope, key, response);
+      return {
+        response,
+        replayed: false,
+        chain: { claimId: claim.id, walletAddress: user.walletAddress, amount },
+      };
     });
 
-    this.fireChainClaim(claimId, walletAddress, kind, period, amount);
+    // Skip the (fire-and-forget) on-chain claim on replay — already fired.
+    if (!result.replayed && result.chain) {
+      this.fireChainClaim(result.chain.claimId, result.chain.walletAddress, kind, period, result.chain.amount);
+    }
+    return result.response;
+  }
+
+  private serializeClaim(
+    kind: 'wagerReward' | 'cashback',
+    amount: bigint,
+    claimId: string,
+  ) {
     return { kind, amountScad: amount.toString(), claimId };
   }
 
   /** Daily case: weighted SCAD prize, one per 24h (DB cooldown + on-chain PDA). */
-  async openDailyCase(userId: string) {
+  async openDailyCase(userId: string, key?: string) {
     const now = new Date();
     // Period = YYYYMMDD so the on-chain ClaimRecord enforces one per day too.
     const period = BigInt(
@@ -88,7 +112,12 @@ export class RewardsService {
       SCAD.CASE_TIERS.find((t) => roll < t.chance) ?? SCAD.CASE_TIERS[SCAD.CASE_TIERS.length - 1]!;
     const amount = BigInt(tierEntry.scadBase);
 
-    const { walletAddress, claimId } = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, userId, 'daily_case', key);
+      if (replay) {
+        return { response: replay as ReturnType<typeof this.serializeDailyCase>, replayed: true };
+      }
+
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new NotFoundException('User not found');
       const last = user.lastDailyCaseAt?.getTime() ?? 0;
@@ -101,12 +130,24 @@ export class RewardsService {
       const claim = await tx.rewardClaim.create({
         data: { userId, kind: 'dailyCase', period, amountScad: amount },
       });
-      return { walletAddress: user.walletAddress, claimId: claim.id };
+      const response = this.serializeDailyCase(tierEntry.tier, amount, now);
+      await storeIdempotency(tx, userId, 'daily_case', key, response);
+      return {
+        response,
+        replayed: false,
+        chain: { claimId: claim.id, walletAddress: user.walletAddress },
+      };
     });
 
-    this.fireChainClaim(claimId, walletAddress, 'dailyCase', period, amount);
+    if (!result.replayed && result.chain) {
+      this.fireChainClaim(result.chain.claimId, result.chain.walletAddress, 'dailyCase', period, amount);
+    }
+    return result.response;
+  }
+
+  private serializeDailyCase(tier: string, amount: bigint, now: Date) {
     return {
-      tier: tierEntry.tier,
+      tier,
       rewardScad: amount.toString(),
       nextAvailableAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
     };
