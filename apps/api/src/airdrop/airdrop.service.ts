@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RewardsService } from '../rewards/rewards.service';
+import { QueueService } from '../queue/queue.service';
+import { periodForHour } from '../queue/queue.constants';
 import { AirdropEngine } from './airdrop.engine';
 
 /**
@@ -21,6 +23,7 @@ export class AirdropService {
     private readonly prisma: PrismaService,
     private readonly rewards: RewardsService,
     private readonly engine: AirdropEngine,
+    private readonly queue: QueueService,
   ) {}
 
   async nextDropInfo() {
@@ -55,9 +58,13 @@ export class AirdropService {
     });
     if (!user) throw new NotFoundException('User not found');
     if (user.role !== 'admin') throw new ForbiddenException('Admin access required');
-    // Pass the actor so the engine writes a `forced_airdrop` audit row inside
-    // the payout transaction (only the admin-forced path is privileged).
-    return this.engine.distribute(userId);
+    // Enqueue an idempotent job instead of distributing in-process. The jobId is
+    // keyed on the hour being distributed, so a concurrent timer-fire collapses
+    // into this one job; `userId` flows through so the worker writes the
+    // `forced_airdrop` audit row in the same payout transaction.
+    const period = periodForHour(Date.now() - 60_000);
+    await this.queue.enqueueAirdropDistribute(period, userId);
+    return { enqueued: true, period };
   }
 
   async checkEligibility(userId: string) {

@@ -16,7 +16,9 @@ export class AirdropGateway {
 
   /** Pool grew (base seeded or a tip landed). */
   emitPool(payload: { poolLamports: string; endsAt: number; tipsCount: number }) {
-    this.server.emit('airdrop:pool', payload);
+    // Null-safe: in the @scadium/worker application context there is no Socket.io
+    // adapter, so `server` is undefined — distribution must still complete.
+    this.server?.emit('airdrop:pool', payload);
   }
 
   /** Hourly distribution settled. */
@@ -25,6 +27,6 @@ export class AirdropGateway {
     participantCount: number;
     perUserLamports: string;
   }) {
-    this.server.emit('airdrop:dropped', payload);
+    this.server?.emit('airdrop:dropped', payload);
   }
 }

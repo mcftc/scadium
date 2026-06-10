@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -36,17 +35,8 @@ export class ReconciliationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
-  async scheduledReconcile(): Promise<void> {
-    try {
-      const flagged = await this.reconcileAll();
-      this.logger.log(`reconciliation: ${flagged} drift row(s) written`);
-    } catch (e) {
-      this.logger.error(
-        `reconciliation failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
+  // Scheduling moved to @scadium/worker (BullMQ repeatable job). `reconcileAll`
+  // is the callable entrypoint the worker processor invokes hourly.
 
   /**
    * Recompute aggregates + derived balance and append a `ReconciliationDrift`
