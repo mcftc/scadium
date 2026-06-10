@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
@@ -7,9 +7,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { RedisService } from '../../redis/redis.service';
+import { LeaderElection } from '../../redis/leader-election';
 import { CrashGateway } from './crash.gateway';
 
 type Phase = 'waiting' | 'running' | 'busted';
+
+// Leader election (#13/#85): only the lock holder drives the loop; others mirror
+// its public round state from Redis so `snapshot()` is consistent across pods.
+const CRASH_LOCK_KEY = 'lock:engine:crash';
+const CRASH_MIRROR_KEY = 'round:crash:current';
+const CRASH_LOCK_TTL_MS = 10_000;
 
 /** True when `e` is a Prisma unique-constraint violation (P2002). */
 function isUniqueViolation(e: unknown): boolean {
@@ -61,23 +69,94 @@ interface ScheduledBet {
  * every round is provably fair — players can verify after reveal.
  */
 @Injectable()
-export class CrashEngine implements OnModuleInit {
+export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CrashEngine.name);
   private current!: Round;
   private history: { bustPoint: number; roundId: string }[] = [];
   /** One queued bet per user, auto-placed when the next round opens. */
   private readonly nextRoundBets = new Map<string, ScheduledBet>();
 
+  // Multi-instance coordination (null in single-instance/test mode → always leader).
+  private election: LeaderElection | null = null;
+  private mirrored: ReturnType<CrashEngine['buildSnapshot']> | null = null;
+  private mirrorPoll: NodeJS.Timeout | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: CrashGateway,
     private readonly chain: ChainService,
-  ) {}
+    private readonly redis?: RedisService,
+  ) {
+    if (this.redis) {
+      this.election = new LeaderElection(this.redis.client, CRASH_LOCK_KEY, CRASH_LOCK_TTL_MS);
+    }
+  }
+
+  /** Only the elected leader advances the loop / writes rounds. No Redis = always leader. */
+  isLeader(): boolean {
+    return this.election ? this.election.isLeader() : true;
+  }
 
   async onModuleInit(): Promise<void> {
+    if (!this.election) {
+      // Single-instance: drive the loop directly (unchanged behavior).
+      await this.recoverStrandedRounds();
+      await this.recoverScheduledBets();
+      await this.startNewRound();
+      return;
+    }
+    // Multi-instance: a placeholder keeps snapshot() safe until we lead or mirror.
+    this.current = this.placeholderRound();
+    this.election.start((leader) => {
+      if (leader) void this.assumeLeadership();
+      else this.logger.warn('crash: lost leadership — standing by');
+    });
+    // Followers poll the leader's mirrored round so their snapshot stays current.
+    this.mirrorPoll = setInterval(() => void this.pollMirror(), 500);
+    this.mirrorPoll.unref?.();
+  }
+
+  private placeholderRound(): Round {
+    return {
+      id: '',
+      seedId: '',
+      serverSeed: '',
+      serverSeedHash: '',
+      clientSeed: '',
+      nonce: 0,
+      bustPoint: 0,
+      phase: 'waiting',
+      startedAt: null,
+      bets: new Map(),
+    };
+  }
+
+  /** Won the lock: recover any stranded round then drive the loop. */
+  private async assumeLeadership(): Promise<void> {
+    this.logger.log('crash: elected leader — driving the round loop');
     await this.recoverStrandedRounds();
     await this.recoverScheduledBets();
     await this.startNewRound();
+  }
+
+  /** Follower: refresh the mirrored snapshot from the leader's Redis state. */
+  private async pollMirror(): Promise<void> {
+    if (this.isLeader() || !this.redis) return;
+    const raw = await this.redis.client.get(CRASH_MIRROR_KEY).catch(() => null);
+    if (raw) this.mirrored = JSON.parse(raw) as ReturnType<CrashEngine['buildSnapshot']>;
+  }
+
+  /** Leader: publish the public round snapshot so followers stay consistent. */
+  private async mirror(): Promise<void> {
+    if (!this.redis) return;
+    this.mirrored = this.buildSnapshot();
+    await this.redis.client.set(CRASH_MIRROR_KEY, JSON.stringify(this.mirrored)).catch(() => undefined);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.mirrorPoll) clearInterval(this.mirrorPoll);
+    this.mirrorPoll = null;
+    if (this.election) await this.election.stop();
   }
 
   // ---------- Public API consumed by CrashService ----------
@@ -135,7 +214,13 @@ export class CrashEngine implements OnModuleInit {
     }
   }
 
+  /** Leader serves its live round; a follower serves the leader's mirror. */
   snapshot() {
+    if (this.election && !this.isLeader() && this.mirrored) return this.mirrored;
+    return this.buildSnapshot();
+  }
+
+  private buildSnapshot() {
     return {
       roundId: this.current.id,
       phase: this.current.phase,
@@ -285,6 +370,7 @@ export class CrashEngine implements OnModuleInit {
   }
 
   private async startNewRound(): Promise<void> {
+    if (!this.isLeader()) return; // never create a round as a non-leader
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
@@ -373,6 +459,7 @@ export class CrashEngine implements OnModuleInit {
       }
     }
     this.nextRoundBets.clear();
+    void this.mirror(); // publish the fresh waiting round to followers
 
     // Betting window → run
     setTimeout(() => {
@@ -381,6 +468,7 @@ export class CrashEngine implements OnModuleInit {
   }
 
   private async beginRun(): Promise<void> {
+    if (!this.isLeader()) return; // leadership lost during the betting window
     this.current.phase = 'running';
     this.current.startedAt = Date.now();
     await this.prisma.crashRound.update({
@@ -388,10 +476,12 @@ export class CrashEngine implements OnModuleInit {
       data: { status: 'running', startedAt: new Date(this.current.startedAt) },
     });
     this.gateway.emitRunning(this.current.id);
+    void this.mirror();
 
     // Tick loop at 20 Hz — server authoritative
     const tickInterval = 1000 / CRASH.TICK_RATE_HZ;
     const tick = async (): Promise<void> => {
+      if (!this.isLeader()) return; // stop driving if we lost the lock mid-round
       const m = this.currentMultiplier();
 
       // Auto-cashouts (full exit of whatever is still riding). Awaited so the
@@ -422,6 +512,7 @@ export class CrashEngine implements OnModuleInit {
   }
 
   private async bust(): Promise<void> {
+    if (!this.isLeader()) return;
     this.current.phase = 'busted';
     const bustM = this.current.bustPoint;
     this.history.unshift({ bustPoint: bustM, roundId: this.current.id });
@@ -444,6 +535,7 @@ export class CrashEngine implements OnModuleInit {
       bustPoint: bustM,
       serverSeed: this.current.serverSeed,
     });
+    void this.mirror(); // publish busted state (seed/bustPoint now revealed)
 
     // Fire on-chain settlement receipts AFTER the ledger tx commits
     // (fire-and-forget — never blocks the loop; no-op when disabled).
