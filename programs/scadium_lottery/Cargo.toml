@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Scadium on-chain PancakeSwap-style 6-digit $SCAD lottery"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "lib"]
 name = "scadium_lottery"

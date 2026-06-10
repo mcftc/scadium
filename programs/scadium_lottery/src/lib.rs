@@ -148,7 +148,7 @@ pub mod scadium_lottery {
         picks: Vec<TicketPick>,
     ) -> Result<()> {
         let n = picks.len() as u64;
-        require!(n >= 1 && n <= MAX_TICKETS_PER_TX, LotteryError::TooManyTickets);
+        require!((1..=MAX_TICKETS_PER_TX).contains(&n), LotteryError::TooManyTickets);
         let draw = &mut ctx.accounts.draw;
         require!(draw.index == draw_index, LotteryError::WrongDraw);
         require!(draw.status == DrawStatus::Open, LotteryError::DrawClosed);

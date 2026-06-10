@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Scadium SCAD/SOL constant-product pool"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "lib"]
 name = "scadium_swap"

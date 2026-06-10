@@ -251,7 +251,7 @@ fn integer_sqrt(v: u128) -> u128 {
         return v;
     }
     let mut x = v;
-    let mut y = (x + 1) / 2;
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + v / x) / 2;
