@@ -20,3 +20,9 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-lang = { version = "1.0", features = ["init-if-needed"] }
 anchor-spl = "1.0"
 solana-sha256-hasher = "3.1"
+
+[dev-dependencies]
+# Test-only: parse the shared cross-impl golden-vector fixture
+# (packages/fair/src/__fixtures__/golden.json). Not linked into the on-chain
+# program — dev-dependencies compile only for `cargo test`.
+serde_json = "1.0"

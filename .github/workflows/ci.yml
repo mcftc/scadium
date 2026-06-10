@@ -50,7 +50,10 @@ jobs:
       - name: Build shared packages
         run: pnpm --filter @scadium/shared --filter @scadium/fair build
 
-      - name: Fair engine tests
+      - name: Fair engine tests (incl. Node⇄browser cross-impl parity)
+        # parity.test.ts runs the browser WebCrypto engine (apps/web/.../fair-browser.ts)
+        # under Node's global WebCrypto and asserts it matches @scadium/fair against
+        # the shared golden fixture — a divergence fails the build.
         run: pnpm --filter @scadium/fair test
 
       - name: Typecheck
@@ -123,3 +126,18 @@ jobs:
         # Fork pool + app.close() guarantee the run cannot hang on the engines'
         # background round timers.
         run: pnpm --filter @scadium/api test:integration
+
+  anchor-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lottery program unit tests (incl. shared golden-vector fixture)
+        # `shared_golden_fixture_lockstep` reads packages/fair/src/__fixtures__/
+        # golden.json, so a one-byte divergence between the Rust on-chain
+        # `derive_numbers` and the Node/browser engines turns CI red.
+        run: cargo test -p scadium-lottery --lib

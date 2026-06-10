@@ -663,6 +663,58 @@ mod tests {
         assert_eq!(digits, [5, 1, 9, 7, 3, 3]);
     }
 
+    /// Consume the SHARED cross-impl fixture so a divergence between the Rust
+    /// program and the Node/browser engines (packages/fair/src/__fixtures__/
+    /// golden.json) fails CI. The fixture is generated from @scadium/fair; this
+    /// proves the on-chain `derive_numbers` stays byte-identical to it.
+    #[test]
+    fn shared_golden_fixture_lockstep() {
+        const FIXTURE: &str =
+            include_str!("../../../packages/fair/src/__fixtures__/golden.json");
+        let json: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+        let vectors = json["vectors"].as_array().expect("vectors array");
+        assert!(!vectors.is_empty(), "fixture must contain vectors");
+
+        for v in vectors {
+            let label = v["label"].as_str().unwrap_or("?");
+
+            let server_seed: [u8; 64] = v["serverSeed"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+                .try_into()
+                .unwrap_or_else(|_| panic!("serverSeed must be 64 bytes ({label})"));
+
+            let mut client_seed = [0u8; 32];
+            let cs = v["clientSeed"].as_str().unwrap().as_bytes();
+            assert!(cs.len() <= 32, "clientSeed must be ≤ 32 bytes ({label})");
+            client_seed[..cs.len()].copy_from_slice(cs);
+
+            let slot_hash = decode_hex32(v["slotHashHex"].as_str().unwrap());
+            let nonce = v["nonce"].as_u64().unwrap() as u32;
+
+            let (entropy, digits) = derive_numbers(&server_seed, &slot_hash, &client_seed, nonce);
+
+            assert_eq!(
+                hex(&entropy),
+                v["lottery"]["entropyHex"].as_str().unwrap(),
+                "entropy mismatch for {label}"
+            );
+            let expected: Vec<u8> = v["lottery"]["digits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_u64().unwrap() as u8)
+                .collect();
+            assert_eq!(digits.to_vec(), expected, "digits mismatch for {label}");
+        }
+    }
+
+    fn decode_hex32(s: &str) -> [u8; 32] {
+        assert_eq!(s.len(), 64, "slot hash must be 64 hex chars");
+        core::array::from_fn(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap())
+    }
+
     #[test]
     fn derived_numbers_are_always_valid_picks() {
         let server_seed: [u8; 64] = "ab".repeat(32).as_bytes().try_into().unwrap();

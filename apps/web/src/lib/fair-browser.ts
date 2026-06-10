@@ -151,16 +151,18 @@ export async function lotteryDraw(
 }
 
 /**
- * Matches @scadium/fair `jackpotRoll`. The raw 52-bit roll behind a jackpot
- * draw; the winning lamport ticket is `roll % totalPotLamports`.
+ * Matches @scadium/fair `jackpotRoll`. The raw roll is the FULL 256-bit
+ * HMAC-SHA256 digest read as a BigInt; the winning lamport ticket is
+ * `roll % totalPotLamports` (also BigInt). The wide roll keeps the reduction
+ * uniform even for pots above 2^53 lamports — no low-ticket bias.
  */
 export async function jackpotRoll(
   serverSeed: string,
   clientSeed: string,
   nonce: number,
-): Promise<number> {
+): Promise<bigint> {
   const hash = await hmacSha256Hex(serverSeed, buildMessage(clientSeed, nonce));
-  return parseInt(hash.slice(0, 13), 16);
+  return BigInt(`0x${hash}`);
 }
 
 /**
