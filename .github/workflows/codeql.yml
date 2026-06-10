@@ -1,5 +1,10 @@
 # SAST for the TS surface (#39). Rust static analysis runs as cargo clippy
 # (-D warnings) + cargo audit inside ci.yml's anchor-tests job.
+#
+# NOTE: this repo is PRIVATE without GitHub Advanced Security, so SARIF upload
+# to the code-scanning UI is unavailable (422). We run the same analysis and
+# gate LOCALLY instead: any error-level CodeQL finding fails the job; the full
+# SARIF is kept as a build artifact for review.
 name: CodeQL
 
 on:
@@ -14,8 +19,6 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
-      actions: read
       contents: read
 
     steps:
@@ -27,3 +30,21 @@ jobs:
           queries: security-extended
 
       - uses: github/codeql-action/analyze@v3
+        with:
+          upload: never
+          output: sarif-results
+
+      - name: Gate on error-level findings (no GHAS upload available)
+        run: |
+          ERRORS=$(jq '[.runs[].results[]? | select(.level == "error")] | length' sarif-results/javascript-typescript.sarif)
+          TOTAL=$(jq '[.runs[].results[]?] | length' sarif-results/javascript-typescript.sarif)
+          echo "CodeQL findings: $TOTAL total, $ERRORS error-level"
+          jq -r '.runs[].results[]? | "\(.level)\t\(.ruleId)\t\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' sarif-results/javascript-typescript.sarif || true
+          test "$ERRORS" -eq 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codeql-sarif
+          path: sarif-results
+          retention-days: 30
