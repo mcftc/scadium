@@ -12,6 +12,7 @@ import {
   commitServerSeed,
   type TwentyOnePlusThreeOutcome,
   type PerfectPairsOutcome,
+  type DealLogEntry,
 } from '@scadium/fair';
 import { BLACKJACK, SCAD, type Card } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -65,6 +66,10 @@ interface TableState {
   dealerCards: Card[];
   dealerHidden: boolean;
   deckIndex: number;
+  /** Public deal-order log (#21): every draw, mapping deckIndex → seat/hand.
+   * Persisted on the round's stateJson at settle so any player can reproduce
+   * their exact cards from the revealed seed. */
+  dealLog: DealLogEntry[];
   roundDbId: string | null;
   seedId: string | null;
   serverSeed: string | null;
@@ -293,6 +298,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       dealerCards: [],
       dealerHidden: true,
       deckIndex: 0,
+      dealLog: [],
       roundDbId: null,
       seedId: null,
       serverSeed: null,
@@ -407,6 +413,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       dealerTotal: dealerValue,
       serverSeedHash: t.serverSeedHash,
       serverSeed: t.phase === 'settled' || t.phase === 'idle' ? t.serverSeed : null,
+      // Full ordered deal log revealed alongside the seed (#21). Gated like the
+      // serverSeed so a live broadcast never leaks the dealer hole card.
+      dealLog: t.phase === 'settled' || t.phase === 'idle' ? t.dealLog : null,
       clientSeed: t.clientSeed,
       nonce: t.nonce,
       config: {
@@ -566,6 +575,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     t.dealerCards = [];
     t.dealerHidden = true;
     t.deckIndex = 0;
+    t.dealLog = [];
     t.roundDbId = round.id;
     t.seedId = seed.id;
     t.serverSeed = serverSeed;
@@ -580,11 +590,21 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     t.timer = setTimeout(() => void this.deal(t), BLACKJACK.BETTING_WINDOW_MS);
   }
 
-  private drawCard(t: TableState): Card {
-    const card = blackjackDeal(t.serverSeed!, t.clientSeed!, t.nonce, t.deckIndex + 1)[
-      t.deckIndex
-    ]!;
+  /** Stable hand id for a seat (split-ready; today every seat has hand 0). */
+  private static seatHandId(seatIndex: number, hand = 0): string {
+    return `seat-${seatIndex}-${hand}`;
+  }
+
+  /**
+   * Draw the next card off the shared deterministic stream AND record it in the
+   * round's deal-order log (#21) as `{ deckIndex, dealtTo, handId, card }`, so a
+   * player can later map the revealed seed → their exact cards.
+   */
+  private drawCard(t: TableState, dealtTo: number | 'dealer', handId: string): Card {
+    const deckIndex = t.deckIndex;
+    const card = blackjackDeal(t.serverSeed!, t.clientSeed!, t.nonce, deckIndex + 1)[deckIndex]!;
     t.deckIndex += 1;
+    t.dealLog.push({ deckIndex, dealtTo, handId, card });
     return card;
   }
 
@@ -632,7 +652,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     dealSequence.push({ seatIndex: 'dealer', hidden: true });
 
     for (const step of dealSequence) {
-      const card = this.drawCard(t);
+      const handId =
+        step.seatIndex === 'dealer' ? 'dealer' : BlackjackEngine.seatHandId(step.seatIndex);
+      const card = this.drawCard(t, step.seatIndex, handId);
       if (step.seatIndex === 'dealer') {
         t.dealerCards.push(card);
       } else {
@@ -714,7 +736,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     if (params.action === 'hit' || params.action === 'double') {
-      const card = this.drawCard(t);
+      const card = this.drawCard(t, seat.index, BlackjackEngine.seatHandId(seat.index));
       seat.cards.push(card);
       this.gateway.emitCard(t.id, { seatIndex: seat.index, card, hidden: false });
       if (params.action === 'double') {
@@ -757,7 +779,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (anyLive) {
       let v = handValue(t.dealerCards);
       while (v.total < 17 || (v.total === 17 && v.soft && BLACKJACK.DEALER_HITS_SOFT_17)) {
-        const card = this.drawCard(t);
+        const card = this.drawCard(t, 'dealer', 'dealer');
         t.dealerCards.push(card);
         this.gateway.emitCard(t.id, { seatIndex: 'dealer', card, hidden: false });
         this.broadcast(t);
@@ -893,6 +915,21 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
                 playerCards: s.cards as unknown as object,
                 dealerCards: t.dealerCards as unknown as object,
                 doubled: s.doubled,
+                // Per-bet deck-index mapping (#21): the positions in the shared
+                // deterministic stream that produced THIS seat's cards (+ the
+                // dealer's), so the player reproduces their hand via @scadium/fair
+                // `reproduceHand`/`reproduceRound`. handIds are split-ready.
+                deckIndices: t.dealLog
+                  .filter((e) => e.dealtTo === s.index)
+                  .map((e) => e.deckIndex),
+                handIds: [
+                  ...new Set(
+                    t.dealLog.filter((e) => e.dealtTo === s.index).map((e) => e.handId),
+                  ),
+                ],
+                dealerDeckIndices: t.dealLog
+                  .filter((e) => e.dealtTo === 'dealer')
+                  .map((e) => e.deckIndex),
                 side21p3: s.side21p3Outcome,
                 sidePerfectPairs: s.sidePerfectPairsOutcome,
                 // Self-contained verification context (ADR 0001 / #93).

@@ -7,6 +7,9 @@ import {
   cardValue,
   evaluate21Plus3,
   evaluatePerfectPairs,
+  reproduceHand,
+  reproduceRound,
+  type DealLogEntry,
 } from './blackjack';
 import type { Card } from '@scadium/shared';
 
@@ -115,5 +118,62 @@ describe('blackjack provably-fair engine', () => {
     expect(cardValue({ rank: 'K', suit: 'H' })).toBe(10);
     expect(cardValue({ rank: 'A', suit: 'D' })).toBe(11);
     expect(cardValue({ rank: '7', suit: 'S' })).toBe(7);
+  });
+});
+
+describe('blackjack round reproduction (#21 — deck-index/seat/hand mapping)', () => {
+  const serverSeed = 'a'.repeat(64);
+  const clientSeed = 'busy-table-client';
+  const nonce = 0;
+
+  // A busy round: 2 seats, seat 0 SPLITS (two hands), seat 1 DOUBLES, dealer
+  // draws a third card — 10 cards off one shared deckIndex stream. handIds carry
+  // the split; reproduceRound must map each deck index back to the right hand.
+  const dealOrder: DealLogEntry[] = [
+    { deckIndex: 0, dealtTo: 0, handId: 'seat-0-0' },
+    { deckIndex: 1, dealtTo: 1, handId: 'seat-1-0' },
+    { deckIndex: 2, dealtTo: 'dealer', handId: 'dealer' },
+    { deckIndex: 3, dealtTo: 0, handId: 'seat-0-1' }, // split moved card 2 to hand 1
+    { deckIndex: 4, dealtTo: 1, handId: 'seat-1-0' },
+    { deckIndex: 5, dealtTo: 'dealer', handId: 'dealer' }, // hole
+    { deckIndex: 6, dealtTo: 0, handId: 'seat-0-0' }, // hit on hand 0
+    { deckIndex: 7, dealtTo: 0, handId: 'seat-0-1' }, // hit on hand 1
+    { deckIndex: 8, dealtTo: 1, handId: 'seat-1-0' }, // double card
+    { deckIndex: 9, dealtTo: 'dealer', handId: 'dealer' },
+  ];
+
+  it('reproduces every seat/hand by indexing the deterministic stream', () => {
+    const stream = blackjackDeal(serverSeed, clientSeed, nonce, 10);
+    const hands = reproduceRound(serverSeed, clientSeed, nonce, dealOrder);
+
+    const byId = new Map(hands.map((h) => [h.handId, h]));
+    expect(byId.get('seat-0-0')!.cards).toEqual([stream[0], stream[6]]);
+    expect(byId.get('seat-0-1')!.cards).toEqual([stream[3], stream[7]]); // split hand
+    expect(byId.get('seat-1-0')!.cards).toEqual([stream[1], stream[4], stream[8]]); // doubled
+    expect(byId.get('dealer')!.cards).toEqual([stream[2], stream[5], stream[9]]);
+
+    // Two distinct hands for seat 0 (the split surfaced separately).
+    expect(hands.filter((h) => h.dealtTo === 0)).toHaveLength(2);
+  });
+
+  it('orders cards within a hand by deckIndex even if the log is shuffled', () => {
+    const shuffled = [...dealOrder].reverse();
+    const hands = reproduceRound(serverSeed, clientSeed, nonce, shuffled);
+    const ordered = reproduceRound(serverSeed, clientSeed, nonce, dealOrder);
+    const key = (h: { dealtTo: number | 'dealer'; handId: string }) => `${h.dealtTo}|${h.handId}`;
+    for (const h of ordered) {
+      const s = hands.find((x) => key(x) === key(h))!;
+      expect(s.cards).toEqual(h.cards);
+    }
+  });
+
+  it('reproduceHand re-derives a single hand from its deck indices', () => {
+    const stream = blackjackDeal(serverSeed, clientSeed, nonce, 10);
+    expect(reproduceHand(serverSeed, clientSeed, nonce, [1, 4, 8])).toEqual([
+      stream[1],
+      stream[4],
+      stream[8],
+    ]);
+    expect(reproduceHand(serverSeed, clientSeed, nonce, [])).toEqual([]);
   });
 });
