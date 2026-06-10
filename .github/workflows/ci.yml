@@ -176,7 +176,7 @@ jobs:
         with:
           fetch-depth: 0 # gitleaks scans commit history, not just the tree
       - name: Gitleaks (#39 — a committed secret blocks the merge)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
