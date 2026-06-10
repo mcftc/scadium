@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { HttpThrottlerGuard } from './common/http-throttler.guard';
 import { HealthController } from './health/health.controller';
 import { FairnessModule } from './fairness/fairness.module';
 import { AuthModule } from './auth/auth.module';
@@ -59,5 +61,10 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
     ReconciliationModule,
   ],
   controllers: [HealthController],
+  // Activate the configured rate limiter globally — ThrottlerModule alone is inert
+  // without a registered guard. HttpThrottlerGuard scopes it to HTTP (gateways excluded).
+  // Per-IP buckets require `trust proxy` (set in main.ts) so clients behind Caddy aren't
+  // all collapsed onto the proxy's IP.
+  providers: [{ provide: APP_GUARD, useClass: HttpThrottlerGuard }],
 })
 export class AppModule {}

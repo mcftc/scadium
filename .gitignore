@@ -28,6 +28,9 @@ packages/*/src/**/*.js.map
 .env*.local
 .env.development
 .env.production
+# real prod compose secrets live on the VPS; the committed template is .env.prod.example
+.env.prod
+infra/.env.prod
 
 # logs
 logs

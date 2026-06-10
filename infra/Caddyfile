@@ -1,0 +1,12 @@
+# Scadium reverse proxy — automatic HTTPS via Let's Encrypt.
+# DOMAIN comes from the container environment (set in docker-compose.prod.yml).
+# Caddy proxies WebSocket upgrades transparently, so wss://api.<domain>/<namespace>
+# (Socket.io) just works with no extra config.
+
+app.{$DOMAIN} {
+	reverse_proxy web:3000
+}
+
+api.{$DOMAIN} {
+	reverse_proxy api:4000
+}
