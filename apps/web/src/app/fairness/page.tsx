@@ -1,6 +1,7 @@
 import { Container } from '@/components/ui/container';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerifierForm } from '@/components/fairness/verifier-form';
+import { MySeedsPanel } from '@/components/fairness/my-seeds-panel';
 
 export const metadata = { title: 'Provably Fair' };
 
@@ -47,6 +48,8 @@ export default function FairnessPage() {
                 </div>
               </CardContent>
             </Card>
+
+            <MySeedsPanel />
 
             <Card className="mb-8">
               <CardHeader>
