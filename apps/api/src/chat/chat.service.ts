@@ -5,7 +5,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import { CHAT } from '@scadium/shared';
 import { xpInfo } from '../users/users.service';
 
@@ -13,15 +15,18 @@ import { xpInfo } from '../users/users.service';
  * Persistent chat backing store. The gateway delegates all moderation,
  * rate limiting, and persistence here so the WebSocket layer stays thin.
  *
- * Rate limiting is in-memory per-user and is fine for a single-instance
- * dev deployment. Redis-backed sliding window when we scale horizontally.
+ * Rate limiting is a REDIS sliding window (#12) keyed per user, so the limit
+ * holds across ≥2 API replicas (an in-memory Map was per-pod and trivially
+ * bypassed by reconnecting).
  */
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
-  private readonly rateLimit = new Map<string, number[]>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   async listRecent(limit = 50) {
     const rows = await this.prisma.chatMessage.findMany({
@@ -50,7 +55,7 @@ export class ChatService {
       throw new BadRequestException(`Message too long (max ${CHAT.MESSAGE_MAX_LEN} chars)`);
     }
 
-    this.assertRateLimit(params.userId);
+    await this.assertRateLimit(params.userId);
 
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
@@ -92,18 +97,25 @@ export class ChatService {
    * Slide-window rate limit: at most N messages in the last W milliseconds.
    * Throws BadRequest when exceeded.
    */
-  private assertRateLimit(userId: string) {
+  private async assertRateLimit(userId: string): Promise<void> {
     const now = Date.now();
     const window = CHAT.RATE_LIMIT_WINDOW_MS;
     const max = CHAT.RATE_LIMIT_MESSAGES;
-    const history = (this.rateLimit.get(userId) ?? []).filter((t) => now - t < window);
-    if (history.length >= max) {
-      throw new BadRequestException(
-        `Too many messages — wait a few seconds before sending again.`,
-      );
+    const key = `chat:rl:${userId}`;
+    const member = `${now}-${randomBytes(6).toString('hex')}`;
+    // Sliding window in a sorted set, atomically (MULTI): drop entries older
+    // than the window, record this attempt, count the window, refresh the TTL.
+    const res = await this.redis.client
+      .multi()
+      .zremrangebyscore(key, 0, now - window)
+      .zadd(key, now, member)
+      .zcard(key)
+      .pexpire(key, window)
+      .exec();
+    const count = Number(res?.[2]?.[1] ?? 0); // ZCARD result (includes this attempt)
+    if (count > max) {
+      throw new BadRequestException('Too many messages — wait a few seconds before sending again.');
     }
-    history.push(now);
-    this.rateLimit.set(userId, history);
   }
 
   private serialize(row: {

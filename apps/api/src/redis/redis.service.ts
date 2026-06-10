@@ -16,8 +16,7 @@ export class RedisService implements OnModuleDestroy {
     const url = process.env.REDIS_URL ?? 'redis://localhost:6379';
     this.client = new Redis(url, {
       lazyConnect: true,
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false, // a command while disconnected fails fast (probe → down)
+      maxRetriesPerRequest: 1, // a command fails after one retry rather than hanging forever
       connectTimeout: 2000,
       retryStrategy: (times) => Math.max(100, Math.min(times * 200, 2000)), // quiet backoff; recovers when Redis returns
     });
