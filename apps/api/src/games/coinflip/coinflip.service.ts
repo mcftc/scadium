@@ -6,15 +6,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  generateServerSeed,
-  generateClientSeed,
-  commitServerSeed,
-  coinflipResult,
-} from '@scadium/fair';
+import { generateServerSeed, commitServerSeed, coinflipResult } from '@scadium/fair';
 import { COINFLIP, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
+import { SeedManagerService } from '../../fairness/seed-manager.service';
 import { CoinflipGateway } from './coinflip.gateway';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
@@ -39,6 +35,7 @@ export class CoinflipService {
     private readonly prisma: PrismaService,
     private readonly gateway: CoinflipGateway,
     private readonly chain: ChainService,
+    private readonly seeds: SeedManagerService,
   ) {}
 
   // ------------ Queries ------------
@@ -91,15 +88,17 @@ export class CoinflipService {
         refId: null,
       });
 
-      // Commit a fresh seed per game so each flip has its own provably-fair
-      // trail. serverSeed stays secret until resolve.
+      // Commit a fresh per-flip server seed up-front (revealed at resolve). The
+      // CLIENT seed + nonce are the JOINER's player-controlled values, bound at
+      // join time (#18/#92) — the server commits serverSeed BEFORE the joiner (and
+      // their seed) is known, so it cannot grind the outcome. The client seed is a
+      // placeholder until a joiner binds theirs.
       const serverSeed = generateServerSeed();
-      const clientSeed = generateClientSeed();
       const seed = await tx.seed.create({
         data: {
           serverSeed,
           serverSeedHash: commitServerSeed(serverSeed),
-          clientSeed,
+          clientSeed: '',
           nonce: 0,
         },
       });
@@ -182,16 +181,14 @@ export class CoinflipService {
         refId: game.id,
       });
 
-      // Derive the result from the committed seed. Each flip has its own
-      // dedicated server/client seed pair, so nonce is always 0 — no need
-      // for a shared counter. The stored `game.nonce` (=0) is what the
-      // /fairness verifier will feed back in to reproduce the result.
+      // Player-controlled fairness inputs (#18/#92): the JOINER's active client
+      // seed + a monotonic per-user nonce, consumed atomically inside this tx. The
+      // per-flip serverSeed was committed at create (before the joiner/their seed
+      // was known), so the operator cannot grind the outcome.
       if (!game.seed) throw new Error('Seed missing for flip');
-      const result = coinflipResult(
-        game.seed.serverSeed!,
-        game.seed.clientSeed,
-        game.nonce ?? 0,
-      );
+      const ctx = await this.seeds.consumeNonce(tx, params.userId);
+      const flipNonce = Number(ctx.nonce);
+      const result = coinflipResult(game.seed.serverSeed!, ctx.clientSeed, flipNonce);
       const creatorWins = result === (game.creatorSide as Side);
       const winnerId = creatorWins ? game.creatorId : params.userId;
       const loserId = creatorWins ? params.userId : game.creatorId;
@@ -252,8 +249,17 @@ export class CoinflipService {
             multiplier: creatorWins ? COINFLIP.PAYOUT_MULTIPLIER : 0,
             status: creatorWins ? 'won' : 'lost',
             seedId: game.seedId!,
-            nonce: game.nonce,
-            resultJson: { side: game.creatorSide, result, won: creatorWins },
+            nonce: flipNonce,
+            // Full verification context so either player can independently
+            // reproduce the result via @scadium/fair after the seed is revealed.
+            resultJson: {
+              side: game.creatorSide,
+              result,
+              won: creatorWins,
+              serverSeedHash: ctx.serverSeedHash,
+              clientSeed: ctx.clientSeed,
+              nonce: flipNonce,
+            },
           },
           {
             id: joinerBetId,
@@ -264,11 +270,14 @@ export class CoinflipService {
             multiplier: creatorWins ? 0 : COINFLIP.PAYOUT_MULTIPLIER,
             status: creatorWins ? 'lost' : 'won',
             seedId: game.seedId!,
-            nonce: game.nonce,
+            nonce: flipNonce,
             resultJson: {
               side: game.creatorSide === 'heads' ? 'tails' : 'heads',
               result,
               won: !creatorWins,
+              serverSeedHash: ctx.serverSeedHash,
+              clientSeed: ctx.clientSeed,
+              nonce: flipNonce,
             },
           },
         ],
@@ -282,10 +291,11 @@ export class CoinflipService {
         refId: creatorWins ? creatorBetId : joinerBetId,
       });
 
-      // Reveal the server seed now that the round is settled
+      // Bind the joiner's player seed + nonce onto the flip's seed row and reveal
+      // the per-flip server seed now that the round is settled.
       await tx.seed.update({
         where: { id: game.seedId! },
-        data: { revealedAt: new Date() },
+        data: { clientSeed: ctx.clientSeed, nonce: flipNonce, revealedAt: new Date() },
       });
 
       const updated = await tx.coinflipGame.update({
@@ -296,6 +306,7 @@ export class CoinflipService {
           winnerId,
           status: 'completed',
           resolvedAt: new Date(),
+          nonce: flipNonce,
         },
         include: {
           creator: { select: { id: true, username: true, walletAddress: true } },
