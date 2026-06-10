@@ -1,0 +1,23 @@
+# Dependency update PRs (#39). Weekly batches so the queue stays reviewable;
+# security advisories still open PRs immediately regardless of schedule.
+version: 2
+updates:
+  - package-ecosystem: npm # pnpm workspaces are handled by the npm ecosystem
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

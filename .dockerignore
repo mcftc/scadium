@@ -1,0 +1,19 @@
+# Keep the build context small and deterministic (#39): without this, the
+# images' `COPY . .` drags in the host's dev node_modules (overwriting the
+# alpine-native install from the deps stage), the multi-GB Rust target/, and
+# .git — making local builds slow and host-dependent.
+.git
+node_modules
+**/node_modules
+target
+**/dist
+# Without dist, a stale host tsbuildinfo makes the in-image tsc a silent no-op
+# (incremental "up to date" → nothing emitted → downstream packages can't
+# resolve @scadium/shared).
+**/*.tsbuildinfo
+**/.next
+**/.turbo
+*.log
+.env
+.env.*
+!.env.example

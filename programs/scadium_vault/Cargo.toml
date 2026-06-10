@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Scadium custody + settlement + reward claims"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "lib"]
 name = "scadium_vault"

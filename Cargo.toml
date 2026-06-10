@@ -2,6 +2,15 @@
 members = ["programs/*"]
 resolver = "2"
 
+# Anchor's macros probe feature cfgs (anchor-debug, solana, custom-heap…) and
+# `#[program]` expands to diverging match arms — both are macro noise, not our
+# code. Allowed so `cargo clippy -D warnings` (#39 CI gate) flags only real lints.
+[workspace.lints.rust]
+unexpected_cfgs = "allow"
+
+[workspace.lints.clippy]
+diverging_sub_expression = "allow"
+
 [profile.release]
 overflow-checks = true
 lto = "fat"

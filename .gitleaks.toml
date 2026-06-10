@@ -1,0 +1,12 @@
+# Gitleaks config (#39) — extends the default ruleset; gitleaks picks this up
+# automatically from the repo root.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives"
+regexes = [
+  # localStorage key NAME for the promo-bar dismissal — an identifier, not a
+  # credential (generic-api-key matches on the *_KEY variable name).
+  '''scadium-promo-dismissed''',
+]
