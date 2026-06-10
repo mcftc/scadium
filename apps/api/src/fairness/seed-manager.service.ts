@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -54,14 +55,21 @@ export class SeedManagerService {
   async getOrCreateActivePair(userId: string): Promise<ActivePairView> {
     const existing = await this.prisma.clientSeed.findUnique({ where: { userId } });
     if (existing) return this.view(existing);
-    // upsert with empty update wins the create race (another concurrent first-use
-    // keeps its row rather than overwriting).
-    const created = await this.prisma.clientSeed.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, clientSeed: generateClientSeed(), nonce: BigInt(0), ...this.mintPair() },
-    });
-    return this.view(created);
+    try {
+      const created = await this.prisma.clientSeed.create({
+        data: { userId, clientSeed: generateClientSeed(), nonce: BigInt(0), ...this.mintPair() },
+      });
+      return this.view(created);
+    } catch (e) {
+      // Concurrent first-use (e.g. parallel bets) races to create the same row;
+      // Prisma upsert isn't atomic against that, so catch the unique violation
+      // (P2002) and read back the winner's row.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const row = await this.prisma.clientSeed.findUniqueOrThrow({ where: { userId } });
+        return this.view(row);
+      }
+      throw e;
+    }
   }
 
   /** Set the player's client seed (1–64 chars). Resets the nonce per convention. */
