@@ -52,6 +52,7 @@ interface CurrentDraw {
   salesScadBase: bigint; // running discounted sales (display only; recomputed at settle)
   potLamports: bigint; // SOL-equiv ledger mirror
   commitTxSignature: string | null;
+  targetSlot: bigint | null; // slot pinned at commit (#19b); null off-chain
 }
 
 interface LastResult {
@@ -151,6 +152,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       salesScadBase: BigInt(0),
       potLamports: BigInt(0),
       commitTxSignature: null,
+      targetSlot: null,
     };
   }
 
@@ -180,6 +182,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       injectionScadBase: bigint;
       rolloverScadBase: bigint;
       ticketPriceScadBase: bigint;
+      targetSlot: bigint | null;
     }[];
     try {
       stranded = await this.prisma.lotteryDraw.findMany({
@@ -191,6 +194,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           injectionScadBase: true,
           rolloverScadBase: true,
           ticketPriceScadBase: true,
+          targetSlot: true,
         },
         orderBy: { createdAt: 'asc' },
       });
@@ -225,6 +229,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
             salesScadBase: BigInt(0),
             potLamports: BigInt(0),
             commitTxSignature: null,
+            targetSlot: d.targetSlot ?? null,
           };
           await this.drawAndSettle();
           this.logger.log(`lottery recovery: draw ${d.id} settled`);
@@ -313,6 +318,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           ? this.lastResult.topPrizeScad
           : Number(jackpotSlice) / SCAD_BASE_NUM,
       commitTxSignature: this.current.commitTxSignature,
+      // Slot pinned at commit (#19b) so the verifier can show it; null off-chain.
+      targetSlot: this.current.targetSlot?.toString() ?? null,
       // Provenance of the LAST settled draw's entropy (#19a) so the UI can warn
       // when a draw was settled with the non-fair synthetic fallback.
       lastDrawFairness: this.lastResult?.fairness ?? null,
@@ -375,21 +382,23 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    // Publish the commitment on-chain BEFORE sales, then inject house $SCAD.
+    // Publish the commitment on-chain BEFORE sales, pinning the draw's
+    // target_slot (#19b), then inject house $SCAD.
     let commitTxSignature: string | null = null;
+    let targetSlot: bigint | null = null;
     if (this.chain.lotteryEnabled) {
+      targetSlot = BigInt(((await this.chain.currentSlot()) ?? 0) + LOTTERY.TARGET_SLOT_OFFSET);
       commitTxSignature = await this.chain.lotteryCommitDraw({
         drawIndex,
         serverSeedHashHex: seed.serverSeedHash,
         clientSeedHex: clientSeed,
         drawAtMs: drawAt,
+        targetSlot,
       });
-      if (commitTxSignature) {
-        await this.prisma.lotteryDraw.update({
-          where: { id: draw.id },
-          data: { commitTxSignature },
-        });
-      }
+      await this.prisma.lotteryDraw.update({
+        where: { id: draw.id },
+        data: { targetSlot, ...(commitTxSignature ? { commitTxSignature } : {}) },
+      });
       if (injection > BigInt(0)) {
         void this.chain
           .lotteryInject({ drawIndex, amountScadBase: injection })
@@ -414,6 +423,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       salesScadBase: BigInt(0),
       potLamports: BigInt(0),
       commitTxSignature,
+      targetSlot,
     };
 
     this.gateway.emitDrawOpen({

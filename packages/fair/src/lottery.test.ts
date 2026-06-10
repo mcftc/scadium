@@ -59,6 +59,18 @@ describe('lottery provably-fair draw', () => {
     expect(a).toEqual(b);
   });
 
+  it('the slot hash drives the result — WHICH slot is pinned matters (#19b)', () => {
+    // The on-chain program now derives from the slot PINNED at commit, not the
+    // newest. Different slots ⇒ different hashes ⇒ different draws, so pinning
+    // removes the cosigner's ability to grind which slot seeds the number.
+    const cs = padClientSeed32(GOLDEN.clientSeed);
+    const pinned = lotteryDraw(GOLDEN.serverSeed, cs, GOLDEN.slotHash, GOLDEN.nonce);
+    const otherSlotHash = Uint8Array.from({ length: 32 }, (_, i) => (i + 1) & 0xff);
+    const newest = lotteryDraw(GOLDEN.serverSeed, cs, otherSlotHash, GOLDEN.nonce);
+    expect(pinned.digits).toEqual(GOLDEN.digits);
+    expect(newest.digits).not.toEqual(pinned.digits);
+  });
+
   it('draws 6 digits each in 0..9 with the canonical encoding', () => {
     const serverSeed = generateServerSeed();
     const clientSeed32 = padClientSeed32(generateClientSeed());

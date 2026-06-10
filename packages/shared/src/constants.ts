@@ -120,6 +120,16 @@ export const LOTTERY = {
   DRAW_TZ_OFFSET_MINUTES: 180, // UTC+3
   /** Loyalty: every 1 SOL wagered across ANY game earns 1 free ticket. */
   FREE_TICKET_PER_WAGER_LAMPORTS: LAMPORTS_PER_SOL,
+  /**
+   * Slots ahead of the current slot to PIN as the draw's `target_slot` at commit
+   * (#19b) — a future slot whose hash cannot exist yet, so the cosigner cannot
+   * grind the reveal. ~50 slots ≈ 20s at 400ms/slot, mirroring the crash entropy
+   * delta. NOTE: the SlotHashes sysvar only retains ~512 recent slots (~3.4 min),
+   * so the on-chain commit must run close to the draw — a real daily cadence
+   * pins the slot in a pre-draw "seal" step (Phase J deployment concern); the
+   * chain layer is decorative today, so this offset is the documented default.
+   */
+  TARGET_SLOT_OFFSET: 50,
 } as const;
 
 /** Prize bracket: 0 = match-first-1 … 5 = match-all-6 (jackpot). */
