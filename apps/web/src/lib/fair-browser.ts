@@ -88,6 +88,64 @@ export async function blackjackDeal(
   return cards;
 }
 
+/** One card draw in a round's public deal order (#21) — mirrors @scadium/fair. */
+export interface DealLogEntry {
+  deckIndex: number;
+  dealtTo: number | 'dealer';
+  handId: string;
+  card?: Card;
+}
+
+export interface ReproducedHand {
+  dealtTo: number | 'dealer';
+  handId: string;
+  cards: Card[];
+}
+
+/**
+ * Re-derive one hand's cards from the revealed seed + its deck indices. Matches
+ * @scadium/fair `reproduceHand` — the /fairness verifier feeds a seat's
+ * `deckIndices` (from its Bet.resultJson) here instead of a hardcoded count.
+ */
+export async function reproduceHand(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  deckIndices: number[],
+): Promise<Card[]> {
+  if (deckIndices.length === 0) return [];
+  const stream = await blackjackDeal(serverSeed, clientSeed, nonce, Math.max(...deckIndices) + 1);
+  return deckIndices.map((i) => stream[i]!);
+}
+
+/**
+ * Map a round's full deal-order log back to each seat's/hand's cards. Matches
+ * @scadium/fair `reproduceRound` — hands grouped by `dealtTo`+`handId` (splits
+ * surface separately), each hand's cards ordered by `deckIndex`.
+ */
+export async function reproduceRound(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  dealOrder: DealLogEntry[],
+): Promise<ReproducedHand[]> {
+  if (dealOrder.length === 0) return [];
+  const maxIndex = dealOrder.reduce((m, e) => Math.max(m, e.deckIndex), 0);
+  const stream = await blackjackDeal(serverSeed, clientSeed, nonce, maxIndex + 1);
+
+  const hands = new Map<string, ReproducedHand>();
+  for (const e of [...dealOrder].sort((a, b) => a.deckIndex - b.deckIndex)) {
+    const key = `${e.dealtTo}|${e.handId}`;
+    let hand = hands.get(key);
+    if (!hand) {
+      hand = { dealtTo: e.dealtTo, handId: e.handId, cards: [] };
+      hands.set(key, hand);
+    }
+    hand.cards.push(stream[e.deckIndex]!);
+  }
+  return [...hands.values()];
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.trim().toLowerCase().replace(/^0x/, '');
   const out = new Uint8Array(clean.length / 2);

@@ -35,6 +35,79 @@ export function blackjackDeal(
 }
 
 /**
+ * One card draw in a blackjack round's public deal order (#21). A busy table
+ * draws MORE than 10 cards off one shared, monotonically increasing `deckIndex`
+ * (deal pass: each seat then dealer; then hits/doubles in action order; future
+ * splits open a new `handId` for the same seat). Recording every draw as
+ * `{ deckIndex, dealtTo, handId }` lets any player map the deterministic stream
+ * back to the exact cards a given seat/hand received.
+ */
+export interface DealLogEntry {
+  /** Position in the deterministic `blackjackDeal` stream (0-based). */
+  deckIndex: number;
+  /** Seat index that received the card, or the dealer. */
+  dealtTo: number | 'dealer';
+  /** Stable hand id (`seat-<i>-<hand>` / `dealer`); split-ready. */
+  handId: string;
+  /** The dealt card — optional; `reproduceRound` re-derives it from the seed. */
+  card?: Card;
+}
+
+/** A single reproduced hand: every card re-derived from the revealed seed. */
+export interface ReproducedHand {
+  dealtTo: number | 'dealer';
+  handId: string;
+  cards: Card[];
+}
+
+/**
+ * Re-derive the cards for a flat list of deck indices (one hand) from the
+ * revealed seed. The per-bet verifier feeds its seat's `deckIndices` here.
+ */
+export function reproduceHand(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  deckIndices: number[],
+): Card[] {
+  if (deckIndices.length === 0) return [];
+  const stream = blackjackDeal(serverSeed, clientSeed, nonce, Math.max(...deckIndices) + 1);
+  return deckIndices.map((i) => stream[i]!);
+}
+
+/**
+ * Map a round's full deal-order log back to each seat's/hand's cards by indexing
+ * the deterministic stream at the recorded `deckIndex` values — the proof that
+ * the engine's seat→card mapping is honest. Hands are grouped by
+ * `dealtTo`+`handId` (so splits surface as separate hands) and each hand's cards
+ * are ordered by `deckIndex`. Independent of how many cards the table drew.
+ */
+export function reproduceRound(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  dealOrder: DealLogEntry[],
+): ReproducedHand[] {
+  if (dealOrder.length === 0) return [];
+  const maxIndex = dealOrder.reduce((m, e) => Math.max(m, e.deckIndex), 0);
+  const stream = blackjackDeal(serverSeed, clientSeed, nonce, maxIndex + 1);
+
+  const hands = new Map<string, ReproducedHand>();
+  // First-seen insertion order is preserved; cards within a hand are ordered by
+  // deckIndex so out-of-order logs still reproduce the real deal sequence.
+  for (const e of [...dealOrder].sort((a, b) => a.deckIndex - b.deckIndex)) {
+    const key = `${e.dealtTo}|${e.handId}`;
+    let hand = hands.get(key);
+    if (!hand) {
+      hand = { dealtTo: e.dealtTo, handId: e.handId, cards: [] };
+      hands.set(key, hand);
+    }
+    hand.cards.push(stream[e.deckIndex]!);
+  }
+  return [...hands.values()];
+}
+
+/**
  * Value of a single card for blackjack hand-total calculation.
  * Aces count as 11 initially; downgrade logic lives in handValue.
  */

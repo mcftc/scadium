@@ -56,6 +56,7 @@ function makeTableState(opts: {
     ],
     dealerHidden: false,
     deckIndex: 0,
+    dealLog: [],
     roundDbId: opts.roundDbId,
     seedId: opts.seedId,
     serverSeed: 'srv-bj',
