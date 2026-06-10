@@ -117,6 +117,9 @@ model User {
   // above this earns one; consuming a ticket advances it by 1 SOL.
   freeTicketBaselineWagered BigInt @default(0)
   rewardClaims   RewardClaim[]
+  // Per-user provably-fair seed state (Phase I #18): player-controlled client
+  // seed + monotonic nonce + the active/pre-committed server-seed pair.
+  clientSeedState ClientSeed?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -225,6 +228,25 @@ model AuditLog {
 }
 
 // ==================== FAIRNESS ====================
+
+/// Per-user rotating provably-fair seed state (Phase I #18). One row per user:
+/// the player-controlled `clientSeed`, a monotonic `nonce`, the ACTIVE
+/// server-seed pair (secret until rotated) and a PRE-COMMITTED next pair. On
+/// rotation the active `serverSeed` is revealed and `next*` is promoted. Distinct
+/// from the per-round `Seed` rows the game engines create.
+model ClientSeed {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @unique @db.Uuid
+  user               User      @relation(fields: [userId], references: [id])
+  clientSeed         String
+  nonce              BigInt    @default(0)
+  serverSeed         String
+  serverSeedHash     String
+  nextServerSeed     String
+  nextServerSeedHash String
+  createdAt          DateTime  @default(now())
+  rotatedAt          DateTime?
+}
 
 model Seed {
   id              String    @id @default(uuid()) @db.Uuid
