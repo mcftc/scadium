@@ -10,6 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { BET_THROTTLE } from '../../common/throttle.constants';
 import { IsString, Length } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
@@ -84,6 +86,7 @@ export class LotteryController {
   }
 
   @Post('ticket')
+  @Throttle({ default: BET_THROTTLE }) // ticket-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Buy a ticket for the current draw (6 digits 0-9, paid in $SCAD)' })

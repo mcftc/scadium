@@ -106,12 +106,36 @@ export async function bootstrapApp(): Promise<BootstrapResult> {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  // Mirror main.ts trust proxy so X-Forwarded-For drives req.ip — the rate-limit
+  // spec (#34) uses it to simulate distinct client IPs.
+  (app.getHttpAdapter().getInstance() as { set: (k: string, v: number) => void }).set(
+    'trust proxy',
+    1,
+  );
 
   // Listen on an ephemeral port: a real listening socket handles many
   // concurrent supertest requests cleanly. Firing N parallel requests at a
   // non-listening server (supertest's per-request ephemeral bind) races on the
   // same http.Server and resets connections — which the double-spend test does.
   await app.listen(0);
+
+  // Engines acquire a cross-pod leader lock at boot (#86). When the PREVIOUS
+  // spec file's app released late (or its lock hasn't expired), this app starts
+  // as a FOLLOWER with placeholder state — bets then 4xx/5xx until the ~10s
+  // lock TTL passes. Wait for the crash + jackpot engines to lead and open a
+  // bettable round so app-booting specs aren't order/timing dependent.
+  const { CrashEngine } = await import('../src/games/crash/crash.engine');
+  const { JackpotEngine } = await import('../src/games/jackpot/jackpot.engine');
+  const crash = app.get(CrashEngine, { strict: false });
+  const jackpot = app.get(JackpotEngine, { strict: false });
+  const bettable = () =>
+    crash.isLeader() &&
+    (crash.snapshot() as { phase: string }).phase === 'waiting' &&
+    jackpot.isLeader() &&
+    jackpot.getOpenRound() !== null;
+  for (let i = 0; i < 150 && !bettable(); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
 
   const jwt = app.get(JwtService);
   const { randomUUID } = await import('node:crypto');

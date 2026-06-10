@@ -4,6 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HttpThrottlerGuard } from './common/http-throttler.guard';
+import { ThrottlerRedisStorage } from './common/throttler-redis.storage';
+import { DEFAULT_THROTTLE } from './common/throttle.constants';
+import { RedisService } from './redis/redis.service';
 import { HealthController } from './health/health.controller';
 import { FairnessModule } from './fairness/fairness.module';
 import { AuthModule } from './auth/auth.module';
@@ -34,12 +37,18 @@ import { QueueModule } from './queue/queue.module';
       envFilePath: ['../../.env', '.env'],
     }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([
-      {
-        ttl: Number(process.env.THROTTLE_TTL ?? 60) * 1000,
-        limit: Number(process.env.THROTTLE_LIMIT ?? 100),
-      },
-    ]),
+    // Redis-backed storage (#34) so limits hold across replicas — the default
+    // in-process Map gives every pod its own counters. RedisModule is global,
+    // so RedisService is injectable here. Per-route overrides (auth/bet
+    // profiles) live in common/throttle.constants.ts.
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule],
+      inject: [RedisService],
+      useFactory: (redis: RedisService) => ({
+        throttlers: [{ ...DEFAULT_THROTTLE }],
+        storage: new ThrottlerRedisStorage(redis.client),
+      }),
+    }),
     PrismaModule,
     RedisModule,
     QueueModule,
