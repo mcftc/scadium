@@ -25,8 +25,8 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // API prefix
-  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  // API prefix — health probes stay unprefixed at /health, /health/live, /health/ready.
+  app.setGlobalPrefix('api/v1', { exclude: ['health', 'health/live', 'health/ready'] });
 
   // Swagger
   const config = new DocumentBuilder()
