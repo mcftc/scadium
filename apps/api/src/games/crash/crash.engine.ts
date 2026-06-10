@@ -1,7 +1,14 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { crashPoint, generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
+import {
+  crashPoint,
+  crashPointFromSlot,
+  generateServerSeed,
+  generateClientSeed,
+  commitServerSeed,
+  syntheticSlotHash,
+} from '@scadium/fair';
 import { CRASH, SCAD } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
@@ -15,6 +22,11 @@ type Phase = 'waiting' | 'running' | 'busted';
 
 // Leader election (#13/#85): only the lock holder drives the loop; others mirror
 // its public round state from Redis so `snapshot()` is consistent across pods.
+// On-chain SlotHashes entropy (#101). Pin a slot ~one betting-window ahead so it
+// has passed by the time the round starts running and its hash is readable.
+// Read live (not at module load) so it's togglable in tests / at runtime.
+const onchainEntropyOn = (): boolean => process.env.CRASH_ONCHAIN_ENTROPY === 'true';
+const CRASH_ENTROPY_SLOT_DELTA = 50; // ~20s at 400ms/slot
 const CRASH_LOCK_KEY = 'lock:engine:crash';
 const CRASH_MIRROR_KEY = 'round:crash:current';
 const CRASH_LOCK_TTL_MS = 10_000;
@@ -49,6 +61,8 @@ interface Round {
   phase: Phase;
   startedAt: number | null; // ms epoch when "running" began
   bets: Map<string, LiveBet>;
+  /** Pinned slot whose hash seeds the bust (#101); null on the play-money path. */
+  targetSlot: number | null;
 }
 
 /** Bet queued for the NEXT round ("Schedule Bet For Next Round"). */
@@ -133,6 +147,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       phase: 'waiting',
       startedAt: null,
       bets: new Map(),
+      targetSlot: null,
     };
   }
 
@@ -379,7 +394,13 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
-    const bustPoint = crashPoint(serverSeed, clientSeed, nonce);
+    // Flag on: defer the bust to beginRun (derived from a slot hash that does not
+    // exist at commit, #101). Flag off: today's behaviour — bust committed up front.
+    const entropyOn = onchainEntropyOn();
+    const targetSlot = entropyOn
+      ? ((await this.chain.currentSlot()) ?? 0) + CRASH_ENTROPY_SLOT_DELTA
+      : null;
+    const bustPoint = entropyOn ? 0 : crashPoint(serverSeed, clientSeed, nonce);
 
     const seed = await this.prisma.seed.create({
       data: {
@@ -395,6 +416,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         seedId: seed.id,
         nonce,
         status: 'waiting',
+        ...(entropyOn
+          ? { entropyStatus: 'entropy_requested', targetSlot: BigInt(targetSlot ?? 0) }
+          : {}),
       },
     });
 
@@ -409,6 +433,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       phase: 'waiting',
       startedAt: null,
       bets: new Map(),
+      targetSlot,
     };
 
     this.gateway.emitRoundStart({
@@ -472,8 +497,38 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     }, CRASH.BET_WINDOW_MS);
   }
 
+  /**
+   * Derive the bust from the pinned slot's hash once it has passed (#101). On a
+   * live chain the hash is read from the SlotHashes sysvar; if it's unavailable
+   * (timeout / play-money mode) we fall back to a deterministic synthetic hash so
+   * NO bets are ever stranded (documented fallback, ADR 0002 — that round is then
+   * non-fair; the production VRF path #102 does a hard void/refund instead).
+   * Deterministic, so re-running it is idempotent.
+   */
+  private async fulfillEntropy(): Promise<void> {
+    const { serverSeed, clientSeed, nonce, targetSlot } = this.current;
+    let slotHashHex = targetSlot !== null ? await this.chain.readSlotHash(targetSlot) : null;
+    if (!slotHashHex) {
+      if (this.chain.enabled) {
+        this.logger.warn(`crash ${this.current.id}: slot ${targetSlot} hash unavailable — synthetic fallback`);
+      }
+      slotHashHex = syntheticSlotHash(serverSeed, clientSeed).toString('hex');
+    }
+    this.current.bustPoint = crashPointFromSlot(
+      serverSeed,
+      clientSeed,
+      Buffer.from(slotHashHex, 'hex'),
+      nonce,
+    );
+    await this.prisma.crashRound.update({
+      where: { id: this.current.id },
+      data: { slotHash: slotHashHex, entropyStatus: 'entropy_fulfilled' },
+    });
+  }
+
   private async beginRun(): Promise<void> {
     if (!this.isLeader()) return; // leadership lost during the betting window
+    if (onchainEntropyOn()) await this.fulfillEntropy(); // derive the deferred bust
     this.current.phase = 'running';
     this.current.startedAt = Date.now();
     await this.prisma.crashRound.update({
