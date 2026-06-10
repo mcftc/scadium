@@ -37,10 +37,12 @@ jobs:
 
       - name: Gate on error-level findings (no GHAS upload available)
         run: |
-          ERRORS=$(jq '[.runs[].results[]? | select(.level == "error")] | length' sarif-results/javascript-typescript.sarif)
-          TOTAL=$(jq '[.runs[].results[]?] | length' sarif-results/javascript-typescript.sarif)
+          SARIF=$(ls sarif-results/*.sarif | head -1)
+          echo "Gating on: $SARIF"
+          ERRORS=$(jq '[.runs[].results[]? | select(.level == "error")] | length' "$SARIF")
+          TOTAL=$(jq '[.runs[].results[]?] | length' "$SARIF")
           echo "CodeQL findings: $TOTAL total, $ERRORS error-level"
-          jq -r '.runs[].results[]? | "\(.level)\t\(.ruleId)\t\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' sarif-results/javascript-typescript.sarif || true
+          jq -r '.runs[].results[]? | "\(.level)\t\(.ruleId)\t\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' "$SARIF" || true
           test "$ERRORS" -eq 0
 
       - uses: actions/upload-artifact@v4

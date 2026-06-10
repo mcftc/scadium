@@ -18,7 +18,9 @@ RUN pnpm --filter @scadium/api exec prisma generate
 RUN pnpm --filter @scadium/api exec tsc -p tsconfig.json
 
 FROM node:20-alpine AS runner
-RUN npm install -g pnpm@10.33.0
+# Pick up alpine security fixes newer than the base tag (e.g. libcrypto3 HIGH
+# CVEs flagged by the #39 Trivy gate).
+RUN apk upgrade --no-cache && npm install -g pnpm@10.33.0
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
