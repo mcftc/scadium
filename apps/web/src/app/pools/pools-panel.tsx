@@ -92,6 +92,18 @@ export function PoolsPanel() {
     }
   }
 
+  // Mirror /trade and /wallet: when the pool isn't configured (play-money mode),
+  // show a clear notice instead of live-looking inputs whose buttons silently no-op.
+  if (pool.data && !pool.data.enabled) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-foreground-muted">
+          Liquidity pool is not configured on this server yet.
+        </CardContent>
+      </Card>
+    );
+  }
+
   const p = pool.data;
   const sharePct =
     p && lpBalance.data && BigInt(p.lpSupply) > 0n

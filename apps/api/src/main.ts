@@ -10,6 +10,10 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
+  // Behind Caddy/any reverse proxy: honor X-Forwarded-For so rate-limiting and logging
+  // see the real client IP instead of the proxy's. Required for per-IP throttling.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   // Global validation
   app.useGlobalPipes(
     new ValidationPipe({
