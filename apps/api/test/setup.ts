@@ -114,8 +114,22 @@ export async function bootstrapApp(): Promise<BootstrapResult> {
   await app.listen(0);
 
   const jwt = app.get(JwtService);
-  const signToken = (userId: string, walletAddress: string): Promise<string> =>
-    jwt.signAsync({ sub: userId, userId, walletAddress, typ: 'access' });
+  const { randomUUID } = await import('node:crypto');
+  // Mint an access token AND back it with a live Session row (#35) — the guard
+  // now rejects any access token whose jti has no live session.
+  const signToken = async (userId: string, walletAddress: string): Promise<string> => {
+    const jti = randomUUID();
+    const token = await jwt.signAsync({ sub: userId, userId, walletAddress, typ: 'access', jti });
+    await getPrisma().session.create({
+      data: {
+        userId,
+        jwtId: jti,
+        refreshToken: `harness-refresh-${jti}`,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+    return token;
+  };
 
   return { app, server: app.getHttpServer() as Server, prisma: getPrisma(), signToken };
 }

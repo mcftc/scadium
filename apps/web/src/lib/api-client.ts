@@ -24,7 +24,47 @@ type Options = {
   body?: unknown;
   token?: string | null;
   signal?: AbortSignal;
+  /** Internal: set on the single automatic retry after a token refresh (#35). */
+  _retried?: boolean;
 };
+
+/**
+ * Single-flight access-token refresh (#35): on a 401, rotate the refresh token
+ * once and retry. Concurrent 401s share one in-flight refresh so we don't spam
+ * `/auth/refresh` (which would trip reuse detection and revoke the session).
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const { refreshToken, walletAddress } = useAuthStore.getState();
+    if (!refreshToken || !walletAddress) return false;
+    try {
+      const res = await fetch(`${env.apiUrl}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        credentials: 'include',
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
+      if (!data.accessToken || !data.refreshToken) return false;
+      useAuthStore.getState().setTokens({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
 
 export async function api<T = unknown>(path: string, opts: Options = {}): Promise<T> {
   const url = `${env.apiUrl}/api/v1${path.startsWith('/') ? path : `/${path}`}`;
@@ -45,9 +85,14 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   const json = text ? safeParse(text) : undefined;
 
   if (!res.ok) {
-    // An expired/invalid JWT otherwise leaves the UI looking signed-in while
-    // every authed call 401s — drop the stale session so the connect CTA shows.
-    if (res.status === 401 && opts.token && typeof window !== 'undefined') {
+    // A revoked/expired access token: try to rotate the refresh token ONCE and
+    // replay the request with the new token. If that fails, drop the stale
+    // session so the connect CTA shows instead of every call silently 401ing.
+    if (res.status === 401 && opts.token && typeof window !== 'undefined' && !opts._retried) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        return api<T>(path, { ...opts, token: useAuthStore.getState().accessToken, _retried: true });
+      }
       useAuthStore.getState().clear();
     }
     const msg =

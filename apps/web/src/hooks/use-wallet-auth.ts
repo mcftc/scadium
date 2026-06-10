@@ -3,6 +3,7 @@
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useCallback } from 'react';
 import { useAuthStore } from '@/store/auth-store';
+import { api } from '@/lib/api-client';
 
 /**
  * Convenience hook that unifies wallet-adapter state and our auth store.
@@ -21,14 +22,31 @@ export function useWalletAuth() {
   const { publicKey, disconnect } = useWallet();
   const { accessToken, walletAddress, clear } = useAuthStore();
 
-  const signOut = useCallback(async () => {
-    clear();
-    try {
-      await disconnect();
-    } catch {
-      /* ignore disconnect errors */
-    }
-  }, [clear, disconnect]);
+  // Revoke the server session (#35) so a stolen token can't outlive sign-out,
+  // then clear local state + disconnect the adapter. `scope: 'all'` logs out
+  // every device (logout-everywhere).
+  const endSession = useCallback(
+    async (scope: 'current' | 'all') => {
+      const token = useAuthStore.getState().accessToken;
+      if (token) {
+        try {
+          await api(scope === 'all' ? '/auth/logout-all' : '/auth/logout', { method: 'POST', token });
+        } catch {
+          /* best-effort: clear locally even if the revoke call fails */
+        }
+      }
+      clear();
+      try {
+        await disconnect();
+      } catch {
+        /* ignore disconnect errors */
+      }
+    },
+    [clear, disconnect],
+  );
+
+  const signOut = useCallback(() => endSession('current'), [endSession]);
+  const signOutEverywhere = useCallback(() => endSession('all'), [endSession]);
 
   const isAuthenticated = !!accessToken && !!walletAddress;
 
@@ -38,5 +56,6 @@ export function useWalletAuth() {
     walletAddress: walletAddress ?? publicKey?.toBase58() ?? null,
     accessToken,
     signOut,
+    signOutEverywhere,
   };
 }

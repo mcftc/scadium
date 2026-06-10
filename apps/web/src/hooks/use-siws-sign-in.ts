@@ -13,6 +13,7 @@ interface NonceResponse {
 
 interface VerifyResponse {
   accessToken: string;
+  refreshToken: string;
   walletAddress: string;
 }
 
@@ -61,8 +62,8 @@ export function useSiwsSignIn() {
       throw new Error('Wallet failed to sign message');
     }
 
-    // 3. Verify & get JWT
-    const { accessToken } = await api<VerifyResponse>('/auth/verify', {
+    // 3. Verify & get the access + refresh pair
+    const { accessToken, refreshToken } = await api<VerifyResponse>('/auth/verify', {
       method: 'POST',
       body: {
         walletAddress,
@@ -73,7 +74,7 @@ export function useSiwsSignIn() {
     });
 
     // 4. Persist
-    setAuth({ accessToken, walletAddress });
+    setAuth({ accessToken, refreshToken, walletAddress });
   }, [connected, publicKey, signMessage, setAuth]);
 
   return { signIn };
