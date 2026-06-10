@@ -23,7 +23,8 @@ export const TEST_DATABASE_URL =
 
 // Point the app (and its PrismaService) at the test DB before AppModule loads.
 process.env.DATABASE_URL = TEST_DATABASE_URL;
-process.env.JWT_SECRET ??= 'test-secret';
+// ≥32 bytes — the API fails closed below that (#33).
+process.env.JWT_SECRET ??= 'test-secret-at-least-32-bytes-long!!';
 
 // Lazily-imported Nest types/values so the env override above runs first.
 import type { INestApplication } from '@nestjs/common';
@@ -114,7 +115,7 @@ export async function bootstrapApp(): Promise<BootstrapResult> {
 
   const jwt = app.get(JwtService);
   const signToken = (userId: string, walletAddress: string): Promise<string> =>
-    jwt.signAsync({ sub: userId, userId, walletAddress });
+    jwt.signAsync({ sub: userId, userId, walletAddress, typ: 'access' });
 
   return { app, server: app.getHttpServer() as Server, prisma: getPrisma(), signToken };
 }

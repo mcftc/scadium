@@ -29,21 +29,23 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractToken(req);
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
+    let payload: { sub: string; walletAddress?: string; userId?: string; typ?: string };
     try {
-      const payload = await this.jwt.verifyAsync<{
-        sub: string;
-        walletAddress?: string;
-        userId?: string;
-      }>(token);
-
-      req.auth = {
-        userId: payload.userId ?? payload.sub,
-        walletAddress: payload.walletAddress ?? payload.sub,
-      };
-      return true;
+      payload = await this.jwt.verifyAsync(token);
     } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
+
+    // Only ACCESS tokens authenticate protected routes (#33). A refresh token —
+    // signed with the same secret — must NOT be accepted here. Checked OUTSIDE
+    // the verify try/catch so the precise reason isn't masked as "expired".
+    if (payload.typ !== 'access') throw new UnauthorizedException('Invalid token type');
+
+    req.auth = {
+      userId: payload.userId ?? payload.sub,
+      walletAddress: payload.walletAddress ?? payload.sub,
+    };
+    return true;
   }
 
   private extractToken(req: Request): string | null {
