@@ -1,4 +1,26 @@
 import { buildMessage, hmacSha256 } from './hash';
+import { lotteryFinalEntropy, padClientSeed32 } from './lottery';
+
+/**
+ * Crash bust derived from on-chain entropy (ADR 0002 / #101). Folds a pinned
+ * slot's hash — unknown to the operator at commit time — into the derivation, so
+ * the bust cannot be ground when the round opens. Reuses the canonical
+ * `finalEntropy = sha256(serverSeed ‖ slotHash ‖ clientSeed32 ‖ u32le(nonce))`
+ * encoding (golden-locked across Rust / Node / browser by the lottery), then maps
+ * its first 13 hex chars through the SAME 5%-edge crash formula as `crashPoint`.
+ */
+export function crashPointFromSlot(
+  serverSeed: string,
+  clientSeed: string,
+  slotHash: Uint8Array,
+  nonce = 0,
+): number {
+  const entropy = lotteryFinalEntropy(serverSeed, padClientSeed32(clientSeed), slotHash, nonce);
+  const h = parseInt(entropy.toString('hex').slice(0, 13), 16);
+  if (h % 20 === 0) return 1.0;
+  const e = 2 ** 52;
+  return Math.floor((100 * e - h) / (e - h)) / 100;
+}
 
 /**
  * Compute the crash-point multiplier for a round, matching the solpump.io

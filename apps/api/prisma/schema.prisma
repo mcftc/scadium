@@ -297,6 +297,13 @@ model CrashRound {
   startedAt       DateTime?
   endedAt         DateTime?
   createdAt       DateTime          @default(now())
+  // On-chain entropy (ADR 0002 / #101), only populated when CRASH_ONCHAIN_ENTROPY
+  // is on: the round pins a future `targetSlot` at open and derives the bust from
+  // that slot's hash once it passes (unknown/unchooseable at commit). null on the
+  // play-money default path.
+  entropyStatus   String?
+  targetSlot      BigInt?
+  slotHash        String?
 
   bets CrashBet[]
 

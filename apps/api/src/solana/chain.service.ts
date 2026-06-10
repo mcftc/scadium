@@ -96,6 +96,42 @@ export class ChainService implements OnModuleInit {
     return info ? BigInt(info.lamports) : 0n;
   }
 
+  /** Current confirmed slot — used to pin a future targetSlot at round open (#101). */
+  async currentSlot(): Promise<number | null> {
+    if (!this.enabled) return null;
+    try {
+      return await this.connection.getSlot('confirmed');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Hash of `targetSlot` from the SlotHashes sysvar (32-byte hex), or null if the
+   * slot is not in the ~512-slot window (not yet reached, or rolled out) or the
+   * read fails. The operator cannot predict/choose this at commit time (#101).
+   * Sysvar layout: u64 LE count, then `count` entries of u64 LE slot + 32-byte hash.
+   */
+  async readSlotHash(targetSlot: number | bigint): Promise<string | null> {
+    if (!this.enabled) return null;
+    try {
+      const acct = await this.connection.getAccountInfo(SYSVAR_SLOT_HASHES_PUBKEY);
+      if (!acct) return null;
+      const data = acct.data;
+      const count = Number(data.readBigUInt64LE(0));
+      const want = BigInt(targetSlot);
+      for (let i = 0; i < count; i++) {
+        const off = 8 + i * 40;
+        if (data.readBigUInt64LE(off) === want) {
+          return data.subarray(off + 8, off + 40).toString('hex');
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // ------------------------------------------------------------ settle
 
   /**
