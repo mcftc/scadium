@@ -163,8 +163,15 @@ model Session {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // jti of the CURRENT access token bound to this session. The guard rejects any
+  // access token whose jti != this (so rotation/logout invalidate old tokens).
   jwtId        String   @unique
+  // SHA-256 of the current refresh token (never the raw token). @unique so a
+  // presented token resolves to exactly one session.
   refreshToken String   @unique
+  // SHA-256 of the PREVIOUS (rotated-out) refresh token (#35). Replaying it is a
+  // reuse signal → the whole session is revoked.
+  prevRefreshToken String?
   userAgent    String?
   ipAddress    String?
   expiresAt    DateTime

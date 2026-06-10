@@ -15,7 +15,7 @@ import { UsernameForm } from '@/components/profile/username-form';
 import { useMe } from '@/hooks/use-me';
 
 export function ProfileContent() {
-  const { walletAddress, signOut } = useWalletAuth();
+  const { walletAddress, signOut, signOutEverywhere } = useWalletAuth();
   const { sol, loading } = useSolBalance();
   const { data: me } = useMe();
   const [copied, setCopied] = useState(false);
@@ -122,6 +122,13 @@ export function ProfileContent() {
             <Button variant="secondary" className="w-full" onClick={() => void signOut()}>
               <LogOut className="h-4 w-4" />
               Sign out
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full text-foreground-muted"
+              onClick={() => void signOutEverywhere()}
+            >
+              Log out everywhere
             </Button>
           </CardContent>
         </Card>
