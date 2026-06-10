@@ -10,6 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { BET_THROTTLE } from '../../common/throttle.constants';
 import { CoinflipService } from './coinflip.service';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
@@ -33,6 +35,7 @@ export class CoinflipController {
   }
 
   @Post()
+  @Throttle({ default: BET_THROTTLE }) // create-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Create a new flip (locks balance)' })
@@ -52,6 +55,7 @@ export class CoinflipController {
   }
 
   @Post(':id/join')
+  @Throttle({ default: BET_THROTTLE }) // join-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Join an open flip — triggers resolution' })

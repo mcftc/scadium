@@ -1,6 +1,8 @@
 import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import { AUTH_THROTTLE } from '../common/throttle.constants';
 import { AuthService } from './auth.service';
 import { NonceRequestDto } from './dto/nonce-request.dto';
 import { VerifyDto } from './dto/verify.dto';
@@ -20,18 +22,21 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('nonce')
+  @Throttle({ default: AUTH_THROTTLE }) // nonce-grinding cap (#34)
   @ApiOperation({ summary: 'Issue a fresh nonce for SIWS signing' })
   nonce(@Body() dto: NonceRequestDto) {
     return this.auth.requestNonce(dto.walletAddress);
   }
 
   @Post('verify')
+  @Throttle({ default: AUTH_THROTTLE }) // signature-spam cap (#34)
   @ApiOperation({ summary: 'Verify SIWS signature and issue an access + refresh token pair' })
   verify(@Body() dto: VerifyDto, @Req() req: Request) {
     return this.auth.verifyAndIssueToken(dto, sessionCtx(req));
   }
 
   @Post('refresh')
+  @Throttle({ default: AUTH_THROTTLE }) // refresh-guessing cap (#34)
   @ApiOperation({ summary: 'Rotate a refresh token for a new access + refresh pair' })
   refresh(@Body() dto: RefreshDto, @Req() req: Request) {
     return this.auth.refresh(dto.refreshToken, sessionCtx(req));

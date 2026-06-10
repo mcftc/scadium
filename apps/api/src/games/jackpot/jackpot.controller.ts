@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { BET_THROTTLE } from '../../common/throttle.constants';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { JackpotService } from './jackpot.service';
@@ -31,6 +33,7 @@ export class JackpotController {
   }
 
   @Post('enter')
+  @Throttle({ default: BET_THROTTLE }) // enter-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Enter the current jackpot round with a SOL amount' })

@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { BET_THROTTLE } from '../../common/throttle.constants';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { CrashService } from './crash.service';
@@ -26,6 +28,7 @@ export class CrashController {
   }
 
   @Post('bet')
+  @Throttle({ default: BET_THROTTLE }) // bet-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Place a bet in the current waiting round' })
@@ -65,6 +68,7 @@ export class CrashController {
   }
 
   @Post('cashout')
+  @Throttle({ default: BET_THROTTLE }) // cashout-spam cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
