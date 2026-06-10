@@ -437,7 +437,18 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               status: won ? 'won' : 'lost',
               seedId,
               nonce,
-              resultJson: { totalLamports: total.toString(), winningTicket: ticket, won },
+              resultJson: {
+                totalLamports: total.toString(),
+                winningTicket: ticket,
+                won,
+                // Self-contained verification context (ADR 0001 / #93).
+                fair: {
+                  serverSeed: this.current.serverSeed,
+                  serverSeedHash: this.current.serverSeedHash,
+                  clientSeed: this.current.clientSeed,
+                  nonce: this.current.nonce,
+                },
+              },
             },
           });
         }

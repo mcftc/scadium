@@ -572,6 +572,16 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
                 matchLen: r.matchLen,
                 bracket: r.bracket,
                 prizeScad: Number(r.payoutScadBase) / SCAD_BASE_NUM,
+                // Self-contained verification context (ADR 0001 / #93): the
+                // revealed seed pair + the SlotHashes entropy so the bet
+                // reproduces the winning digits without a Seed/Draw join.
+                fair: {
+                  serverSeed: this.current.serverSeed,
+                  serverSeedHash: this.current.serverSeedHash,
+                  clientSeed: this.current.clientSeed,
+                  nonce: this.current.nonce,
+                  slotHash: slotHashHex,
+                },
               },
             },
           });

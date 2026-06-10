@@ -687,6 +687,15 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
                 bustPoint: bustM,
                 cashedOutAt: bet.cashedOutAt,
                 partialPayouts: payout.toString(),
+                // Self-contained verification context (ADR 0001 / #93): the
+                // revealed per-round house seed pair so the bet reproduces the
+                // shared bust via crashPoint() without a Seed-table join.
+                fair: {
+                  serverSeed: this.current.serverSeed,
+                  serverSeedHash: this.current.serverSeedHash,
+                  clientSeed: this.current.clientSeed,
+                  nonce: this.current.nonce,
+                },
               },
             },
           });
