@@ -389,6 +389,10 @@ model LotteryDraw {
   // Hex of the 32-byte slot hash mixed into the draw entropy (null until
   // drawn; synthetic sha256(seed:clientSeed) when the chain is disabled).
   slotHash     String?
+  // Slot PINNED at commit time (#19b): reveal must derive from THIS slot's hash,
+  // not the newest, so the cosigner can't grind the reveal. Null for off-chain /
+  // synthetic draws. Surfaced in the snapshot so the verifier can show it.
+  targetSlot   BigInt?
   // Entropy provenance (#19a): 'onchain' = derived from a real on-chain
   // SlotHashes reveal (provably fair); 'synthetic-not-fair' = settled via the
   // operator-deterministic synthetic fallback (NOT provably fair — surfaced as

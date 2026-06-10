@@ -215,12 +215,14 @@ export class ChainService implements OnModuleInit {
     )[0];
   }
 
-  /** Publish the seed commitment on-chain before sales open. */
+  /** Publish the seed commitment on-chain before sales open, pinning the draw's
+   * `target_slot` (#19b) so reveal can't grind over recent slots. */
   async lotteryCommitDraw(params: {
     drawIndex: bigint;
     serverSeedHashHex: string; // 64-char hex
     clientSeedHex: string; // 32-char hex (16 bytes) — padded to 32 bytes
     drawAtMs: number;
+    targetSlot: bigint; // future slot pinned at commit; reveal derives from ITS hash
   }): Promise<string | null> {
     if (!this.lotteryEnabled || !this.cosigner) return null;
     try {
@@ -232,6 +234,7 @@ export class ChainService implements OnModuleInit {
         Buffer.from(params.serverSeedHashHex, 'hex'),
         clientSeed,
         i64le(BigInt(Math.floor(params.drawAtMs / 1000))),
+        u64le(params.targetSlot),
       ]);
       const ix = new TransactionInstruction({
         programId: this.lotteryProgramId!,
@@ -251,10 +254,11 @@ export class ChainService implements OnModuleInit {
   }
 
   /**
-   * Reveal the seed. The PROGRAM asserts sha256(seed)==commitment, mixes in
-   * the newest SlotHashes entry, and derives the winning numbers itself —
-   * we read them back from the Draw account afterwards (chain is the source
-   * of truth; the API no longer dictates the numbers).
+   * Reveal the seed. The PROGRAM asserts sha256(seed)==commitment, requires the
+   * SlotHashes entry for the slot PINNED at commit (`draw.target_slot`), mixes in
+   * THAT hash, and derives the winning numbers itself — we read them back from
+   * the Draw account afterwards (chain is the source of truth; the API no longer
+   * dictates the numbers, and cannot grind which slot seeds the draw).
    */
   async lotteryRevealDraw(params: {
     drawIndex: bigint;

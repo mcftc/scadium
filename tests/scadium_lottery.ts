@@ -35,6 +35,16 @@ describe('scadium_lottery', () => {
   let scadMint: PublicKey;
   let config: PublicKey;
   let treasury: PublicKey;
+  let pinnedSlot: number; // target_slot pinned at commit (#19b)
+
+  // Poll until the validator has advanced to (and recorded) `slot`.
+  const waitForSlot = async (slot: number) => {
+    for (let i = 0; i < 200; i++) {
+      if ((await provider.connection.getSlot('confirmed')) > slot) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error(`validator did not reach slot ${slot}`);
+  };
 
   const SCAD = (n: bigint) => n * 10n ** 9n; // 9 decimals
   const TICKET_PRICE = SCAD(10n); // 10 SCAD (~$1)
@@ -105,10 +115,13 @@ describe('scadium_lottery', () => {
     await mintTo(provider.connection, payer, scadMint, treasury, payer, SCAD(1_000n));
   });
 
-  it('commit_draw publishes the seed hash', async () => {
+  it('commit_draw publishes the seed hash and pins a future target slot (#19b)', async () => {
     const drawAt = Math.floor(Date.now() / 1000) + 3600;
+    // Pin a slot a few ahead — its hash cannot exist yet, so the cosigner can't
+    // grind the reveal; close enough that it stays inside the SlotHashes window.
+    pinnedSlot = (await provider.connection.getSlot('confirmed')) + 3;
     await program.methods
-      .commitDraw(DRAW_INDEX, seedHash, clientSeed, new anchor.BN(drawAt))
+      .commitDraw(DRAW_INDEX, seedHash, clientSeed, new anchor.BN(drawAt), new anchor.BN(pinnedSlot))
       .accounts({
         config,
         draw: drawPda(1),
@@ -119,6 +132,7 @@ describe('scadium_lottery', () => {
       .rpc();
     const d = await (program.account as any).draw.fetch(drawPda(1));
     assert.deepEqual(Array.from(d.serverSeedHash), seedHash);
+    assert.equal(d.targetSlot.toString(), pinnedSlot.toString());
   });
 
   it('inject tops up the pool with cosigner SCAD', async () => {
@@ -223,7 +237,41 @@ describe('scadium_lottery', () => {
     }
   });
 
-  it('reveal_draw derives a valid 6-digit number on-chain', async () => {
+  it('rejects a reveal before the pinned slot is reachable (#19b)', async () => {
+    // A fresh draw whose target slot is far in the future → its hash is not yet
+    // in SlotHashes, so reveal must fail TargetSlotNotAvailable.
+    const farIndex = new anchor.BN(99);
+    const drawAt = Math.floor(Date.now() / 1000) + 3600;
+    const farSlot = (await provider.connection.getSlot('confirmed')) + 1_000_000;
+    await program.methods
+      .commitDraw(farIndex, seedHash, clientSeed, new anchor.BN(drawAt), new anchor.BN(farSlot))
+      .accounts({
+        config,
+        draw: drawPda(99),
+        cosigner: cosigner.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([cosigner])
+      .rpc();
+    try {
+      await program.methods
+        .revealDraw(farIndex, seedBytes)
+        .accounts({
+          config,
+          draw: drawPda(99),
+          cosigner: cosigner.publicKey,
+          slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
+        })
+        .signers([cosigner])
+        .rpc();
+      assert.fail('should have thrown');
+    } catch (e) {
+      assert.include(String(e), 'TargetSlotNotAvailable');
+    }
+  });
+
+  it('reveal_draw derives a 6-digit number from the PINNED slot hash (#19b)', async () => {
+    await waitForSlot(pinnedSlot); // the pinned slot must exist in SlotHashes
     await program.methods
       .revealDraw(DRAW_INDEX, seedBytes)
       .accounts({
@@ -235,6 +283,8 @@ describe('scadium_lottery', () => {
       .signers([cosigner])
       .rpc();
     const d = await (program.account as any).draw.fetch(drawPda(1));
+    // The program recorded the PINNED slot (not the newest) as the entropy slot.
+    assert.equal(d.slot.toString(), pinnedSlot.toString());
     const digits = Array.from(d.winningDigits) as number[];
     assert.equal(digits.length, 6);
     for (const dig of digits) assert.isTrue(dig >= 0 && dig <= 9);

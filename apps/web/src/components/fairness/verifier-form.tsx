@@ -154,12 +154,20 @@ export function VerifierForm() {
       />
       {game === 'lottery' && (
         <TextField
-          label="Slot hash (draw-time entropy — from the draw / reveal tx)"
+          label="Slot hash — pinned at commit (the target slot's hash, from the reveal tx)"
           value={slotHash}
           onChange={setSlotHash}
           placeholder="64-char hex"
           mono
         />
+      )}
+      {game === 'lottery' && (
+        <p className="-mt-2 text-[11px] text-foreground-muted">
+          The draw entropy is the hash of a slot <strong>pinned at commit time</strong>, so the
+          operator can&apos;t grind the reveal. Draws marked{' '}
+          <span className="text-danger">synthetic-not-fair</span> used an off-chain fallback (chain
+          disabled) and are <strong>not</strong> provably fair.
+        </p>
       )}
       {game === 'blackjack' && (
         <div>

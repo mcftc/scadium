@@ -12,10 +12,13 @@
 //!   discount for batches) moves from the buyer's ATA into the lottery treasury
 //!   ATA and a `TicketBought` event records the picks — every ticket is an
 //!   on-chain receipt.
-//! - At draw time the server REVEALS the seed (`reveal_draw`); the program
-//!   asserts `sha256(seed) == commitment`, mixes in the NEWEST SlotHashes
-//!   entry — entropy that did not exist at commit time — and derives the
-//!   6-digit winning number ITSELF (the cosigner cannot pick it). The byte
+//! - A `target_slot` is PINNED at commit (#19b) — a future slot whose hash
+//!   cannot exist yet. At draw time the server REVEALS the seed (`reveal_draw`);
+//!   the program asserts `sha256(seed) == commitment`, requires the SlotHashes
+//!   entry for `draw.target_slot` (NOT the newest — `TargetSlotNotAvailable`
+//!   otherwise), mixes in THAT hash — entropy that did not exist at commit time
+//!   and that the cosigner cannot grind by choosing when to reveal — and derives
+//!   the 6-digit winning number ITSELF (the cosigner cannot pick it). The byte
 //!   layout is mirrored in packages/fair/src/lottery.ts and the browser
 //!   verifier; a shared golden vector locks all three implementations together.
 //! - The round pool (ticket sales + injection + carried rollover) is split per
@@ -23,12 +26,6 @@
 //!   `pay_prize` (idempotent per (draw, winner) via a `Payout` PDA), burns the
 //!   20% treasury slice via `burn_pool` (a real SPL token burn — like CAKE),
 //!   and tops up the pool each round via `inject`.
-//!
-//! Known limitation (acceptable for the demo): the cosigner chooses WHEN to
-//! send the reveal, so it can grind over recent slots. It still cannot pick an
-//! arbitrary number — each attempt costs a slot's worth of waiting and the seed
-//! is committed — but a production deployment should pin a target slot at
-//! commit time.
 
 use anchor_lang::prelude::*;
 use solana_sha256_hasher::hash as sha256;
@@ -72,21 +69,26 @@ pub mod scadium_lottery {
         server_seed_hash: [u8; 32],
         client_seed: [u8; 32],
         draw_at: i64,
+        target_slot: u64, // slot pinned at commit; reveal must use ITS hash (#19b)
     ) -> Result<()> {
         require_keys_eq!(
             ctx.accounts.cosigner.key(),
             ctx.accounts.config.cosigner,
             LotteryError::NotCosigner
         );
+        // The pinned slot must be in the FUTURE — its hash cannot exist yet, so
+        // the operator cannot know the draw entropy at commit time.
+        require!(target_slot > Clock::get()?.slot, LotteryError::TargetSlotNotFuture);
         let draw = &mut ctx.accounts.draw;
         draw.index = draw_index;
         draw.server_seed_hash = server_seed_hash;
         draw.client_seed = client_seed;
         draw.draw_at = draw_at;
+        draw.target_slot = target_slot;
         draw.status = DrawStatus::Open;
         draw.ticket_count = 0;
         draw.bump = ctx.bumps.draw;
-        emit!(DrawCommitted { draw_index, server_seed_hash, client_seed, draw_at });
+        emit!(DrawCommitted { draw_index, server_seed_hash, client_seed, draw_at, target_slot });
         Ok(())
     }
 
@@ -180,9 +182,11 @@ pub mod scadium_lottery {
         Ok(())
     }
 
-    /// Cosigner reveals the seed; the program checks the commitment, reads the
-    /// newest SlotHashes entry, and derives the 6-digit winning number ITSELF —
-    /// the cosigner only supplies the preimage of its own commitment.
+    /// Cosigner reveals the seed; the program checks the commitment, requires the
+    /// SlotHashes entry for the slot PINNED at commit (`draw.target_slot`), and
+    /// derives the 6-digit winning number ITSELF from that hash — the cosigner
+    /// only supplies the preimage of its own commitment and cannot grind which
+    /// slot seeds the draw by choosing when to reveal.
     pub fn reveal_draw(
         ctx: Context<RevealDraw>,
         draw_index: u64,
@@ -201,15 +205,14 @@ pub mod scadium_lottery {
             LotteryError::SeedMismatch
         );
 
-        // Newest SlotHashes entry: raw layout is u64 count, then
-        // (u64 slot, [u8;32] hash) pairs, most recent first.
+        // Derive from the slot PINNED at commit (#19b), NOT the newest entry —
+        // the cosigner can no longer grind the reveal over recent slots. The
+        // SlotHashes sysvar holds ~512 recent slots as (u64 slot, [u8;32] hash)
+        // pairs after a u64 count; require an exact match for `draw.target_slot`.
+        let slot = draw.target_slot;
         let data = ctx.accounts.slot_hashes.try_borrow_data()?;
-        require!(data.len() >= 48, LotteryError::SlotHashUnavailable);
-        let count = u64::from_le_bytes(data[0..8].try_into().unwrap());
-        require!(count > 0, LotteryError::SlotHashUnavailable);
-        let slot = u64::from_le_bytes(data[8..16].try_into().unwrap());
-        let mut slot_hash = [0u8; 32];
-        slot_hash.copy_from_slice(&data[16..48]);
+        let slot_hash =
+            find_slot_hash(&data, slot).ok_or(LotteryError::TargetSlotNotAvailable)?;
         drop(data);
 
         let (final_entropy, digits) =
@@ -332,6 +335,31 @@ fn bulk_discount_total(price: u64, n: u64, discount_divisor: u64) -> Result<u64>
     u64::try_from(total).map_err(|_| LotteryError::ZeroAmount.into())
 }
 
+/// Find the 32-byte hash for `target_slot` in a SlotHashes sysvar buffer (#19b).
+/// Layout: u64 LE count, then `count` × (u64 LE slot, [u8; 32] hash), newest
+/// first. Returns `None` if the slot is not in the ~512-slot window (not yet
+/// reached, or already rolled out) or the buffer is malformed — the caller maps
+/// that to `TargetSlotNotAvailable`.
+fn find_slot_hash(data: &[u8], target_slot: u64) -> Option<[u8; 32]> {
+    if data.len() < 8 {
+        return None;
+    }
+    let count = u64::from_le_bytes(data[0..8].try_into().ok()?) as usize;
+    for i in 0..count {
+        let off = 8 + i * 40;
+        if off + 40 > data.len() {
+            break;
+        }
+        let slot = u64::from_le_bytes(data[off..off + 8].try_into().ok()?);
+        if slot == target_slot {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&data[off + 8..off + 40]);
+            return Some(hash);
+        }
+    }
+    None
+}
+
 /// Canonical draw derivation — MUST stay byte-for-byte identical to
 /// `packages/fair/src/lottery.ts` and `apps/web/src/lib/fair-browser.ts`
 /// (golden-vector locked in all three test suites):
@@ -407,10 +435,15 @@ pub struct Draw {
     pub draw_at: i64,
     pub status: DrawStatus,
     pub ticket_count: u32,
+    /// Slot PINNED at commit time (#19b). `reveal_draw` must derive from THIS
+    /// slot's SlotHashes entry — not the newest — so the cosigner cannot grind
+    /// the reveal over recent slots. Appended at the end of the account so the
+    /// pre-existing field byte-offsets stay stable for off-chain readers.
+    pub target_slot: u64,
     pub bump: u8,
 }
 impl Draw {
-    pub const SIZE: usize = 8 + 8 + 32 + 32 + 64 + 8 + 32 + 32 + 6 + 8 + 1 + 4 + 1;
+    pub const SIZE: usize = 8 + 8 + 32 + 32 + 64 + 8 + 32 + 32 + 6 + 8 + 1 + 4 + 8 + 1;
 }
 
 /// Idempotency + audit record for a paid prize (one per draw+winner).
@@ -574,6 +607,7 @@ pub struct DrawCommitted {
     pub server_seed_hash: [u8; 32],
     pub client_seed: [u8; 32],
     pub draw_at: i64,
+    pub target_slot: u64,
 }
 
 #[event]
@@ -637,6 +671,10 @@ pub enum LotteryError {
     InvalidConfig,
     #[msg("Bracket out of range")]
     InvalidBracket,
+    #[msg("Pinned target slot must be in the future at commit time")]
+    TargetSlotNotFuture,
+    #[msg("The pinned target slot is not in the SlotHashes window (not yet reached or rolled out)")]
+    TargetSlotNotAvailable,
 }
 
 // ---------------------------------------------------------------- tests
@@ -738,5 +776,64 @@ mod tests {
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Build a SlotHashes-shaped buffer: u64 LE count, then `entries` of
+    /// (u64 LE slot, [u8;32] hash), newest first.
+    fn slot_hashes_buf(entries: &[(u64, [u8; 32])]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8 + entries.len() * 40);
+        buf.extend_from_slice(&(entries.len() as u64).to_le_bytes());
+        for (slot, hash) in entries {
+            buf.extend_from_slice(&slot.to_le_bytes());
+            buf.extend_from_slice(hash);
+        }
+        buf
+    }
+
+    /// #19b — reveal must derive from the PINNED slot's hash, not the newest.
+    #[test]
+    fn find_slot_hash_matches_pinned_slot_only() {
+        let h = |n: u8| -> [u8; 32] { core::array::from_fn(|i| (i as u8).wrapping_add(n)) };
+        // Newest first: slots 105, 104, 103, 102, 101.
+        let entries = [
+            (105u64, h(50)),
+            (104u64, h(40)),
+            (103u64, h(30)), // <- the pinned target
+            (102u64, h(20)),
+            (101u64, h(10)),
+        ];
+        let buf = slot_hashes_buf(&entries);
+
+        // Present → returns THAT slot's hash (not the newest 105).
+        assert_eq!(find_slot_hash(&buf, 103), Some(h(30)));
+        assert_ne!(find_slot_hash(&buf, 103), Some(h(50)));
+        // Absent (not yet reached OR rolled out) → None → TargetSlotNotAvailable.
+        assert_eq!(find_slot_hash(&buf, 200), None);
+        assert_eq!(find_slot_hash(&buf, 1), None);
+        // Malformed / empty buffers never panic.
+        assert_eq!(find_slot_hash(&[], 103), None);
+        assert_eq!(find_slot_hash(&buf[..20], 103), None);
+    }
+
+    /// The pinned-slot hash is what feeds `derive_numbers`, so a different
+    /// (e.g. newest) slot would yield different winning digits.
+    #[test]
+    fn reveal_derivation_uses_the_pinned_slot_hash() {
+        let server_seed: [u8; 64] = "deadbeef".repeat(8).as_bytes().try_into().unwrap();
+        let mut client_seed = [0u8; 32];
+        client_seed[..16].copy_from_slice(b"cafebabe12345678");
+
+        let pinned_hash: [u8; 32] = core::array::from_fn(|i| i as u8); // == the golden vector slot hash
+        let newest_hash: [u8; 32] = [0xAB; 32];
+        let buf = slot_hashes_buf(&[(500, newest_hash), (300, pinned_hash)]);
+
+        // Reveal pins slot 300 → derives from pinned_hash, reproducing the golden digits.
+        let found = find_slot_hash(&buf, 300).expect("pinned slot present");
+        let (_, digits) = derive_numbers(&server_seed, &found, &client_seed, 0);
+        assert_eq!(digits, [5, 1, 9, 7, 3, 3]);
+
+        // Had it (wrongly) used the newest slot, the digits would differ.
+        let (_, newest_digits) = derive_numbers(&server_seed, &newest_hash, &client_seed, 0);
+        assert_ne!(newest_digits, digits);
     }
 }
