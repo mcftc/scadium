@@ -22,6 +22,7 @@ import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
+import { settlementsTotal } from '../../observability/metrics.registry';
 
 type Phase = 'idle' | 'betting' | 'dealing' | 'player_turns' | 'dealer_turn' | 'settled';
 type HandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
@@ -217,6 +218,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
         const message = e instanceof Error ? e.message : String(e);
         this.logger.error(`blackjack recovery failed for round ${round.id}: ${message}`);
         try {
+          settlementsTotal.inc({ game: 'blackjack', outcome: 'failed' });
           await this.prisma.settlementFailure.create({
             data: {
               gameType: 'blackjack',
@@ -959,6 +961,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(`blackjack settle failed for table ${t.id} after retries: ${message}`);
       try {
+        settlementsTotal.inc({ game: 'blackjack', outcome: 'failed' });
         await this.prisma.settlementFailure.create({
           data: {
             gameType: 'blackjack',

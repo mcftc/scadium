@@ -24,6 +24,7 @@ import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { LotteryGateway } from './lottery.gateway';
 import { splitBracketPrizes } from './lottery.settlement';
+import { settlementsTotal } from '../../observability/metrics.registry';
 
 const SCAD_BASE_NUM = 10 ** LOTTERY.SCAD_DECIMALS;
 
@@ -237,6 +238,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           const message = e instanceof Error ? e.message : String(e);
           this.logger.error(`lottery recovery failed for draw ${d.id}: ${message}`);
           try {
+            settlementsTotal.inc({ game: 'lottery', outcome: 'failed' });
             await this.prisma.settlementFailure.create({
               data: {
                 gameType: 'lottery',
@@ -633,6 +635,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(`Lottery settle failed for ${this.current.id} after retries: ${message}`);
       try {
+        settlementsTotal.inc({ game: 'lottery', outcome: 'failed' });
         await this.prisma.settlementFailure.create({
           data: {
             gameType: 'lottery',
