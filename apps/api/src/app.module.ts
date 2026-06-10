@@ -25,6 +25,7 @@ import { RewardsModule } from './rewards/rewards.module';
 import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { QueueModule } from './queue/queue.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
     ]),
     PrismaModule,
     RedisModule,
+    QueueModule,
     SolanaModule,
     FairnessModule,
     AuthModule,

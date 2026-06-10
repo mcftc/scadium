@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nes
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+import { periodForHour } from '../queue/queue.constants';
 import { AirdropGateway } from './airdrop.gateway';
 
 /**
@@ -14,7 +15,6 @@ import { AirdropGateway } from './airdrop.gateway';
 @Injectable()
 export class AirdropEngine implements OnModuleInit {
   private readonly logger = new Logger(AirdropEngine.name);
-  private timer: NodeJS.Timeout | null = null;
 
   /** Pool seed per hour — dev default 0.05 SOL, override via env. */
   private readonly baseLamports = BigInt(
@@ -27,15 +27,15 @@ export class AirdropEngine implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    // Hourly distribution runs in @scadium/worker now (BullMQ). The API only
+    // ensures the current pool row exists for the live widget / tipping.
     await this.ensureCurrentPool();
-    this.scheduleNextDistribution();
   }
 
-  /** Period key for the hour containing `ms` (UTC, YYYYMMDDHH). */
+  /** Period key for the hour containing `ms` (UTC, YYYYMMDDHH). Shared with the
+   *  queue jobId so the engine and the dedupe'd job always agree on the hour. */
   private periodFor(ms: number): string {
-    const d = new Date(ms);
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}`;
+    return periodForHour(ms);
   }
 
   /** Epoch ms of the next top-of-hour boundary. */
@@ -50,16 +50,6 @@ export class AirdropEngine implements OnModuleInit {
       update: {},
       create: { period, baseLamports: this.baseLamports },
     });
-  }
-
-  private scheduleNextDistribution() {
-    if (this.timer) clearTimeout(this.timer);
-    const delay = Math.max(1_000, this.nextBoundary() - Date.now());
-    this.timer = setTimeout(() => {
-      void this.distribute().catch((e) =>
-        this.logger.error(`airdrop distribution failed: ${e instanceof Error ? e.message : e}`),
-      );
-    }, delay);
   }
 
   /** Current pool snapshot for GET /airdrop/pool and the widget. */
@@ -246,7 +236,6 @@ export class AirdropEngine implements OnModuleInit {
         endsAt: snap.endsAt,
         tipsCount: snap.tipsCount,
       });
-      this.scheduleNextDistribution();
     }
   }
 }

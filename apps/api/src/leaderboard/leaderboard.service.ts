@@ -60,4 +60,41 @@ export class LeaderboardService {
       gamesPlayed: u.gamesPlayed,
     }));
   }
+
+  /**
+   * Materialize a windowed leaderboard into `LeaderboardSnapshot` (driven by the
+   * worker on a cadence). Each call captures the current top-by-volume ranking
+   * for `period` ('hourly'|'daily'|'weekly') as one batch sharing `capturedAt`,
+   * so a windowed board reads the latest captured batch instead of recomputing
+   * live `User` aggregates on every request. Returns the number of rows written.
+   */
+  async snapshot(period: 'hourly' | 'daily' | 'weekly' = 'hourly', limit = 100): Promise<number> {
+    const top = await this.topByVolume(limit);
+    if (top.length === 0) return 0;
+    const capturedAt = new Date();
+    await this.prisma.leaderboardSnapshot.createMany({
+      data: top.map((r) => ({
+        period,
+        userId: r.userId,
+        volumeLamports: BigInt(r.volumeLamports),
+        rank: r.rank,
+        capturedAt,
+      })),
+    });
+    return top.length;
+  }
+
+  /** Latest captured batch for a windowed board (most recent `capturedAt`). */
+  async latestSnapshot(period: 'hourly' | 'daily' | 'weekly') {
+    const newest = await this.prisma.leaderboardSnapshot.findFirst({
+      where: { period },
+      orderBy: { capturedAt: 'desc' },
+      select: { capturedAt: true },
+    });
+    if (!newest) return [];
+    return this.prisma.leaderboardSnapshot.findMany({
+      where: { period, capturedAt: newest.capturedAt },
+      orderBy: { rank: 'asc' },
+    });
+  }
 }

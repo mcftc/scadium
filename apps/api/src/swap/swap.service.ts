@@ -61,7 +61,6 @@ export class SwapService implements OnModuleInit {
   enabled = false;
 
   private tradesCache: { at: number; rows: SwapTradeRow[] } | null = null;
-  private burnTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -91,9 +90,8 @@ export class SwapService implements OnModuleInit {
     }
     this.enabled = true;
     this.logger.log(`Swap module enabled — pool program ${programId}`);
-
-    // Buy-and-burn: every 10 minutes, 20% of positive NGR since last burn.
-    this.burnTimer = setInterval(() => void this.runBuyAndBurn(), 10 * 60 * 1000);
+    // Buy-and-burn runs in @scadium/worker now (BullMQ, every 10 min, under a
+    // Redis lock so overlapping runs don't double-spend the cosigner).
   }
 
   // ----------------------------------------------------------- PDAs

@@ -62,6 +62,9 @@ jobs:
       - name: Build api
         run: pnpm --filter @scadium/api exec tsc -p tsconfig.json
 
+      - name: Build worker
+        run: pnpm --filter @scadium/worker build
+
   api-integration:
     runs-on: ubuntu-latest
 
