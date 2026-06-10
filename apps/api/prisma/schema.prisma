@@ -559,6 +559,10 @@ model RewardClaim {
   period      BigInt
   amountScad  BigInt // SCAD base units (9 decimals)
   txSignature String?
+  // Provably-fair trail (#22, dailyCase): { tier, roll, serverSeedHash,
+  // clientSeed, nonce } from the player's active seed pair — the tier
+  // reproduces via @scadium/fair once the server seed is revealed on rotation.
+  resultJson  Json?
   createdAt   DateTime   @default(now())
 
   @@unique([userId, kind, period])

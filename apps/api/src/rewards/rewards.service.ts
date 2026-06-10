@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SCAD } from '@scadium/shared';
+import { dailyCaseRoll, pickCaseTier } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
+import { SeedManagerService } from '../fairness/seed-manager.service';
 import { claimIdempotency, storeIdempotency } from '../prisma/idempotency';
 
 /**
@@ -21,6 +23,7 @@ export class RewardsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chain: ChainService,
+    private readonly seeds: SeedManagerService,
   ) {}
 
   async summary(userId: string) {
@@ -107,11 +110,6 @@ export class RewardsService {
       now.getUTCFullYear() * 10_000 + (now.getUTCMonth() + 1) * 100 + now.getUTCDate(),
     );
 
-    const roll = Math.random();
-    const tierEntry =
-      SCAD.CASE_TIERS.find((t) => roll < t.chance) ?? SCAD.CASE_TIERS[SCAD.CASE_TIERS.length - 1]!;
-    const amount = BigInt(tierEntry.scadBase);
-
     const result = await this.prisma.$transaction(async (tx) => {
       const replay = await claimIdempotency(tx, userId, 'daily_case', key);
       if (replay) {
@@ -126,30 +124,66 @@ export class RewardsService {
           `Daily case already opened. Next: ${new Date(last + 24 * 60 * 60 * 1000).toISOString()}`,
         );
       }
+
+      // Provably-fair tier (#22): derive from the player's active seed pair +
+      // monotonic nonce — committed long before this request, so neither side
+      // can grind the prize. Consumed AFTER the cooldown check so a rejected
+      // open doesn't burn a nonce; the tier reproduces via @scadium/fair once
+      // the server seed is revealed on rotation (same model as every game).
+      const ctx = await this.seeds.consumeNonce(tx, userId);
+      const nonce = Number(ctx.nonce);
+      const roll = dailyCaseRoll(ctx.serverSeed, ctx.clientSeed, nonce);
+      const tierEntry = pickCaseTier(roll, SCAD.CASE_TIERS);
+      const amount = BigInt(tierEntry.scadBase);
+      const fair = {
+        roll,
+        serverSeedHash: ctx.serverSeedHash,
+        clientSeed: ctx.clientSeed,
+        nonce,
+      };
+
       await tx.user.update({ where: { id: userId }, data: { lastDailyCaseAt: now } });
       const claim = await tx.rewardClaim.create({
-        data: { userId, kind: 'dailyCase', period, amountScad: amount },
+        data: {
+          userId,
+          kind: 'dailyCase',
+          period,
+          amountScad: amount,
+          resultJson: { tier: tierEntry.tier, ...fair },
+        },
       });
-      const response = this.serializeDailyCase(tierEntry.tier, amount, now);
+      const response = this.serializeDailyCase(tierEntry.tier, amount, now, fair);
       await storeIdempotency(tx, userId, 'daily_case', key, response);
       return {
         response,
         replayed: false,
-        chain: { claimId: claim.id, walletAddress: user.walletAddress },
+        chain: { claimId: claim.id, walletAddress: user.walletAddress, amount },
       };
     });
 
     if (!result.replayed && result.chain) {
-      this.fireChainClaim(result.chain.claimId, result.chain.walletAddress, 'dailyCase', period, amount);
+      this.fireChainClaim(
+        result.chain.claimId,
+        result.chain.walletAddress,
+        'dailyCase',
+        period,
+        result.chain.amount,
+      );
     }
     return result.response;
   }
 
-  private serializeDailyCase(tier: string, amount: bigint, now: Date) {
+  private serializeDailyCase(
+    tier: string,
+    amount: bigint,
+    now: Date,
+    fair: { roll: number; serverSeedHash: string; clientSeed: string; nonce: number },
+  ) {
     return {
       tier,
       rewardScad: amount.toString(),
       nextAvailableAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      fair,
     };
   }
 
@@ -164,6 +198,9 @@ export class RewardsService {
       kind: r.kind,
       amountScad: r.amountScad.toString(),
       txSignature: r.txSignature,
+      // Fairness trail for dailyCase rows (#22) — lets a player who lost the
+      // open response still verify the tier after rotating their server seed.
+      resultJson: r.resultJson,
       createdAt: r.createdAt.toISOString(),
     }));
   }
