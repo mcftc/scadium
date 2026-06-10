@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { CoinflipService } from '../src/games/coinflip/coinflip.service';
+import { SeedManagerService } from '../src/fairness/seed-manager.service';
 
 // TODO(harness #9): fold this bootstrap into the shared concurrency harness.
 const TEST_DB_URL =
@@ -10,7 +11,12 @@ const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL } } });
 
 const gateway = { emitCreated() {}, emitResolved() {}, emitCancelled() {} } as never;
 const chain = { enabled: false } as never;
-const svc = new CoinflipService(prisma as never, gateway, chain);
+const svc = new CoinflipService(
+  prisma as never,
+  gateway,
+  chain,
+  new SeedManagerService(prisma as never),
+);
 
 const RUN = `${Date.now().toString(36)}`;
 let seq = 0;
