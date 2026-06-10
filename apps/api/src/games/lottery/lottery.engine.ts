@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import {
   commitServerSeed,
   generateClientSeed,
@@ -20,10 +20,17 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
+import { RedisService } from '../../redis/redis.service';
+import { LeaderElection } from '../../redis/leader-election';
 import { LotteryGateway } from './lottery.gateway';
 import { splitBracketPrizes } from './lottery.settlement';
 
 const SCAD_BASE_NUM = 10 ** LOTTERY.SCAD_DECIMALS;
+
+// Single-writer election (#13/#86): only the lock holder opens/draws, so N
+// replicas never produce duplicate LotteryDraw rows. No Redis → always leader.
+const LOTTERY_LOCK_KEY = 'lock:engine:lottery';
+const LOTTERY_LOCK_TTL_MS = 10_000;
 
 interface CurrentDraw {
   id: string;
@@ -77,11 +84,12 @@ interface LastResult {
  * wager-loyalty reward (1/SOL).
  */
 @Injectable()
-export class LotteryEngine implements OnModuleInit {
+export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(LotteryEngine.name);
   private current!: CurrentDraw;
   private lastResult: LastResult | null = null;
   private drawTimer: NodeJS.Timeout | null = null;
+  private election: LeaderElection | null = null;
   /** Unwon bracket slices carried into the NEXT round's pool (PancakeSwap auto-injection). */
   private carryRolloverScadBase = BigInt(0);
   /** True while replaying stranded draws on boot — suppresses the chained
@@ -93,11 +101,67 @@ export class LotteryEngine implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly gateway: LotteryGateway,
     private readonly chain: ChainService,
-  ) {}
+    private readonly redis?: RedisService,
+  ) {
+    if (this.redis) {
+      this.election = new LeaderElection(this.redis.client, LOTTERY_LOCK_KEY, LOTTERY_LOCK_TTL_MS);
+    }
+  }
+
+  /** Only the elected leader opens/draws. No Redis = always leader. */
+  isLeader(): boolean {
+    return this.election ? this.election.isLeader() : true;
+  }
 
   async onModuleInit(): Promise<void> {
+    if (!this.election) {
+      await this.recoverStrandedDraws();
+      await this.openNewDraw();
+      return;
+    }
+    // Multi-instance: placeholder keeps reads safe until we lead; only the leader
+    // opens draws. (Cross-pod live state is wired in #87.)
+    this.current = this.placeholderDraw();
+    // Acquire synchronously so a single instance has an open draw before init
+    // resolves; start() then fires only on later leadership transitions.
+    await this.election.tick();
+    if (this.isLeader()) await this.assumeLeadership();
+    this.election.start((leader) => {
+      if (leader) void this.assumeLeadership();
+      else this.logger.warn('lottery: lost leadership — standing by');
+    });
+  }
+
+  private placeholderDraw(): CurrentDraw {
+    return {
+      id: '',
+      drawIndex: BigInt(0),
+      seedId: '',
+      serverSeed: '',
+      serverSeedHash: '',
+      clientSeed: '',
+      nonce: 0,
+      drawAt: 0,
+      status: 'open',
+      ticketCount: 0,
+      ticketPriceScadBase: BigInt(0),
+      injectionScadBase: BigInt(0),
+      rolloverScadBase: BigInt(0),
+      salesScadBase: BigInt(0),
+      potLamports: BigInt(0),
+      commitTxSignature: null,
+    };
+  }
+
+  private async assumeLeadership(): Promise<void> {
+    this.logger.log('lottery: elected leader — driving draws');
     await this.recoverStrandedDraws();
     await this.openNewDraw();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.drawTimer) clearTimeout(this.drawTimer);
+    if (this.election) await this.election.stop();
   }
 
   /**
@@ -275,6 +339,7 @@ export class LotteryEngine implements OnModuleInit {
   // ---------- Internal scheduler ----------
 
   private async openNewDraw(): Promise<void> {
+    if (!this.isLeader()) return; // never open a draw as a non-leader
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
@@ -371,6 +436,7 @@ export class LotteryEngine implements OnModuleInit {
   }
 
   private async drawAndSettle(): Promise<void> {
+    if (!this.isLeader()) return; // only the leader settles
     const drawIndex = this.current.drawIndex;
     const { serverSeed, clientSeed, nonce } = this.current;
 

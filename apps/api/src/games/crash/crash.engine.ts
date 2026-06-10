@@ -107,6 +107,11 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     }
     // Multi-instance: a placeholder keeps snapshot() safe until we lead or mirror.
     this.current = this.placeholderRound();
+    // Acquire synchronously so a single instance has an open round before
+    // onModuleInit resolves (no startup race where a bet beats the first round).
+    // start() then only fires assumeLeadership on later leadership TRANSITIONS.
+    await this.election.tick();
+    if (this.isLeader()) await this.assumeLeadership();
     this.election.start((leader) => {
       if (leader) void this.assumeLeadership();
       else this.logger.warn('crash: lost leadership — standing by');

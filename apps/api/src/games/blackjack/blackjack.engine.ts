@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   blackjackDeal,
@@ -18,6 +18,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { RedisService } from '../../redis/redis.service';
+import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
 
 type Phase = 'idle' | 'betting' | 'dealing' | 'player_turns' | 'dealer_turn' | 'settled';
@@ -86,22 +88,65 @@ interface TableState {
  * the hole card, hits in action order). Side bets (21+3, Perfect Pairs) are
  * pure functions of the dealt cards — same seed verifies everything.
  */
+// Single-writer election (#13/#86): only the lock holder creates the singleton
+// Main Table on boot, so N replicas never produce duplicate 'Main Table' rows.
+const BLACKJACK_LOCK_KEY = 'lock:engine:blackjack';
+const BLACKJACK_LOCK_TTL_MS = 10_000;
+
 @Injectable()
-export class BlackjackEngine implements OnModuleInit {
+export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BlackjackEngine.name);
   private readonly tables = new Map<string, TableState>();
+  private election: LeaderElection | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: BlackjackGateway,
     private readonly chain: ChainService,
-  ) {}
+    private readonly redis?: RedisService,
+  ) {
+    if (this.redis) {
+      this.election = new LeaderElection(this.redis.client, BLACKJACK_LOCK_KEY, BLACKJACK_LOCK_TTL_MS);
+    }
+  }
+
+  /** Only the elected leader owns the singleton Main Table. No Redis = always leader. */
+  isLeader(): boolean {
+    return this.election ? this.election.isLeader() : true;
+  }
 
   async onModuleInit(): Promise<void> {
+    if (!this.election) {
+      await this.recoverStrandedRounds();
+      await this.createTable('Main Table', false, null);
+      this.startSweep();
+      return;
+    }
+    // Multi-instance: only the leader recovers + creates the singleton Main Table.
+    // Acquire synchronously so a single instance has the Main Table before init
+    // resolves; start() then fires only on later leadership transitions.
+    await this.election.tick();
+    if (this.isLeader()) await this.assumeLeadership();
+    this.election.start((leader) => {
+      if (leader) void this.assumeLeadership();
+      else this.logger.warn('blackjack: lost leadership — standing by');
+    });
+    this.startSweep();
+  }
+
+  private startSweep(): void {
+    // Sweep idle private tables every minute (harmless on a follower — empty map).
+    setInterval(() => this.sweepPrivateTables(), 60_000).unref();
+  }
+
+  private async assumeLeadership(): Promise<void> {
+    this.logger.log('blackjack: elected leader — owning the Main Table');
     await this.recoverStrandedRounds();
     await this.createTable('Main Table', false, null);
-    // Sweep idle private tables every minute.
-    setInterval(() => this.sweepPrivateTables(), 60_000).unref();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.election) await this.election.stop();
   }
 
   /**
