@@ -18,7 +18,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\""
   },
   "devDependencies": {
-    "@coral-xyz/anchor": "^0.31.1",
+    "@coral-xyz/anchor": "^0.32.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@types/chai": "^5.2.3",
@@ -26,11 +26,11 @@
     "@types/node": "^22.10.0",
     "chai": "^6.2.2",
     "mocha": "^11.7.6",
-    "prettier": "^3.4.2",
+    "prettier": "^3.8.4",
     "rimraf": "^6.0.1",
     "ts-mocha": "^11.1.0",
     "ts-node": "^10.9.2",
-    "turbo": "^2.3.3",
+    "turbo": "^2.9.17",
     "typescript": "^5.7.2"
   }
 }
