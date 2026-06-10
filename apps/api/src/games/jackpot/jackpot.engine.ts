@@ -340,11 +340,13 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     // Draw the winning ticket and walk cumulative ranges to find the winner.
-    const ticket = jackpotWinningTicket(serverSeed, clientSeed, nonce, Number(total));
-    let cumulative = 0;
+    // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
+    // number here would lose precision and bias the winner toward low tickets.
+    const ticket = jackpotWinningTicket(serverSeed, clientSeed, nonce, total);
+    let cumulative = 0n;
     let winner = entries[0]!;
     for (const e of entries) {
-      cumulative += Number(e.amountLamports);
+      cumulative += e.amountLamports;
       if (ticket < cumulative) {
         winner = e;
         break;
@@ -439,7 +441,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               nonce,
               resultJson: {
                 totalLamports: total.toString(),
-                winningTicket: ticket,
+                winningTicket: ticket.toString(),
                 won,
                 // Self-contained verification context (ADR 0001 / #93).
                 fair: {
@@ -458,7 +460,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             status: 'drawn',
             totalLamports: total,
             winnerId: winner.userId,
-            winningTicket: BigInt(ticket),
+            winningTicket: ticket,
             payoutLamports: payout,
             drawnAt: new Date(),
           },
@@ -471,7 +473,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
         path: 'draw',
         total: total.toString(),
         winnerId: winner.userId,
-        winningTicket: ticket,
+        winningTicket: ticket.toString(),
         payout: payout.toString(),
         players: [...byUser.entries()].map(([userId, info]) => ({
           userId,
@@ -560,7 +562,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     winnerName: string | null;
     payout: bigint;
     total: bigint;
-    ticket: number | null;
+    ticket: bigint | null;
   }): void {
     this.lastResult = {
       roundId: p.roundId,
