@@ -895,6 +895,13 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
                 doubled: s.doubled,
                 side21p3: s.side21p3Outcome,
                 sidePerfectPairs: s.sidePerfectPairsOutcome,
+                // Self-contained verification context (ADR 0001 / #93).
+                fair: {
+                  serverSeed: t.serverSeed,
+                  serverSeedHash: t.serverSeedHash,
+                  clientSeed: t.clientSeed,
+                  nonce: t.nonce,
+                },
               },
             },
           });
