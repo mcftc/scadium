@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import {
   commitServerSeed,
   generateClientSeed,
@@ -11,7 +11,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { RedisService } from '../../redis/redis.service';
+import { LeaderElection } from '../../redis/leader-election';
 import { JackpotGateway } from './jackpot.gateway';
+
+// Single-writer election (#13/#86): only the lock holder opens/draws rounds, so
+// N replicas never produce duplicate JackpotRound rows. No Redis → always leader.
+const JACKPOT_LOCK_KEY = 'lock:engine:jackpot';
+const JACKPOT_LOCK_TTL_MS = 10_000;
 
 interface CurrentRound {
   id: string;
@@ -51,10 +58,11 @@ interface LastResult {
  * settles from the DB so a restart can't lose entries.
  */
 @Injectable()
-export class JackpotEngine implements OnModuleInit {
+export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JackpotEngine.name);
   private current!: CurrentRound;
   private lastResult: LastResult | null = null;
+  private election: LeaderElection | null = null;
   /** True while replaying stranded rounds on boot — suppresses the chained
    * openNewRound() in drawAndSettle so onModuleInit opens exactly one fresh
    * round after all stranded rounds settle. */
@@ -64,11 +72,60 @@ export class JackpotEngine implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly gateway: JackpotGateway,
     private readonly chain: ChainService,
-  ) {}
+    private readonly redis?: RedisService,
+  ) {
+    if (this.redis) {
+      this.election = new LeaderElection(this.redis.client, JACKPOT_LOCK_KEY, JACKPOT_LOCK_TTL_MS);
+    }
+  }
+
+  /** Only the elected leader opens/draws rounds. No Redis = always leader. */
+  isLeader(): boolean {
+    return this.election ? this.election.isLeader() : true;
+  }
 
   async onModuleInit(): Promise<void> {
+    if (!this.election) {
+      await this.recoverStrandedRounds();
+      await this.openNewRound();
+      return;
+    }
+    // Multi-instance: placeholder keeps reads safe until we lead; only the leader
+    // opens rounds. (Cross-pod live state is wired in #87.)
+    this.current = this.placeholderRound();
+    // Acquire synchronously so a single instance has an open round before init
+    // resolves; start() then fires only on later leadership transitions.
+    await this.election.tick();
+    if (this.isLeader()) await this.assumeLeadership();
+    this.election.start((leader) => {
+      if (leader) void this.assumeLeadership();
+      else this.logger.warn('jackpot: lost leadership — standing by');
+    });
+  }
+
+  private placeholderRound(): CurrentRound {
+    return {
+      id: '',
+      seedId: '',
+      serverSeed: '',
+      serverSeedHash: '',
+      clientSeed: '',
+      nonce: 0,
+      closeAt: 0,
+      status: 'open',
+      totalLamports: BigInt(0),
+      players: new Set(),
+    };
+  }
+
+  private async assumeLeadership(): Promise<void> {
+    this.logger.log('jackpot: elected leader — driving rounds');
     await this.recoverStrandedRounds();
     await this.openNewRound();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.election) await this.election.stop();
   }
 
   /**
@@ -179,6 +236,7 @@ export class JackpotEngine implements OnModuleInit {
   // ---------- Scheduler ----------
 
   private async openNewRound(): Promise<void> {
+    if (!this.isLeader()) return; // never open a round as a non-leader
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
@@ -217,6 +275,7 @@ export class JackpotEngine implements OnModuleInit {
   }
 
   private async drawAndSettle(): Promise<void> {
+    if (!this.isLeader()) return; // only the leader settles
     const roundId = this.current.id;
     const { serverSeed, clientSeed, nonce, seedId } = this.current;
 
