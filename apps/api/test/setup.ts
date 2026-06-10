@@ -105,7 +105,12 @@ export async function bootstrapApp(): Promise<BootstrapResult> {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
-  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['health', 'health/live', 'health/ready', 'metrics'],
+  });
+  // Mirror main.ts Swagger gating (#38) so the e2e can prove /docs is off in prod.
+  const { setupSwagger } = await import('../src/observability/swagger');
+  setupSwagger(app);
   // Mirror main.ts trust proxy so X-Forwarded-For drives req.ip — the rate-limit
   // spec (#34) uses it to simulate distinct client IPs.
   (app.getHttpAdapter().getInstance() as { set: (k: string, v: number) => void }).set(

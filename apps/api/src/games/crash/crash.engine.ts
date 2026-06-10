@@ -17,6 +17,7 @@ import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { CrashGateway } from './crash.gateway';
+import { settlementsTotal } from '../../observability/metrics.registry';
 
 type Phase = 'waiting' | 'running' | 'busted';
 
@@ -775,6 +776,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       );
       // Best-effort dead-letter write — must never crash the loop itself.
       try {
+        settlementsTotal.inc({ game: 'crash', outcome: 'failed' });
         await this.prisma.settlementFailure.create({
           data: {
             gameType: 'crash',
@@ -884,6 +886,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         const message = e instanceof Error ? e.message : String(e);
         this.logger.error(`crash recovery failed for round ${round.id}: ${message}`);
         try {
+          settlementsTotal.inc({ game: 'crash', outcome: 'failed' });
           await this.prisma.settlementFailure.create({
             data: {
               gameType: 'crash',
@@ -942,6 +945,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         const message = e instanceof Error ? e.message : String(e);
         this.logger.error(`crash scheduled-bet recovery failed for ${s.id}: ${message}`);
         try {
+          settlementsTotal.inc({ game: 'crash', outcome: 'failed' });
           await this.prisma.settlementFailure.create({
             data: {
               gameType: 'crash',

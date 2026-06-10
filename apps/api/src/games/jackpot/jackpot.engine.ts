@@ -14,6 +14,7 @@ import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { JackpotGateway } from './jackpot.gateway';
+import { settlementsTotal } from '../../observability/metrics.registry';
 
 // Single-writer election (#13/#86): only the lock holder opens/draws rounds, so
 // N replicas never produce duplicate JackpotRound rows. No Redis → always leader.
@@ -543,6 +544,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.error(`Jackpot settle failed for ${roundId} after retries: ${message}`);
     try {
+      settlementsTotal.inc({ game: 'jackpot', outcome: 'failed' });
       await this.prisma.settlementFailure.create({
         data: {
           gameType: 'jackpot',

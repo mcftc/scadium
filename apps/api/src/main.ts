@@ -1,15 +1,25 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { RedisIoAdapter } from './redis/redis-io.adapter';
+import { initSentry } from './observability/sentry';
+import { setupSwagger } from './observability/swagger';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
+  // Error tracking first so even bootstrap failures can be captured (#38).
+  // No SENTRY_DSN → no-op.
+  initSentry();
+
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
   });
+
+  // Flush the buffered bootstrap logs through pino (structured JSON + request-id
+  // correlation + secret redaction; see logging/pino.config.ts) (#38).
+  const logger = app.get(Logger);
+  app.useLogger(logger);
 
   // Behind Caddy/any reverse proxy: honor X-Forwarded-For so rate-limiting and logging
   // see the real client IP instead of the proxy's. Required for per-IP throttling.
@@ -39,26 +49,23 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // API prefix — health probes stay unprefixed at /health, /health/live, /health/ready.
-  app.setGlobalPrefix('api/v1', { exclude: ['health', 'health/live', 'health/ready'] });
+  // API prefix — health probes and the Prometheus scrape stay unprefixed.
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['health', 'health/live', 'health/ready', 'metrics'],
+  });
 
-  // Swagger
-  const config = new DocumentBuilder()
-    .setTitle('Scadium API')
-    .setDescription('Non-custodial, provably-fair Solana casino backend')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
+  // Swagger — gated: OFF in production unless DOCS_ENABLED=true (#38).
+  const docs = setupSwagger(app);
 
   const port = Number(process.env.API_PORT ?? 4000);
   await app.listen(port, '0.0.0.0');
   logger.log(`🎰 Scadium API running on http://localhost:${port}`);
-  logger.log(`📚 Swagger docs: http://localhost:${port}/docs`);
+  if (docs) logger.log(`📚 Swagger docs: http://localhost:${port}/docs`);
 }
 
 bootstrap().catch((err) => {
+  // Pino may not exist yet if AppModule failed to build — plain stderr is the
+  // only reliable sink for a boot crash.
   console.error('Failed to start API:', err);
   process.exit(1);
 });
