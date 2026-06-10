@@ -2,46 +2,41 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
 import { randomBytes } from 'node:crypto';
-
-interface NonceEntry {
-  nonce: string;
-  issuedAt: string;
-  expiresAt: number;
-}
+import { RedisService } from '../redis/redis.service';
 
 /**
  * Sign-In With Solana (SIWS) — the user signs a server-issued nonce message
  * with their wallet's private key. We verify the ed25519 signature against
  * the public key encoded in their wallet address.
  *
+ * Nonces live in REDIS (#12), keyed `siws:nonce:<walletAddress>` with a TTL, so
+ * sign-in works across ≥2 API replicas: a nonce issued on pod A verifies on pod
+ * B, and Redis's TTL replaces the old in-memory sweep. One-time use is enforced
+ * by an atomic delete on a successful signature (first concurrent verify wins).
+ *
  * Reference: https://docs.phantom.app/solana/signing-a-message
  */
 @Injectable()
 export class SiwsService {
-  /**
-   * Nonce store — in prod this lives in Redis with a short TTL. For now
-   * an in-memory map is sufficient to prove out the flow in phase 0/2.
-   *
-   * Each entry stores the exact `issuedAt` timestamp baked into the signed
-   * message so re-derivation on verify produces an identical string.
-   */
-  private readonly nonceStore = new Map<string, NonceEntry>();
   private readonly NONCE_TTL_MS = 5 * 60 * 1000;
 
-  /**
-   * Generate a fresh nonce for a wallet to sign.
-   */
-  issueNonce(walletAddress: string): { nonce: string; message: string } {
-    this.sweepExpired();
+  constructor(private readonly redis: RedisService) {}
+
+  private nonceKey(walletAddress: string): string {
+    return `siws:nonce:${walletAddress}`;
+  }
+
+  /** Generate a fresh nonce for a wallet to sign (stored in Redis with a TTL). */
+  async issueNonce(walletAddress: string): Promise<{ nonce: string; message: string }> {
     const nonce = randomBytes(16).toString('hex');
     const issuedAt = new Date().toISOString();
-    this.nonceStore.set(walletAddress, {
-      nonce,
-      issuedAt,
-      expiresAt: Date.now() + this.NONCE_TTL_MS,
-    });
-    const message = this.buildMessage(walletAddress, nonce, issuedAt);
-    return { nonce, message };
+    await this.redis.client.set(
+      this.nonceKey(walletAddress),
+      JSON.stringify({ nonce, issuedAt }),
+      'EX',
+      Math.ceil(this.NONCE_TTL_MS / 1000),
+    );
+    return { nonce, message: this.buildMessage(walletAddress, nonce, issuedAt) };
   }
 
   /**
@@ -64,54 +59,52 @@ export class SiwsService {
 
   /**
    * Verify an ed25519 signature over the SIWS message. Returns true iff the
-   * signature was produced by the private key corresponding to walletAddress.
+   * signature was produced by the private key for walletAddress. The nonce is
+   * consumed (one-time use) only on a valid signature; a bad signature leaves
+   * the nonce intact so an attacker can't burn someone else's nonce.
    */
-  verifySignature(params: {
+  async verifySignature(params: {
     walletAddress: string;
     message: string;
     signature: string; // base58 encoded
     nonce: string;
-  }): boolean {
-    const stored = this.nonceStore.get(params.walletAddress);
-    if (!stored || stored.nonce !== params.nonce) {
+  }): Promise<boolean> {
+    const key = this.nonceKey(params.walletAddress);
+    const raw = await this.redis.client.get(key);
+    if (!raw) throw new BadRequestException('Invalid or expired nonce');
+
+    let stored: { nonce: string; issuedAt: string };
+    try {
+      stored = JSON.parse(raw) as { nonce: string; issuedAt: string };
+    } catch {
       throw new BadRequestException('Invalid or expired nonce');
     }
-    if (Date.now() > stored.expiresAt) {
-      this.nonceStore.delete(params.walletAddress);
-      throw new BadRequestException('Nonce expired');
+    if (stored.nonce !== params.nonce) {
+      throw new BadRequestException('Invalid or expired nonce');
     }
 
     // Re-derive the canonical message using the stored issuedAt so the
     // comparison is deterministic regardless of verify-time clock drift.
-    const expectedMessage = this.buildMessage(
-      params.walletAddress,
-      params.nonce,
-      stored.issuedAt,
-    );
+    const expectedMessage = this.buildMessage(params.walletAddress, params.nonce, stored.issuedAt);
     if (params.message !== expectedMessage) {
       throw new BadRequestException('Message mismatch');
     }
 
+    let ok = false;
     try {
       const publicKey = bs58.decode(params.walletAddress);
       const signatureBytes = bs58.decode(params.signature);
       const messageBytes = new TextEncoder().encode(params.message);
-
-      const ok = nacl.sign.detached.verify(messageBytes, signatureBytes, publicKey);
-      if (ok) {
-        // Consume the nonce — one-time use only
-        this.nonceStore.delete(params.walletAddress);
-      }
-      return ok;
+      ok = nacl.sign.detached.verify(messageBytes, signatureBytes, publicKey);
     } catch {
       return false;
     }
-  }
+    if (!ok) return false; // bad signature → do NOT consume the nonce
 
-  private sweepExpired(): void {
-    const now = Date.now();
-    for (const [wallet, entry] of this.nonceStore.entries()) {
-      if (entry.expiresAt < now) this.nonceStore.delete(wallet);
-    }
+    // Consume atomically: the first verify to delete the key wins, so a replay
+    // (or a concurrent second verify) of the same nonce is rejected.
+    const deleted = await this.redis.client.del(key);
+    if (deleted === 0) throw new BadRequestException('Invalid or expired nonce');
+    return true;
   }
 }

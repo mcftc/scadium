@@ -30,7 +30,7 @@ export class AuthService {
     signature: string;
     message: string;
   }) {
-    const ok = this.siws.verifySignature(params);
+    const ok = await this.siws.verifySignature(params);
     if (!ok) throw new UnauthorizedException('Invalid signature');
 
     const user = await this.upsertUser(params.walletAddress);

@@ -224,13 +224,6 @@ model AuditLog {
   @@index([action, createdAt])
 }
 
-model AuthNonce {
-  walletAddress String   @id
-  nonce         String
-  expiresAt     DateTime
-  createdAt     DateTime @default(now())
-}
-
 // ==================== FAIRNESS ====================
 
 model Seed {

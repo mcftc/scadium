@@ -48,7 +48,7 @@ export class UsersService {
     userId: string,
     params: { address: string; message: string; signature: string; nonce: string },
   ) {
-    const ok = this.siws.verifySignature({
+    const ok = await this.siws.verifySignature({
       walletAddress: params.address,
       message: params.message,
       signature: params.signature,
