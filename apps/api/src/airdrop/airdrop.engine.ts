@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
@@ -79,6 +79,12 @@ export class AirdropEngine implements OnModuleInit {
    * Airdrop — this action is not refundable".
    */
   async tip(userId: string, amountLamports: bigint) {
+    // Defense-in-depth: reject non-positive tips at the engine boundary so this
+    // method is safe regardless of caller. A negative amount with the
+    // `{ decrement }` write below would INCREMENT the tipper's balance and
+    // drive the pool negative (ANALYSIS.md §4 Critical #1). The controller DTO
+    // and AirdropService also guard; the DB CHECK is the final backstop.
+    if (amountLamports <= 0n) throw new BadRequestException('Tip must be positive');
     const period = this.periodFor(Date.now());
     const pool = await this.ensureCurrentPool();
     // Guard against tipping into an already-settled pool (only reachable when
