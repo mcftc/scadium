@@ -63,6 +63,7 @@ interface LastResult {
   clientSeed: string;
   nonce: number;
   slotHash: string; // hex — third entropy input, needed by the verifier
+  fairness: string; // 'onchain' | 'synthetic-not-fair' (#19a)
   winnersCount: number;
   bracketWinnerCounts: number[];
   totalPoolScad: number;
@@ -312,6 +313,9 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           ? this.lastResult.topPrizeScad
           : Number(jackpotSlice) / SCAD_BASE_NUM,
       commitTxSignature: this.current.commitTxSignature,
+      // Provenance of the LAST settled draw's entropy (#19a) so the UI can warn
+      // when a draw was settled with the non-fair synthetic fallback.
+      lastDrawFairness: this.lastResult?.fairness ?? null,
       chain: {
         enabled: this.chain.lotteryEnabled,
         programId: this.chain.lotteryProgramIdBase58,
@@ -447,6 +451,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     let revealTxSignature: string | null = null;
     let slotHashHex: string;
     let digits: number[];
+    let fairness: string; // 'onchain' | 'synthetic-not-fair' (#19a)
 
     const reveal = this.chain.lotteryEnabled
       ? await this.chain.lotteryRevealDraw({ drawIndex, serverSeedHex: serverSeed })
@@ -455,6 +460,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       digits = reveal.digits;
       revealTxSignature = reveal.signature;
       slotHashHex = reveal.slotHashHex;
+      fairness = 'onchain';
       // Lockstep cross-check: the TS derivation must reproduce the program's
       // digits from the same inputs — divergence means a layout bug.
       const local = lotteryDraw(
@@ -470,11 +476,16 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
         );
       }
     } else {
-      if (this.chain.lotteryEnabled) {
-        this.logger.error(`Draw #${drawIndex}: on-chain reveal failed — settling synthetically`);
-      }
+      // No on-chain reveal → the synthetic slot hash is operator-DETERMINISTIC.
+      // The draw still settles (no stranded tickets) but is flagged NOT fair so
+      // nothing presents it as provably fair (#19a). True on-chain pinning is #19b.
+      this.logger.warn(
+        `Draw #${drawIndex}: settling with the SYNTHETIC slot hash — NOT provably fair ` +
+          `(flagged synthetic-not-fair).`,
+      );
       const synthetic = syntheticSlotHash(serverSeed, clientSeed);
       slotHashHex = synthetic.toString('hex');
+      fairness = 'synthetic-not-fair';
       digits = lotteryDraw(serverSeed, padClientSeed32(clientSeed), synthetic, nonce).digits;
     }
 
@@ -595,6 +606,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
             slotHash: slotHashHex,
             drawnAt: new Date(),
             revealTxSignature,
+            fairness,
             totalPoolScadBase: totalPool,
             burnScadBase,
             bracketWinnerCounts,
@@ -680,6 +692,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       clientSeed: this.current.clientSeed,
       nonce: this.current.nonce,
       slotHash: slotHashHex,
+      fairness,
       winnersCount,
       bracketWinnerCounts,
       totalPoolScad: Number(totalPool) / SCAD_BASE_NUM,

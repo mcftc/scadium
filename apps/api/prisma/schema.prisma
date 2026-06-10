@@ -389,6 +389,11 @@ model LotteryDraw {
   // Hex of the 32-byte slot hash mixed into the draw entropy (null until
   // drawn; synthetic sha256(seed:clientSeed) when the chain is disabled).
   slotHash     String?
+  // Entropy provenance (#19a): 'onchain' = derived from a real on-chain
+  // SlotHashes reveal (provably fair); 'synthetic-not-fair' = settled via the
+  // operator-deterministic synthetic fallback (NOT provably fair — surfaced as
+  // such). null until drawn.
+  fairness     String?
   // PancakeSwap-style $SCAD economy (all base units, 9 decimals):
   ticketPriceScadBase     BigInt   @default(0) // price per ticket this round
   injectionScadBase       BigInt   @default(0) // house injection added to the pool
