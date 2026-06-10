@@ -137,20 +137,30 @@ export class SeedManagerService {
    * Advance the nonce WITHIN a caller's transaction and return the full
    * derivation context (serverSeed included — SERVER-SIDE ONLY, never serialized
    * to the client). Used by game engines so the nonce consumption is atomic with
-   * settlement. Both the ensure-exists upsert and the increment run on `tx` —
+   * settlement. The ensure-exists step and the increment both run on `tx` —
    * issuing the ensure on `this.prisma` instead would grab a second pool
    * connection while `tx` holds one, and under concurrency that exhausts the
    * pool (P2028 "Unable to start a transaction in the given time").
+   *
+   * `create()` (not `upsert`) + catch-P2002 mirrors `getOrCreateActivePair`:
+   * a user's first-ever concurrent calls (e.g. joining two open flips at once)
+   * race to insert the same row, and Prisma's upsert isn't atomic against that
+   * — the loser would otherwise throw an uncaught unique-violation.
    */
   async consumeNonce(
     tx: Prisma.TransactionClient,
     userId: string,
   ): Promise<{ serverSeed: string; serverSeedHash: string; clientSeed: string; nonce: bigint }> {
-    await tx.clientSeed.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, clientSeed: generateClientSeed(), nonce: BigInt(0), ...this.mintPair() },
-    });
+    const existing = await tx.clientSeed.findUnique({ where: { userId } });
+    if (!existing) {
+      try {
+        await tx.clientSeed.create({
+          data: { userId, clientSeed: generateClientSeed(), nonce: BigInt(0), ...this.mintPair() },
+        });
+      } catch (e) {
+        if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+      }
+    }
     return tx.clientSeed.update({
       where: { userId },
       data: { nonce: { increment: 1 } },

@@ -52,4 +52,29 @@ describe('coinflip player-controlled seed (issue #92)', () => {
 
     expect(r2.nonce!).toBeGreaterThan(r1.nonce!);
   });
+
+  it("a brand-new joiner's first concurrent flips both settle with distinct nonces (no ClientSeed P2002)", async () => {
+    const amount = BigInt(COINFLIP.MIN_BET_LAMPORTS);
+    const creatorA = await makeUser(1_000_000_000n);
+    const creatorB = await makeUser(1_000_000_000n);
+    // Never touches `seeds` before joining — consumeNonce must create the
+    // ClientSeed row itself, and two concurrent first-use joins race on that
+    // same insert.
+    const joiner = await makeUser(1_000_000_000n);
+
+    const flipA = await svc.create({ userId: creatorA.id, side: 'heads', amountLamports: amount });
+    const flipB = await svc.create({ userId: creatorB.id, side: 'heads', amountLamports: amount });
+
+    const [resA, resB] = await Promise.all([
+      svc.join({ userId: joiner.id, gameId: flipA.id }),
+      svc.join({ userId: joiner.id, gameId: flipB.id }),
+    ]);
+
+    expect(resA.status).toBe('completed');
+    expect(resB.status).toBe('completed');
+    expect(resA.nonce).not.toBe(resB.nonce);
+
+    const seedRow = await prisma.clientSeed.findUniqueOrThrow({ where: { userId: joiner.id } });
+    expect(seedRow.nonce).toBe(2n);
+  });
 });
