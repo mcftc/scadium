@@ -1,12 +1,20 @@
 import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsNumberString } from 'class-validator';
+import { Matches, MaxLength } from 'class-validator';
 import { AirdropService } from './airdrop.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../auth/current-user.decorator';
 
-class TipDto {
-  @IsNumberString()
+export class TipDto {
+  // Lamport amount as a STRICTLY POSITIVE integer string: no sign, no leading
+  // zero, no decimals. `@IsNumberString()` used to accept "-1000000000", which
+  // — combined with a `{ decrement }` write — was a balance-mint vector
+  // (ANALYSIS.md §4 Critical #1). This rejects it at the edge; the service
+  // guard and a DB CHECK constraint are the defense-in-depth backstops.
+  @Matches(/^[1-9]\d*$/, {
+    message: 'amountLamports must be a positive integer (lamports), no sign or leading zero',
+  })
+  @MaxLength(20) // u64 max is 19 digits; 20 is a safe cap
   amountLamports!: string;
 }
 
