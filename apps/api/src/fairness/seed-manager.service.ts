@@ -137,14 +137,20 @@ export class SeedManagerService {
    * Advance the nonce WITHIN a caller's transaction and return the full
    * derivation context (serverSeed included — SERVER-SIDE ONLY, never serialized
    * to the client). Used by game engines so the nonce consumption is atomic with
-   * settlement. The row is ensured to exist first (race-safe, on the main
-   * connection); the increment runs on `tx`.
+   * settlement. Both the ensure-exists upsert and the increment run on `tx` —
+   * issuing the ensure on `this.prisma` instead would grab a second pool
+   * connection while `tx` holds one, and under concurrency that exhausts the
+   * pool (P2028 "Unable to start a transaction in the given time").
    */
   async consumeNonce(
     tx: Prisma.TransactionClient,
     userId: string,
   ): Promise<{ serverSeed: string; serverSeedHash: string; clientSeed: string; nonce: bigint }> {
-    await this.getOrCreateActivePair(userId);
+    await tx.clientSeed.upsert({
+      where: { userId },
+      update: {},
+      create: { userId, clientSeed: generateClientSeed(), nonce: BigInt(0), ...this.mintPair() },
+    });
     return tx.clientSeed.update({
       where: { userId },
       data: { nonce: { increment: 1 } },
