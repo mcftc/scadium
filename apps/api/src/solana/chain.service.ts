@@ -95,6 +95,20 @@ export class ChainService implements OnModuleInit {
 
   // ------------------------------------------------------------- queries
 
+  /** Live house bankroll (house_vault PDA lamports) — the exposure base (#30).
+   * `null` = unreadable (disabled / RPC down): callers fail OPEN on the
+   * API-side guard (the on-chain rent floor in `settle_bet` stays the hard
+   * stop), while a real `0n` (vault missing/empty) fails CLOSED. */
+  async houseVaultBalance(): Promise<bigint | null> {
+    if (!this.enabled) return null;
+    try {
+      const info = await this.connection.getAccountInfo(this.houseVaultPda());
+      return info ? BigInt(info.lamports) : 0n;
+    } catch {
+      return null;
+    }
+  }
+
   /** Lamports sitting in a user's vault PDA (0 if the PDA doesn't exist). */
   async vaultBalance(walletAddress: string): Promise<bigint> {
     if (!this.enabled) return 0n;

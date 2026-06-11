@@ -23,6 +23,7 @@ import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
+import { ExposureGuard } from '../../common/exposure-guard';
 
 type Phase = 'idle' | 'betting' | 'dealing' | 'player_turns' | 'dealer_turn' | 'settled';
 type HandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
@@ -80,6 +81,9 @@ interface TableState {
   timer: NodeJS.Timeout | null;
   /** Private tables self-destruct after 10 idle minutes. */
   lastActivityAt: number;
+  /** Per-round house exposure guard (#30) — null in play-money mode. Snapshot
+   * at openBetting; bets placed inside the window reserve against it. */
+  exposure: ExposureGuard | null;
 }
 
 /**
@@ -309,6 +313,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       nonce: 0,
       timer: null,
       lastActivityAt: Date.now(),
+      exposure: null,
     };
     this.tables.set(table.id, table);
     return table;
@@ -513,6 +518,24 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (!seat) throw new Error('Take a seat first');
 
     const prev = seat.bet ? this.betTotal(seat.bet) : BigInt(0);
+
+    // House exposure cap (#30) — funded mode, inside an open window (the
+    // window-opening bet is reserved by openBetting right after its bankroll
+    // snapshot). Replacing a bet swaps its reservation atomically.
+    if (this.chain.enabled && t.phase === 'betting' && t.exposure) {
+      const prevPotential =
+        prev > BigInt(0) ? ExposureGuard.potential(prev, BLACKJACK.MAX_PAYOUT_X) : BigInt(0);
+      t.exposure.release(prevPotential);
+      const potential = ExposureGuard.potential(
+        this.betTotal(params.bet),
+        BLACKJACK.MAX_PAYOUT_X,
+      );
+      if (!t.exposure.reserve(potential)) {
+        t.exposure.reserve(prevPotential); // restore the replaced bet's hold
+        throw new Error('Round exposure limit reached — try a smaller bet or the next round');
+      }
+    }
+
     seat.bet = params.bet;
     seat.idleRounds = 0;
     t.lastActivityAt = Date.now();
@@ -534,6 +557,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (!seat?.bet) throw new Error('No bet to clear');
     const refund = this.betTotal(seat.bet);
     seat.bet = null;
+    t.exposure?.release(ExposureGuard.potential(refund, BLACKJACK.MAX_PAYOUT_X));
     this.broadcast(t);
     return { refundLamports: refund };
   }
@@ -560,6 +584,34 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     const round = await this.prisma.blackjackRound.create({
       data: { tableId: t.id, seedId: seed.id, nonce: 0, stateJson: {} },
     });
+
+    // Funded mode (#30): snapshot the live bankroll once per round, then
+    // reserve the window-opening bet(s) placed before this snapshot existed.
+    // At most one seat can hold a bet here (the placeBet that flipped
+    // idle/settled → betting); a snapshot too small to cover even that single
+    // bet is logged — the per-bet MAX_WIN cap still bounds it. An unreadable
+    // bankroll (null — RPC down) disables the guard for the round; the
+    // on-chain rent floor remains the hard stop.
+    t.exposure = null;
+    if (this.chain.enabled) {
+      const bankroll = await this.chain.houseVaultBalance();
+      if (bankroll === null) {
+        this.logger.warn(`table ${t.id}: house bankroll unreadable — exposure guard off this round`);
+      } else {
+        t.exposure = new ExposureGuard(bankroll);
+      }
+    }
+    if (t.exposure) {
+      for (const s of t.seats.values()) {
+        if (!s.bet) continue;
+        const potential = ExposureGuard.potential(this.betTotal(s.bet), BLACKJACK.MAX_PAYOUT_X);
+        if (!t.exposure.reserve(potential)) {
+          this.logger.warn(
+            `table ${t.id}: opening bet exceeds round exposure cap (potential=${potential})`,
+          );
+        }
+      }
+    }
 
     // Reset per-round seat state (seats persist across rounds).
     for (const s of t.seats.values()) {

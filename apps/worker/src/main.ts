@@ -60,7 +60,16 @@ async function bootstrap(): Promise<void> {
       { connection },
     ),
     new Worker(QUEUE_NAMES.leaderboard, async () => leaderboard.snapshot('hourly'), { connection }),
-    new Worker(QUEUE_NAMES.reconcile, async () => reconciliation.reconcileAll(), { connection }),
+    new Worker(
+      QUEUE_NAMES.reconcile,
+      // #30: the solvency monitor rides the reconcile cadence — gauge + alert
+      // when house_vault drops under rent floor + buffer.
+      async () => {
+        await reconciliation.reconcileAll();
+        await reconciliation.houseSolvency();
+      },
+      { connection },
+    ),
     new Worker(
       QUEUE_NAMES.lotteryPayouts,
       // #29: pay_prize retry sweep — Payout PDA per (draw,winner) backstops

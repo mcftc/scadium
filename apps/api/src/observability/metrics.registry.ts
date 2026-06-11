@@ -1,4 +1,4 @@
-import { Registry, Counter, Histogram, collectDefaultMetrics } from 'prom-client';
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from 'prom-client';
 
 /**
  * Prometheus metrics (#38). Module-level singletons (not Nest providers) so any
@@ -31,5 +31,19 @@ export const settlementsTotal = new Counter({
   name: 'scadium_settlements_total',
   help: 'Game settlements by outcome (settled/refunded/failed)',
   labelNames: ['game', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+/** Live house bankroll (#30) — set by the solvency monitor each sweep. */
+export const houseVaultLamports = new Gauge({
+  name: 'scadium_house_vault_lamports',
+  help: 'house_vault PDA balance in lamports (the funded bankroll)',
+  registers: [metricsRegistry],
+});
+
+/** Low-bankroll alerts (#30): house_vault below rent floor + buffer. */
+export const lowBankrollAlertsTotal = new Counter({
+  name: 'scadium_low_bankroll_alerts_total',
+  help: 'Solvency monitor alerts — house vault under rent floor + buffer',
   registers: [metricsRegistry],
 });

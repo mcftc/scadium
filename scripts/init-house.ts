@@ -5,7 +5,12 @@
  *   RPC=http://127.0.0.1:8899 SCAD_MINT=<mint> COSIGNER=<pubkey> \
  *     pnpm exec ts-node --project tsconfig.anchor.json scripts/init-house.ts
  *
- * Also seeds the house vault float (HOUSE_FLOAT_SOL, default 2).
+ * Also seeds the house vault float. The float is DERIVED from the bankroll
+ * model (#30, docs/bankroll-model.md), not hardcoded: full coverage means a
+ * single MAX_WIN_PER_BET fits inside the MAX_ROUND_EXPOSURE_BPS round cap.
+ * HOUSE_FLOAT_SOL overrides for dev/devnet, but must clear the hard minimum
+ * (rent floor + alert buffer) — below full coverage the script prints the
+ * reduced max single-round exposure the cap will enforce.
  */
 import * as anchor from '@coral-xyz/anchor';
 import {
@@ -19,12 +24,12 @@ import {
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import idl from '../target/idl/scadium_vault.json';
+import { HOUSE } from '../packages/shared/src/constants';
 
 async function main() {
   const rpc = process.env.RPC ?? 'http://127.0.0.1:8899';
   const scadMint = new PublicKey(process.env.SCAD_MINT!);
   const cosigner = new PublicKey(process.env.COSIGNER!);
-  const floatSol = Number(process.env.HOUSE_FLOAT_SOL ?? 2);
 
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(
@@ -57,10 +62,36 @@ async function main() {
     console.log(`init_house tx: ${sig}`);
   }
 
-  // Seed the float so the house can pay net wins.
+  // Seed the float so the house can pay net wins. Derived from the bankroll
+  // model (#30): full coverage = the bankroll at which one MAX_WIN_PER_BET
+  // fits inside the per-round exposure cap.
+  const rentFloor = await connection.getMinimumBalanceForRentExemption(0);
+  const minFloat = rentFloor + HOUSE.MIN_BANKROLL_BUFFER_LAMPORTS;
+  const fullCoverage =
+    Math.ceil((HOUSE.MAX_WIN_PER_BET_LAMPORTS * 10_000) / HOUSE.MAX_ROUND_EXPOSURE_BPS) +
+    rentFloor;
+  const target = process.env.HOUSE_FLOAT_SOL
+    ? Number(process.env.HOUSE_FLOAT_SOL) * LAMPORTS_PER_SOL
+    : fullCoverage;
+  if (target < minFloat) {
+    throw new Error(
+      `HOUSE_FLOAT_SOL too low: ${target} lamports < hard minimum ${minFloat} ` +
+        `(rent floor ${rentFloor} + buffer ${HOUSE.MIN_BANKROLL_BUFFER_LAMPORTS})`,
+    );
+  }
+  if (target < fullCoverage) {
+    const maxRoundExposure = Math.floor(
+      ((target - rentFloor) * HOUSE.MAX_ROUND_EXPOSURE_BPS) / 10_000,
+    );
+    console.warn(
+      `float ${target / LAMPORTS_PER_SOL} SOL is below full coverage ` +
+        `(${fullCoverage / LAMPORTS_PER_SOL} SOL): the exposure cap limits each ` +
+        `round's total potential payout to ~${maxRoundExposure / LAMPORTS_PER_SOL} SOL ` +
+        `instead of the ${HOUSE.MAX_WIN_PER_BET_LAMPORTS / LAMPORTS_PER_SOL} SOL max win.`,
+    );
+  }
   const vaultInfo = await connection.getAccountInfo(houseVault);
   const current = vaultInfo?.lamports ?? 0;
-  const target = floatSol * LAMPORTS_PER_SOL;
   if (current < target) {
     const tx = new Transaction().add(
       SystemProgram.transfer({
@@ -70,7 +101,7 @@ async function main() {
       }),
     );
     const sig = await provider.sendAndConfirm(tx);
-    console.log(`house float topped up to ${floatSol} SOL: ${sig}`);
+    console.log(`house float topped up to ${target / LAMPORTS_PER_SOL} SOL: ${sig}`);
   }
 
   console.log({

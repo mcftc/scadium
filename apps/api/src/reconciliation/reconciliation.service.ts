@@ -1,8 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { HOUSE } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
 import { settlementMoved } from '../solana/settlement-verify';
+import { houseVaultLamports, lowBankrollAlertsTotal } from '../observability/metrics.registry';
+
+/** Rent::minimum_balance(0) on mainnet params — the house_vault PDA holds no
+ * data, so this is its non-spendable floor (mirrors the on-chain check). */
+const HOUSE_VAULT_RENT_FLOOR = 890_880n;
 
 /**
  * Phase G reconciliation job (drift detection — FLAG ONLY, never mutates).
@@ -86,6 +92,31 @@ export class ReconciliationService {
       }
     }
     return drift;
+  }
+
+  /**
+   * House solvency monitor (#30): publishes the live bankroll gauge and alerts
+   * when `house_vault` falls under rent floor + MIN_BANKROLL_BUFFER — see
+   * docs/bankroll-model.md. Flag-only; the on-chain rent-floor check in
+   * `settle_bet` is the hard stop, this is the early warning.
+   */
+  async houseSolvency(): Promise<{ balanceLamports: bigint; floorLamports: bigint; ok: boolean } | null> {
+    if (!this.chain.enabled) return null;
+    const balance = await this.chain.houseVaultBalance();
+    if (balance === null) {
+      this.logger.warn('house solvency: bankroll unreadable (RPC down?) — skipping this sweep');
+      return null;
+    }
+    const floor = HOUSE_VAULT_RENT_FLOOR + BigInt(HOUSE.MIN_BANKROLL_BUFFER_LAMPORTS);
+    houseVaultLamports.set(Number(balance));
+    const ok = balance >= floor;
+    if (!ok) {
+      lowBankrollAlertsTotal.inc();
+      this.logger.error(
+        `LOW BANKROLL: house_vault=${balance} < rent floor + buffer (${floor}) — top up or pause funded settles`,
+      );
+    }
+    return { balanceLamports: balance, floorLamports: floor, ok };
   }
 
   /**
