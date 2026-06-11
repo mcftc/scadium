@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChainService } from '../solana/chain.service';
+import { settlementMoved } from '../solana/settlement-verify';
 
 /**
  * Phase G reconciliation job (drift detection — FLAG ONLY, never mutates).
@@ -33,7 +35,49 @@ import { PrismaService } from '../prisma/prisma.service';
 export class ReconciliationService {
   private readonly logger = new Logger(ReconciliationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chain: ChainService,
+  ) {}
+
+  /**
+   * On-chain receipt drift check (#26): for recent Bets carrying a
+   * txSignature, re-fetch the confirmed transaction and assert it (a)
+   * succeeded and (b) moved exactly the expected house-vault lamports —
+   * today every receipt is a play-money `record_bet`, so the expected
+   * movement is ZERO; the funded `settle_bet` expectation (±net) plugs in
+   * with J3 once bets are tagged as vault-settled. Returns the number of
+   * drifted receipts (flag-only; never mutates).
+   */
+  async chainDrift(limit = 50): Promise<number> {
+    if (!this.chain.enabled) return 0;
+    const bets = await this.prisma.bet.findMany({
+      where: { txSignature: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { id: true, txSignature: true },
+    });
+    const houseVault = this.chain.houseVaultPda().toBase58();
+    let drift = 0;
+    for (const bet of bets) {
+      try {
+        const tx = await this.chain.connection.getTransaction(bet.txSignature!, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
+        });
+        if (!settlementMoved(tx, houseVault, 0n)) {
+          drift += 1;
+          this.logger.error(
+            `chain drift: bet ${bet.id} receipt ${bet.txSignature} failed or moved value unexpectedly`,
+          );
+        }
+      } catch (e) {
+        drift += 1;
+        this.logger.error(`chain drift: bet ${bet.id} receipt unverifiable: ${String(e)}`);
+      }
+    }
+    return drift;
+  }
 
   // Scheduling moved to @scadium/worker (BullMQ repeatable job). `reconcileAll`
   // is the callable entrypoint the worker processor invokes hourly.
