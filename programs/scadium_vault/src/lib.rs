@@ -122,13 +122,15 @@ pub mod scadium_vault {
         let user_rent_min = Rent::get()?.minimum_balance(UserVault::SIZE);
 
         if payout >= stake {
-            // House pays the net win.
+            // House pays the net win — never below the house vault's own rent
+            // floor (#30): the bankroll account must stay rent-exempt, so the
+            // spendable house balance is lamports − rent_min.
             let net = payout - stake;
             if net > 0 {
-                require!(
-                    house_vault_info.lamports() >= net,
-                    VaultError::InsufficientFunds
-                );
+                let house_rent_min = Rent::get()?.minimum_balance(0);
+                let house_available =
+                    house_vault_info.lamports().saturating_sub(house_rent_min);
+                require!(house_available >= net, VaultError::InsufficientFunds);
                 ctx.accounts.house_vault.sub_lamports(net)?;
                 ctx.accounts.user_vault.add_lamports(net)?;
             }

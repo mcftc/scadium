@@ -204,6 +204,79 @@ describe('scadium_vault', () => {
     assert.isNull(await provider.connection.getAccountInfo(freshVault));
   });
 
+  it('settle_bet never drains house_vault below its rent floor (#30)', async () => {
+    const houseBal = (await provider.connection.getAccountInfo(houseVaultPda))!.lamports;
+    const rentFloor = await provider.connection.getMinimumBalanceForRentExemption(0);
+    // A win whose net equals the FULL balance would leave 0 < rent floor → revert.
+    const betId = Array.from({ length: 16 }, () => 13);
+    try {
+      await program.methods
+        .settleBet(
+          betId,
+          { crash: {} },
+          new anchor.BN(0),
+          new anchor.BN(houseBal.toString()), // net win == entire vault
+          0,
+        )
+        .accounts({
+          house: housePda,
+          houseVault: houseVaultPda,
+          userVault: userVaultPda,
+          user: user.publicKey,
+          cosigner: cosigner.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([cosigner])
+        .rpc();
+      assert.fail('should have thrown — would breach the rent floor');
+    } catch (e: any) {
+      assert.include(String(e), 'InsufficientFunds');
+    }
+    // But a win that fits ABOVE the floor still pays.
+    const okNet = houseBal - rentFloor - 1_000_000; // leave floor + margin
+    assert.isAbove(okNet, 0);
+    const before = (await provider.connection.getAccountInfo(userVaultPda))!.lamports;
+    await program.methods
+      .settleBet(
+        Array.from({ length: 16 }, () => 14),
+        { crash: {} },
+        new anchor.BN(0),
+        new anchor.BN(okNet.toString()),
+        0,
+      )
+      .accounts({
+        house: housePda,
+        houseVault: houseVaultPda,
+        userVault: userVaultPda,
+        user: user.publicKey,
+        cosigner: cosigner.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([cosigner])
+      .rpc();
+    const after = (await provider.connection.getAccountInfo(userVaultPda))!.lamports;
+    assert.equal(after - before, okNet);
+    // Repay the house so later suites (reward claims etc.) stay funded.
+    await program.methods
+      .settleBet(
+        Array.from({ length: 16 }, () => 15),
+        { crash: {} },
+        new anchor.BN(okNet.toString()),
+        new anchor.BN(0),
+        0,
+      )
+      .accounts({
+        house: housePda,
+        houseVault: houseVaultPda,
+        userVault: userVaultPda,
+        user: user.publicKey,
+        cosigner: cosigner.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([cosigner])
+      .rpc();
+  });
+
   it('settle_bet rejects a non-cosigner', async () => {
     const betId = Array.from({ length: 16 }, () => 7);
     try {

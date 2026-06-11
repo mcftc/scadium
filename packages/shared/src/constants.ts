@@ -67,6 +67,11 @@ export const BLACKJACK = {
       mixed: 5,
     },
   },
+  /** Worst-case return per lamport staked at a seat (#30) — dominated by the
+   * 21+3 suited-trips side bet (100×); the main bet's worst case (4 split
+   * hands, each doubled and won: 16×) sits below it. The house exposure guard
+   * reserves betTotal × this at bet acceptance. */
+  MAX_PAYOUT_X: 100,
 } as const;
 
 /**
@@ -130,6 +135,23 @@ export const LOTTERY = {
    * chain layer is decorative today, so this offset is the documented default.
    */
   TARGET_SLOT_OFFSET: 50,
+} as const;
+
+/**
+ * House bankroll risk model (#30) — see docs/bankroll-model.md. The vault
+ * program reserves the house vault's rent floor on-chain; these knobs bound
+ * what the API will EXPOSE per bet/round once settlement is funded.
+ */
+export const HOUSE = {
+  /** Absolute cap on a single bet's payout — the bankroll-sizing anchor.
+   * (CRASH alone allows 100 SOL × 1,000,000× uncapped — no bankroll covers
+   * that; real books cap the WIN, not the multiplier.) */
+  MAX_WIN_PER_BET_LAMPORTS: 50 * LAMPORTS_PER_SOL,
+  /** Per betting round: Σ potential payouts ≤ this fraction of the live house
+   * vault balance (basis points). */
+  MAX_ROUND_EXPOSURE_BPS: 2_000, // 20%
+  /** Alert threshold: house vault below rent floor + this buffer. */
+  MIN_BANKROLL_BUFFER_LAMPORTS: 1 * LAMPORTS_PER_SOL,
 } as const;
 
 export const SWAP = {

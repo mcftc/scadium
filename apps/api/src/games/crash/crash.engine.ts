@@ -18,6 +18,7 @@ import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { CrashGateway } from './crash.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
+import { ExposureGuard } from '../../common/exposure-guard';
 
 type Phase = 'waiting' | 'running' | 'busted';
 
@@ -64,6 +65,8 @@ interface Round {
   bets: Map<string, LiveBet>;
   /** Pinned slot whose hash seeds the bust (#101); null on the play-money path. */
   targetSlot: number | null;
+  /** Per-round house exposure guard (#30) — null in play-money mode. */
+  exposure: ExposureGuard | null;
 }
 
 /** Bet queued for the NEXT round ("Schedule Bet For Next Round"). */
@@ -149,6 +152,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       startedAt: null,
       bets: new Map(),
       targetSlot: null,
+      exposure: null,
     };
   }
 
@@ -281,6 +285,19 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     }
     if (this.current.bets.has(params.userId)) {
       throw new Error('You already have a bet in this round');
+    }
+    // House exposure cap (#30) — funded mode only: the round may not promise
+    // more than MAX_ROUND_EXPOSURE_BPS of the live bankroll, and any single
+    // bet's potential is anchored by MAX_WIN_PER_BET. Play-money skips (the
+    // mirror is the source of truth and the house vault is decorative).
+    if (this.chain.enabled && this.current.exposure) {
+      const potential = ExposureGuard.potential(
+        params.amountLamports,
+        params.autoCashout ?? CRASH.MAX_CASHOUT_MULTIPLIER,
+      );
+      if (!this.current.exposure.reserve(potential)) {
+        throw new Error('Round exposure limit reached — try a smaller bet or the next round');
+      }
     }
     this.current.bets.set(params.userId, {
       userId: params.userId,
@@ -423,6 +440,20 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    // Funded mode (#30): snapshot the live bankroll once per round and bound
+    // this round's total promised payout to a fraction of it. An unreadable
+    // bankroll (null — RPC down) disables the guard for the round; the
+    // on-chain rent floor remains the hard stop.
+    let exposure: ExposureGuard | null = null;
+    if (this.chain.enabled) {
+      const bankroll = await this.chain.houseVaultBalance();
+      if (bankroll === null) {
+        this.logger.warn('house bankroll unreadable — exposure guard off this round');
+      } else {
+        exposure = new ExposureGuard(bankroll);
+      }
+    }
+
     this.current = {
       id: round.id,
       seedId: seed.id,
@@ -435,6 +466,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       startedAt: null,
       bets: new Map(),
       targetSlot,
+      exposure,
     };
 
     this.gateway.emitRoundStart({

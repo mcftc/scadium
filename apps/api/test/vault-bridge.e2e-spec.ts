@@ -58,7 +58,8 @@ describe('vault↔balance bridge (integration, real Postgres)', () => {
 
   it('replaying the same deposit signature credits nothing extra (idempotent)', async () => {
     const u = await makeUser(0n);
-    await prisma.user.update({ where: { id: u.id }, data: { vaultAddress: 'pda-x' } });
+    // Unique per user — a fixed literal collides with rows left by other suites.
+    await prisma.user.update({ where: { id: u.id }, data: { vaultAddress: `pda-x-${u.id}` } });
     const bridge = bridgeWith({ user: u.walletAddress, amount: 250_000_000n, vaultBalance: 0n });
     const sig = `sig-${RUN}-replay${seq}`;
 
@@ -83,7 +84,7 @@ describe('vault↔balance bridge (integration, real Postgres)', () => {
 
   it('verified withdraw debits the mirror; a shortfall clamps and flags drift', async () => {
     const u = await makeUser(300_000_000n);
-    await prisma.user.update({ where: { id: u.id }, data: { vaultAddress: 'pda-y' } });
+    await prisma.user.update({ where: { id: u.id }, data: { vaultAddress: `pda-y-${u.id}` } });
 
     // Normal: withdraw 200M of 300M.
     const bridge = bridgeWith({ user: u.walletAddress, amount: 200_000_000n, vaultBalance: 0n });
