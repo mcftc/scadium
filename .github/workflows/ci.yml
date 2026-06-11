@@ -153,8 +153,7 @@ jobs:
         # `shared_golden_fixture_lockstep` reads packages/fair/src/__fixtures__/
         # golden.json, so a one-byte divergence between the Rust on-chain
         # `derive_numbers` and the Node/browser engines turns CI red. The
-        # workspace run also gates vault/swap compilation. Full `anchor build`
-        # (IDL pipeline) lands with Phase J (#25).
+        # workspace run also gates vault/swap compilation.
         run: cargo test --workspace --lib
 
       - name: Rust SAST — clippy, warnings denied (#39)
@@ -165,6 +164,47 @@ jobs:
       - name: Rust dependency audit (#39 — RustSec advisories fail the job)
         uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
+
+      # ---- Anchor build + localnet integration tests (#25 / Phase J) ----
+      - name: Install Solana (agave, prebuilt)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.1/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI (prebuilt release binary)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/anchor" \
+            https://github.com/solana-foundation/anchor/releases/download/v1.0.2/anchor-1.0.2-x86_64-unknown-linux-gnu
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache SBF platform-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/solana
+          key: platform-tools-${{ runner.os }}-agave-4.0.1
+
+      - name: anchor build
+        run: anchor build
+
+      - name: IDL drift gate (#25 — committed IDL/types must match the source)
+        # The committed target/idl + target/types are the on-chain ABI the
+        # setup scripts and tests consume. If a program change regenerates a
+        # different IDL, the PR must include it — otherwise CI turns red here.
+        run: git diff --exit-code target/idl target/types
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: anchor test (localnet integration — vault/swap/lottery)
+        run: |
+          solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
+          anchor test --provider.cluster localnet
 
   secret-scan:
     runs-on: ubuntu-latest
