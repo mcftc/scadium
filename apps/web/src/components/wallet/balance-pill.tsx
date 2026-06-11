@@ -7,7 +7,7 @@ import { lamportsToSol } from '@/lib/format';
 /**
  * Play-money balance pill shown in the header once authenticated. This is the
  * `User.playBalanceLamports` gambling balance (seeded at 10 SOL) — the balance
- * the API actually debits/credits on every bet, NOT the on-chain wallet balance.
+ * the API actually debits/credits on every bet, NOT the on-chain wallet balance. Once a user makes a verified vault deposit (#27) this becomes the CUSTODY-BACKED spendable balance (play seed forfeited at conversion).
  */
 export function BalancePill() {
   const { data: me } = useMe();

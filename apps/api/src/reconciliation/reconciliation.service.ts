@@ -49,6 +49,45 @@ export class ReconciliationService {
    * with J3 once bets are tagged as vault-settled. Returns the number of
    * drifted receipts (flag-only; never mutates).
    */
+  /**
+   * Funded-custody drift (#27): for converted (vaultAddress != null) users the
+   * spendable balance is a cache of on-chain vault custody ± settled-unswept
+   * play. Flags users whose |spendable − vault-above-rent| exceeds the
+   * tolerance. Flag-only.
+   */
+  async fundedDrift(toleranceLamports = 0n, limit = 100): Promise<number> {
+    if (!this.chain.enabled) return 0;
+    const users = await this.prisma.user.findMany({
+      where: { vaultAddress: { not: null } },
+      take: limit,
+      select: { id: true, walletAddress: true, playBalanceLamports: true },
+    });
+    let drift = 0;
+    for (const u of users) {
+      try {
+        const vault = await this.chain.vaultBalance(u.walletAddress);
+        // UserVault rent floor is not spendable; the program enforces it on
+        // withdraw, so compare against the above-rent custody.
+        const rent = 1_002_240n; // Rent::minimum_balance(UserVault::SIZE) on mainnet params
+        const backing = vault > rent ? vault - rent : 0n;
+        const delta =
+          u.playBalanceLamports > backing
+            ? u.playBalanceLamports - backing
+            : backing - u.playBalanceLamports;
+        if (delta > toleranceLamports) {
+          drift += 1;
+          this.logger.error(
+            `funded drift: user ${u.id} spendable=${u.playBalanceLamports} vault-above-rent=${backing}`,
+          );
+        }
+      } catch (e) {
+        drift += 1;
+        this.logger.error(`funded drift: user ${u.id} unverifiable: ${String(e)}`);
+      }
+    }
+    return drift;
+  }
+
   async chainDrift(limit = 50): Promise<number> {
     if (!this.chain.enabled) return 0;
     const bets = await this.prisma.bet.findMany({

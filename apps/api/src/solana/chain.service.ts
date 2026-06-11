@@ -13,6 +13,7 @@ import {
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { settlementMoved } from './settlement-verify';
+import { parseVaultEvent, type VaultEvent } from './vault-events';
 
 /**
  * Thin Solana layer for the scadium_vault program (Phase A).
@@ -81,6 +82,10 @@ export class ChainService implements OnModuleInit {
     return PublicKey.findProgramAddressSync([Buffer.from('house_vault')], this.programId!)[0];
   }
 
+  userVaultPdaBase58(walletAddress: string): string {
+    return this.userVaultPda(new PublicKey(walletAddress)).toBase58();
+  }
+
   userVaultPda(user: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from('user_vault'), user.toBuffer()],
@@ -96,6 +101,37 @@ export class ChainService implements OnModuleInit {
     const pda = this.userVaultPda(new PublicKey(walletAddress));
     const info = await this.connection.getAccountInfo(pda);
     return info ? BigInt(info.lamports) : 0n;
+  }
+
+  /**
+   * Verify a user-signed vault deposit/withdraw (#27): fetch the confirmed
+   * transaction and decode the PROGRAM's own Deposited/Withdrawn event from its
+   * logs — never trusting client-reported amounts. Returns the event (owner +
+   * exact lamports) or null when the tx failed, is missing, or carries no such
+   * event for this wallet.
+   */
+  async verifyVaultTransfer(
+    signature: string,
+    walletAddress: string,
+    kind: 'deposit' | 'withdraw',
+  ): Promise<VaultEvent | null> {
+    if (!this.enabled) return null;
+    try {
+      const tx = await this.connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx?.meta || tx.meta.err !== null) return null;
+      const event = parseVaultEvent(
+        tx.meta.logMessages,
+        kind === 'deposit' ? 'Deposited' : 'Withdrawn',
+      );
+      if (!event || event.user !== walletAddress || event.amount <= 0n) return null;
+      return event;
+    } catch (e) {
+      this.logger.error(`verifyVaultTransfer ${signature} failed: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /** Current confirmed slot — used to pin a future targetSlot at round open (#101). */
