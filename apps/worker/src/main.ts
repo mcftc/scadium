@@ -8,6 +8,7 @@ import {
   SwapService,
   LeaderboardService,
   ReconciliationService,
+  RewardsService,
   RedisService,
   queueConnection,
   withRedisLock,
@@ -34,6 +35,7 @@ async function bootstrap(): Promise<void> {
   const swap = app.get(SwapService, { strict: false });
   const leaderboard = app.get(LeaderboardService, { strict: false });
   const reconciliation = app.get(ReconciliationService, { strict: false });
+  const rewards = app.get(RewardsService, { strict: false });
   const redis = app.get(RedisService, { strict: false });
 
   // Plain options object — each Queue/Worker spins its own BullMQ connection.
@@ -59,6 +61,13 @@ async function bootstrap(): Promise<void> {
     ),
     new Worker(QUEUE_NAMES.leaderboard, async () => leaderboard.snapshot('hourly'), { connection }),
     new Worker(QUEUE_NAMES.reconcile, async () => reconciliation.reconcileAll(), { connection }),
+    new Worker(
+      QUEUE_NAMES.rewardClaims,
+      // #28: sweep pending claims — every transition is status-guarded and the
+      // on-chain ClaimRecord PDA blocks double-pays, so N workers are safe.
+      async () => rewards.reconcilePendingClaims(),
+      { connection },
+    ),
   ];
   for (const c of consumers) {
     c.on('failed', (job, err) => logger.error(`${c.name} job ${job?.id ?? '?'} failed: ${err.message}`));
@@ -72,11 +81,13 @@ async function bootstrap(): Promise<void> {
   const burnQueue = new Queue(QUEUE_NAMES.burn, { connection });
   const leaderboardQueue = new Queue(QUEUE_NAMES.leaderboard, { connection });
   const reconcileQueue = new Queue(QUEUE_NAMES.reconcile, { connection });
+  const rewardClaimsQueue = new Queue(QUEUE_NAMES.rewardClaims, { connection });
 
   await airdropQueue.upsertJobScheduler('airdrop-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
   await burnQueue.upsertJobScheduler('burn-10min', { every: 10 * 60_000 }, { name: 'burn' });
   await leaderboardQueue.upsertJobScheduler('leaderboard-hourly', { every: 60 * 60_000 }, { name: 'snapshot' });
   await reconcileQueue.upsertJobScheduler('reconcile-hourly', { every: 60 * 60_000 }, { name: 'reconcile' });
+  await rewardClaimsQueue.upsertJobScheduler('reward-claims-5min', { every: 5 * 60_000 }, { name: 'sweep' });
 
   logger.log('worker up — 4 queues, schedulers registered');
 

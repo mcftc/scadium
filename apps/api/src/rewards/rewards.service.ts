@@ -46,6 +46,12 @@ export class RewardsService {
   }
 
   async claim(userId: string, kind: 'wagerReward' | 'cashback', key?: string) {
+    // Custody rule (#28): claiming moves value ON CHAIN — with the chain
+    // disabled there is nothing to claim INTO, and the old behaviour silently
+    // consumed the balance. Reject instead; accrual keeps accumulating.
+    if (!this.chain.enabled) {
+      throw new BadRequestException('On-chain claims are disabled on this server');
+    }
     const period = BigInt(Date.now());
     const scope = `reward_claim_${kind}`;
 
@@ -58,25 +64,36 @@ export class RewardsService {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new NotFoundException('User not found');
 
+      // One pending claim per kind at a time — a second claim while the first
+      // is unconfirmed would double-spend the same accrual window.
+      const pending = await tx.rewardClaim.count({
+        where: { userId, kind, status: 'pending' },
+      });
+      if (pending > 0) throw new BadRequestException('A claim is already pending confirmation');
+
       let amount: bigint;
       if (kind === 'wagerReward') {
         amount = user.scadiumBalance;
         if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
+        // RESERVE, don't consume (#28): balance → reserved; the debit
+        // finalizes on confirm, or the reserve restores on permanent failure.
         await tx.user.update({
           where: { id: userId },
-          data: { scadiumBalance: { decrement: amount } },
+          data: {
+            scadiumBalance: { decrement: amount },
+            scadiumReserved: { increment: amount },
+          },
         });
       } else {
         amount = this.cashbackAccrued(user.totalLost, user.cashbackBaselineLost);
         if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
-        await tx.user.update({
-          where: { id: userId },
-          data: { cashbackBaselineLost: user.totalLost },
-        });
+        // The baseline bump happens at CONFIRM time — until then the accrual
+        // window stays intact (a failed claim costs nothing). The pending-claim
+        // guard above prevents double-claiming the same window meanwhile.
       }
 
       const claim = await tx.rewardClaim.create({
-        data: { userId, kind, period, amountScad: amount },
+        data: { userId, kind, period, amountScad: amount, status: 'pending' },
       });
       const response = this.serializeClaim(kind, amount, claim.id);
       await storeIdempotency(tx, userId, scope, key, response);
@@ -87,9 +104,11 @@ export class RewardsService {
       };
     });
 
-    // Skip the (fire-and-forget) on-chain claim on replay — already fired.
+    // Immediate attempt for snappy UX; the reconcile worker is the safety net.
     if (!result.replayed && result.chain) {
-      this.fireChainClaim(result.chain.claimId, result.chain.walletAddress, kind, period, result.chain.amount);
+      void this.attemptChainClaim(result.chain.claimId).catch((e) =>
+        this.logger.error(`claim attempt ${result.chain!.claimId} failed: ${String(e)}`),
+      );
     }
     return result.response;
   }
@@ -153,6 +172,10 @@ export class RewardsService {
           // ULP on 17-significant-digit doubles, breaking exact reproduction of
           // the trail from the revealed seed. Same policy as lamports.
           resultJson: { tier: tierEntry.tier, ...fair, roll: roll.toString() },
+          // #28: with the chain ON the prize is a pending on-chain transfer;
+          // OFF it is an explicit non-value record (demo experience) — never
+          // presented as a paid claim.
+          status: this.chain.enabled ? 'pending' : 'offchain',
         },
       });
       const response = this.serializeDailyCase(tierEntry.tier, amount, now, fair);
@@ -164,13 +187,9 @@ export class RewardsService {
       };
     });
 
-    if (!result.replayed && result.chain) {
-      this.fireChainClaim(
-        result.chain.claimId,
-        result.chain.walletAddress,
-        'dailyCase',
-        period,
-        result.chain.amount,
+    if (!result.replayed && result.chain && this.chain.enabled) {
+      void this.attemptChainClaim(result.chain.claimId).catch((e: unknown) =>
+        this.logger.error(`daily-case claim attempt failed: ${String(e)}`),
       );
     }
     return result.response;
@@ -216,26 +235,109 @@ export class RewardsService {
     return delta * BigInt(SCAD.CASHBACK_PER_LAMPORT_LOST);
   }
 
-  private fireChainClaim(
-    claimId: string,
-    walletAddress: string,
-    kind: 'wagerReward' | 'cashback' | 'dailyCase' | 'airdrop',
-    period: bigint,
-    amount: bigint,
-  ): void {
-    if (!this.chain.enabled) return;
-    void this.chain
-      .claimReward({ walletAddress, kind, period, amountScadBase: amount })
-      .then(async (sig) => {
-        if (sig) {
-          await this.prisma.rewardClaim.update({
-            where: { id: claimId },
-            data: { txSignature: sig },
+  /** Attempts before a pending claim is declared failed and its reserve restored. */
+  static readonly MAX_CLAIM_ATTEMPTS = 5;
+
+  /**
+   * One on-chain attempt for a PENDING claim (#28), transitioning the full
+   * lifecycle atomically. Idempotent: the status-guarded update means a
+   * concurrent attempt (API immediate + worker sweep) finalizes at most once —
+   * and on chain the ClaimRecord PDA (user, kind, period) blocks double-pays.
+   *
+   * confirmed → txSignature set + debit finalized (wagerReward: reserve burned;
+   *             cashback: baseline bumped).
+   * failed    → after MAX_CLAIM_ATTEMPTS: wagerReward reserve RESTORED to the
+   *             spendable balance; cashback/dailyCase need no restore (their
+   *             accrual/cooldown was never consumed).
+   */
+  async attemptChainClaim(claimId: string): Promise<'confirmed' | 'failed' | 'pending' | 'skipped'> {
+    if (!this.chain.enabled) return 'skipped';
+    const claim = await this.prisma.rewardClaim.findUnique({
+      where: { id: claimId },
+      include: { user: { select: { walletAddress: true, totalLost: true } } },
+    });
+    if (!claim || claim.status !== 'pending') return 'skipped';
+
+    const sig = await this.chain.claimReward({
+      walletAddress: claim.user.walletAddress,
+      kind: claim.kind as 'wagerReward' | 'cashback' | 'dailyCase' | 'airdrop',
+      period: claim.period,
+      amountScadBase: claim.amountScad,
+    });
+
+    if (sig) {
+      await this.prisma.$transaction(async (tx) => {
+        // Status-guarded: only ONE attempt may flip pending → confirmed.
+        const flipped = await tx.rewardClaim.updateMany({
+          where: { id: claim.id, status: 'pending' },
+          data: { status: 'confirmed', txSignature: sig },
+        });
+        if (flipped.count === 0) return; // raced — the other attempt finalizes
+        if (claim.kind === 'wagerReward') {
+          await tx.user.update({
+            where: { id: claim.userId },
+            data: { scadiumReserved: { decrement: claim.amountScad } },
+          });
+        } else if (claim.kind === 'cashback') {
+          await tx.user.update({
+            where: { id: claim.userId },
+            data: { cashbackBaselineLost: claim.user.totalLost },
           });
         }
-      })
-      .catch((e: unknown) =>
-        this.logger.error(`on-chain claim failed for ${claimId}: ${String(e)}`),
+      });
+      return 'confirmed';
+    }
+
+    // Transient failure — count it; past the budget, fail + restore.
+    const attempts = claim.attempts + 1;
+    if (attempts < RewardsService.MAX_CLAIM_ATTEMPTS) {
+      await this.prisma.rewardClaim.update({
+        where: { id: claim.id },
+        data: { attempts },
+      });
+      return 'pending';
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const flipped = await tx.rewardClaim.updateMany({
+        where: { id: claim.id, status: 'pending' },
+        data: { status: 'failed', attempts },
+      });
+      if (flipped.count === 0) return;
+      if (claim.kind === 'wagerReward') {
+        await tx.user.update({
+          where: { id: claim.userId },
+          data: {
+            scadiumReserved: { decrement: claim.amountScad },
+            scadiumBalance: { increment: claim.amountScad },
+          },
+        });
+      }
+    });
+    this.logger.error(
+      `reward claim ${claim.id} (${claim.kind}) failed permanently after ${attempts} attempts — reserve restored`,
+    );
+    return 'failed';
+  }
+
+  /**
+   * Reconcile worker entrypoint (#28): sweep PENDING claims (oldest first) and
+   * attempt each. Returns the number processed. Safe to run from N workers —
+   * every transition is status-guarded and the on-chain ClaimRecord PDA is the
+   * double-pay backstop.
+   */
+  async reconcilePendingClaims(limit = 50): Promise<number> {
+    if (!this.chain.enabled) return 0;
+    const pending = await this.prisma.rewardClaim.findMany({
+      where: { status: 'pending' },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+    for (const c of pending) {
+      await this.attemptChainClaim(c.id).catch((e: unknown) =>
+        this.logger.error(`reconcile claim ${c.id} failed: ${String(e)}`),
       );
+    }
+    return pending.length;
   }
 }
