@@ -202,9 +202,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: anchor test (localnet integration — vault/swap/lottery)
+        # anchor 1.0 spawns `surfpool` as its default local validator, which CI
+        # doesn't ship — run agave's solana-test-validator ourselves and skip
+        # anchor's spawn.
         run: |
           solana-keygen new --no-bip39-passphrase -s -o "$HOME/.config/solana/id.json"
-          anchor test --provider.cluster localnet
+          solana-test-validator --reset --quiet &
+          for i in $(seq 1 60); do
+            solana cluster-version -u http://127.0.0.1:8899 >/dev/null 2>&1 && break
+            sleep 1
+          done
+          solana airdrop 100 -u http://127.0.0.1:8899 "$(solana-keygen pubkey "$HOME/.config/solana/id.json")"
+          anchor test --skip-local-validator --provider.cluster localnet
 
   secret-scan:
     runs-on: ubuntu-latest
