@@ -11,6 +11,8 @@ import {
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { USD_PER_SOL } from '@scadium/shared';
+import { SWAP } from '@scadium/shared';
+import { expectedSwapOut, minOutWithSlippage } from './swap-math';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
@@ -257,11 +259,27 @@ export class SwapService implements OnModuleInit {
 
   private async cosignerSwapSolToScad(lamports: bigint): Promise<string | null> {
     const user = this.cosigner!.publicKey;
+    // #31: a 0 min_out makes every automated burn sandwichable. Compute the
+    // expected output from CURRENT reserves and tolerate at most
+    // SWAP.MAX_SLIPPAGE_BPS — if the pool moves further before we land, the
+    // program reverts (SlippageExceeded) and this burn run simply aborts.
+    const poolScadAta = ata(this.scadMint!, this.poolPda());
+    const [scadAcct, solRes] = await Promise.all([
+      this.connection.getTokenAccountBalance(poolScadAta).catch(() => null),
+      this.connection.getBalance(this.solVaultPda()),
+    ]);
+    const scadReserve = BigInt(scadAcct?.value.amount ?? '0');
+    const expected = expectedSwapOut(lamports, BigInt(solRes), scadReserve, BigInt(SWAP.FEE_BPS));
+    if (expected <= 0n) {
+      this.logger.warn('buy&burn: pool has no usable reserves — skipping');
+      return null;
+    }
+    const minOut = minOutWithSlippage(expected);
     const data = Buffer.concat([
       ixDiscriminator('swap'),
       Buffer.from([1]), // sol_to_scad = true
       u64le(lamports),
-      u64le(BigInt(0)), // min_out 0 — house trade, slippage is self-inflicted
+      u64le(minOut),
     ]);
     const ix = new TransactionInstruction({
       programId: this.programId!,

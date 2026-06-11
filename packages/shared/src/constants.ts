@@ -132,6 +132,13 @@ export const LOTTERY = {
   TARGET_SLOT_OFFSET: 50,
 } as const;
 
+export const SWAP = {
+  /** Max tolerated buy-and-burn slippage (#31): min_out = expected × (1 − bps/10000). */
+  MAX_SLIPPAGE_BPS: 100,
+  /** Pool swap fee (bps) — mirrors the on-chain Pool.fee_bps init value. */
+  FEE_BPS: 100,
+} as const;
+
 /** Prize bracket: 0 = match-first-1 … 5 = match-all-6 (jackpot). */
 export type LotteryBracket = 0 | 1 | 2 | 3 | 4 | 5;
 

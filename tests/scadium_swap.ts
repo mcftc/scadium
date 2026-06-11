@@ -85,10 +85,11 @@ describe('scadium_swap', () => {
     assert.equal(state.feeBps, 100);
   });
 
-  it('first add_liquidity mints sqrt LP and sets reserves', async () => {
+  it('first add_liquidity locks MINIMUM_LIQUIDITY dead shares (#31)', async () => {
     // 1,000,000 SCAD : 10 SOL → price 100k SCAD/SOL
     const scadIn = 1_000_000n * 10n ** 9n;
     const solIn = BigInt(10 * LAMPORTS_PER_SOL);
+    const MINIMUM_LIQUIDITY = 1_000n;
     await program.methods
       .addLiquidity(new anchor.BN(scadIn.toString()), new anchor.BN(solIn.toString()), new anchor.BN(0))
       .accounts({
@@ -98,6 +99,7 @@ describe('scadium_swap', () => {
         lpMint,
         userScad: getAssociatedTokenAddressSync(scadMint, payer.publicKey),
         userLp: getAssociatedTokenAddressSync(lpMint, payer.publicKey),
+        poolLp: getAssociatedTokenAddressSync(lpMint, pool, true),
         scadMint,
         user: payer.publicKey,
       })
@@ -105,11 +107,53 @@ describe('scadium_swap', () => {
     const r = await reserves();
     assert.equal(r.scad, scadIn);
     assert.isAtLeast(Number(r.sol), Number(solIn)); // + rent floor
-    const lp = await getAccount(
+    // sqrt(scad·sol) total — the depositor gets total − MINIMUM_LIQUIDITY and
+    // the pool's own LP ATA permanently holds the locked dead shares.
+    const sqrt = (v: bigint): bigint => {
+      if (v < 2n) return v;
+      let x = v;
+      let y = (x + 1n) / 2n;
+      while (y < x) {
+        x = y;
+        y = (x + v / x) / 2n;
+      }
+      return x;
+    };
+    const total = sqrt(scadIn * solIn);
+    const userLp = await getAccount(
       provider.connection,
       getAssociatedTokenAddressSync(lpMint, payer.publicKey),
     );
-    assert.isAbove(Number(lp.amount), 0);
+    assert.equal(userLp.amount, total - MINIMUM_LIQUIDITY);
+    const poolLp = await getAccount(
+      provider.connection,
+      getAssociatedTokenAddressSync(lpMint, pool, true),
+    );
+    assert.equal(poolLp.amount, MINIMUM_LIQUIDITY);
+  });
+
+  it('swap reverts with SlippageExceeded when min_amount_out is unattainable (#31)', async () => {
+    try {
+      await program.methods
+        .swap(
+          true,
+          new anchor.BN(LAMPORTS_PER_SOL),
+          new anchor.BN((10n ** 18n).toString()), // absurd min_out
+        )
+        .accounts({
+          pool,
+          solVault,
+          poolScad,
+          userScad: getAssociatedTokenAddressSync(scadMint, trader.publicKey),
+          scadMint,
+          user: trader.publicKey,
+        })
+        .signers([trader])
+        .rpc();
+      assert.fail('should have thrown');
+    } catch (e: any) {
+      assert.include(String(e), 'SlippageExceeded');
+    }
   });
 
   it('swap SOL→SCAD grows k and honors the fee curve', async () => {
