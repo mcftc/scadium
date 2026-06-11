@@ -360,6 +360,102 @@ export type ScadiumSwap = {
           }
         },
         {
+          "name": "poolLp",
+          "docs": [
+            "The pool's own LP ATA — holds the permanently locked MINIMUM_LIQUIDITY",
+            "dead shares from the first add (#31). No instruction transfers from it.",
+            "Boxed: the extra init_if_needed ATA pushed the frame past the 4KB SBF",
+            "stack limit (access violation) — heap-allocating the accounts fixes it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lpMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "scadMint"
         },
         {
@@ -1289,6 +1385,16 @@ export type ScadiumSwap = {
       "code": 6003,
       "name": "feeTooHigh",
       "msg": "Fee too high"
+    },
+    {
+      "code": 6004,
+      "name": "mathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6005,
+      "name": "insufficientInitialLiquidity",
+      "msg": "First deposit too small to cover the minimum-liquidity lock"
     }
   ],
   "types": [

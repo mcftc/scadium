@@ -17,6 +17,38 @@ declare_id!("9Fog7cFRQiPfszYu1ioFdqQDwmmTd6SZpkyb8hyo13dU");
 
 const BPS: u128 = 10_000;
 
+/// Dead shares permanently locked on the FIRST add_liquidity (#31) — minted to
+/// the pool's own LP ATA, which no instruction can ever move. Without this, a
+/// 1-unit first deposit + direct donation inflates the LP share price so later
+/// depositors round to zero shares (the classic Uniswap-V2 inflation attack).
+pub const MINIMUM_LIQUIDITY: u64 = 1_000;
+
+/// First-deposit LP split: total sqrt(scad·sol) minus the locked dead shares.
+/// Errors when the deposit is too small to cover the lock. Checked end-to-end
+/// (#31): with u64 inputs the u128 intermediates are provably bounded, but the
+/// arithmetic stays `checked_*` so a future formula change can't silently wrap.
+fn first_lp_split(scad_amount: u64, sol_amount: u64) -> Result<(u64, u64)> {
+    let product = (scad_amount as u128)
+        .checked_mul(sol_amount as u128)
+        .ok_or(SwapError::MathOverflow)?;
+    let total = u64::try_from(integer_sqrt(product)).map_err(|_| SwapError::MathOverflow)?;
+    require!(total > MINIMUM_LIQUIDITY, SwapError::InsufficientInitialLiquidity);
+    Ok((MINIMUM_LIQUIDITY, total - MINIMUM_LIQUIDITY))
+}
+
+/// Constant-product output for a swap of `amount_in` against (r_in, r_out)
+/// with `fee_bps` kept in the pool. Mirrored by apps/api/src/swap/swap-math.ts
+/// (the buy-and-burn min_out) — keep in lockstep.
+fn cpmm_out(amount_in: u64, r_in: u128, r_out: u128, fee_bps: u128) -> Result<u64> {
+    let in_after_fee = (amount_in as u128)
+        .checked_mul(BPS.checked_sub(fee_bps).ok_or(SwapError::MathOverflow)?)
+        .ok_or(SwapError::MathOverflow)?
+        / BPS;
+    let numer = in_after_fee.checked_mul(r_out).ok_or(SwapError::MathOverflow)?;
+    let denom = r_in.checked_add(in_after_fee).ok_or(SwapError::MathOverflow)?;
+    u64::try_from(numer / denom).map_err(|_| SwapError::MathOverflow.into())
+}
+
 #[program]
 pub mod scadium_swap {
     use super::*;
@@ -46,17 +78,31 @@ pub mod scadium_swap {
         let sol_res = vault_lamports(&ctx.accounts.sol_vault)? as u128;
         let lp_supply = ctx.accounts.lp_mint.supply as u128;
 
-        let (scad_in, sol_in, lp_out) = if lp_supply == 0 {
-            let lp = integer_sqrt((scad_amount as u128) * (sol_amount as u128));
-            (scad_amount, sol_amount, lp as u64)
+        let (scad_in, sol_in, lp_out, lp_locked) = if lp_supply == 0 {
+            // First add: lock MINIMUM_LIQUIDITY dead shares (#31).
+            let (locked, to_depositor) = first_lp_split(scad_amount, sol_amount)?;
+            (scad_amount, sol_amount, to_depositor, locked)
         } else {
             // Proportional add: scale to whichever side is the limiting one.
-            let lp_from_scad = (scad_amount as u128) * lp_supply / scad_res;
-            let lp_from_sol = (sol_amount as u128) * lp_supply / sol_res;
+            let lp_from_scad = (scad_amount as u128)
+                .checked_mul(lp_supply)
+                .ok_or(SwapError::MathOverflow)?
+                / scad_res;
+            let lp_from_sol = (sol_amount as u128)
+                .checked_mul(lp_supply)
+                .ok_or(SwapError::MathOverflow)?
+                / sol_res;
             let lp = lp_from_scad.min(lp_from_sol);
-            let scad_need = (lp * scad_res).div_ceil(lp_supply) as u64;
-            let sol_need = (lp * sol_res).div_ceil(lp_supply) as u64;
-            (scad_need, sol_need, lp as u64)
+            let scad_need = u64::try_from(
+                lp.checked_mul(scad_res).ok_or(SwapError::MathOverflow)?.div_ceil(lp_supply),
+            )
+            .map_err(|_| SwapError::MathOverflow)?;
+            let sol_need = u64::try_from(
+                lp.checked_mul(sol_res).ok_or(SwapError::MathOverflow)?.div_ceil(lp_supply),
+            )
+            .map_err(|_| SwapError::MathOverflow)?;
+            let lp = u64::try_from(lp).map_err(|_| SwapError::MathOverflow)?;
+            (scad_need, sol_need, lp, 0u64)
         };
         require!(lp_out >= min_lp && lp_out > 0, SwapError::SlippageExceeded);
 
@@ -97,6 +143,22 @@ pub mod scadium_swap {
             ),
             lp_out,
         )?;
+        if lp_locked > 0 {
+            // Dead shares to the pool's OWN LP ATA — no instruction ever moves
+            // LP out of the pool authority, so they are locked forever.
+            token::mint_to(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.key(),
+                    MintTo {
+                        mint: ctx.accounts.lp_mint.to_account_info(),
+                        to: ctx.accounts.pool_lp.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                lp_locked,
+            )?;
+        }
 
         emit!(LiquidityChanged {
             user: ctx.accounts.user.key(),
@@ -120,8 +182,14 @@ pub mod scadium_swap {
         let lp_supply = ctx.accounts.lp_mint.supply as u128;
         require!(lp_supply > 0, SwapError::EmptyPool);
 
-        let scad_out = ((lp_amount as u128) * scad_res / lp_supply) as u64;
-        let sol_out = ((lp_amount as u128) * sol_res / lp_supply) as u64;
+        let scad_out = u64::try_from(
+            (lp_amount as u128).checked_mul(scad_res).ok_or(SwapError::MathOverflow)? / lp_supply,
+        )
+        .map_err(|_| SwapError::MathOverflow)?;
+        let sol_out = u64::try_from(
+            (lp_amount as u128).checked_mul(sol_res).ok_or(SwapError::MathOverflow)? / lp_supply,
+        )
+        .map_err(|_| SwapError::MathOverflow)?;
         require!(
             scad_out >= min_scad && sol_out >= min_sol,
             SwapError::SlippageExceeded
@@ -185,8 +253,7 @@ pub mod scadium_swap {
         } else {
             (scad_res, sol_res)
         };
-        let in_after_fee = (amount_in as u128) * (BPS - fee_bps) / BPS;
-        let amount_out = (in_after_fee * r_out / (r_in + in_after_fee)) as u64;
+        let amount_out = cpmm_out(amount_in, r_in, r_out, fee_bps)?;
         require!(amount_out >= min_amount_out && amount_out > 0, SwapError::SlippageExceeded);
 
         let seeds: &[&[u8]] = &[b"pool", &[ctx.accounts.pool.bump]];
@@ -309,23 +376,34 @@ pub struct InitPool<'info> {
 #[derive(Accounts)]
 pub struct AddLiquidity<'info> {
     #[account(seeds = [b"pool"], bump = pool.bump)]
-    pub pool: Account<'info, Pool>,
+    pub pool: Box<Account<'info, Pool>>,
     /// CHECK: lamport vault PDA.
     #[account(mut, seeds = [b"sol_vault"], bump = pool.sol_vault_bump)]
     pub sol_vault: UncheckedAccount<'info>,
     #[account(mut, associated_token::mint = scad_mint, associated_token::authority = pool)]
-    pub pool_scad: Account<'info, TokenAccount>,
+    pub pool_scad: Box<Account<'info, TokenAccount>>,
     #[account(mut, seeds = [b"lp_mint"], bump)]
-    pub lp_mint: Account<'info, Mint>,
+    pub lp_mint: Box<Account<'info, Mint>>,
     #[account(mut, associated_token::mint = scad_mint, associated_token::authority = user)]
-    pub user_scad: Account<'info, TokenAccount>,
+    pub user_scad: Box<Account<'info, TokenAccount>>,
     #[account(
         init_if_needed,
         payer = user,
         associated_token::mint = lp_mint,
         associated_token::authority = user
     )]
-    pub user_lp: Account<'info, TokenAccount>,
+    pub user_lp: Box<Account<'info, TokenAccount>>,
+    /// The pool's own LP ATA — holds the permanently locked MINIMUM_LIQUIDITY
+    /// dead shares from the first add (#31). No instruction transfers from it.
+    /// Boxed: the extra init_if_needed ATA pushed the frame past the 4KB SBF
+    /// stack limit (access violation) — heap-allocating the accounts fixes it.
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = lp_mint,
+        associated_token::authority = pool
+    )]
+    pub pool_lp: Box<Account<'info, TokenAccount>>,
     #[account(address = pool.scad_mint)]
     pub scad_mint: Account<'info, Mint>,
     #[account(mut)]
@@ -413,4 +491,52 @@ pub enum SwapError {
     SlippageExceeded,
     #[msg("Fee too high")]
     FeeTooHigh,
+    #[msg("Arithmetic overflow")]
+    MathOverflow,
+    #[msg("First deposit too small to cover the minimum-liquidity lock")]
+    InsufficientInitialLiquidity,
+}
+
+// ---------------------------------------------------------------- tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_lp_split_locks_minimum_liquidity_exactly() {
+        // sqrt(4e18) = 2e9 → depositor gets 2e9 − 1000, lock is 1000.
+        let (locked, to_depositor) = first_lp_split(2_000_000_000, 2_000_000_000).unwrap();
+        assert_eq!(locked, MINIMUM_LIQUIDITY);
+        assert_eq!(to_depositor, 2_000_000_000 - MINIMUM_LIQUIDITY);
+    }
+
+    #[test]
+    fn first_lp_split_rejects_dust_first_deposits() {
+        // sqrt(1_000_000) = 1000 == MINIMUM_LIQUIDITY → nothing left → reject.
+        let err = first_lp_split(1_000, 1_000).unwrap_err();
+        assert_eq!(err, SwapError::InsufficientInitialLiquidity.into());
+        // 1-unit inflation-attack seed also rejected.
+        assert!(first_lp_split(1, 1).is_err());
+    }
+
+    #[test]
+    fn cpmm_out_matches_constant_product_with_fee() {
+        // 1 SOL into (100 SOL, 1_000_000 SCAD) at 30 bps:
+        // in_after_fee = 0.997 SOL → out = 0.997e9·1e15/(100e9+0.997e9)
+        let out = cpmm_out(1_000_000_000, 100_000_000_000, 1_000_000_000_000_000, 30).unwrap();
+        let in_after_fee: u128 = 1_000_000_000u128 * 9_970 / 10_000;
+        let expected = in_after_fee * 1_000_000_000_000_000u128
+            / (100_000_000_000u128 + in_after_fee);
+        assert_eq!(out as u128, expected);
+        assert!(out > 0);
+    }
+
+    #[test]
+    fn cpmm_out_is_checked_end_to_end() {
+        // Extreme-but-valid u64 inputs stay in range (bounded by construction);
+        // the checked_* path returns a value, never wraps.
+        let out = cpmm_out(u64::MAX, u64::MAX as u128, u64::MAX as u128, 0).unwrap();
+        assert!(out <= u64::MAX / 2 + 1);
+    }
 }
