@@ -529,8 +529,14 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
 
     let winnersCount = 0;
     let topPrizeScadBase = BigInt(0);
-    const prizeJobs: { ticketId: string; walletAddress: string; amountScadBase: bigint; bracket: number }[] =
-      [];
+    // AGGREGATED per winner (#29): the on-chain Payout PDA is keyed
+    // (draw, winner), so a winner with multiple winning tickets must receive
+    // ONE pay_prize for the sum — per-ticket calls would pay only the first
+    // and strand the rest forever.
+    const prizeByWallet = new Map<
+      string,
+      { walletAddress: string; amountScadBase: bigint; bracket: number; ticketIds: string[] }
+    >();
 
     const ticketResults = matched.map((m) => {
       const payoutScadBase = m.bracket !== null ? perWinner[m.bracket]! : BigInt(0);
@@ -539,15 +545,21 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       if (payoutScadBase > topPrizeScadBase) topPrizeScadBase = payoutScadBase;
       const payoutLamports = scadBaseToLamports(payoutScadBase);
       if (won && this.chain.lotteryEnabled) {
-        prizeJobs.push({
-          ticketId: m.ticket.id,
-          walletAddress: m.ticket.user.walletAddress,
-          amountScadBase: payoutScadBase,
+        const wallet = m.ticket.user.walletAddress;
+        const agg = prizeByWallet.get(wallet) ?? {
+          walletAddress: wallet,
+          amountScadBase: BigInt(0),
           bracket: m.bracket!,
-        });
+          ticketIds: [],
+        };
+        agg.amountScadBase += payoutScadBase;
+        agg.bracket = Math.max(agg.bracket, m.bracket!);
+        agg.ticketIds.push(m.ticket.id);
+        prizeByWallet.set(wallet, agg);
       }
       return { ...m, payoutScadBase, payoutLamports, won };
     });
+    const prizeJobs = [...prizeByWallet.values()];
 
     // ----- Phase 2: ledger + ticket updates + draw flip + reveal, atomically -----
     try {
@@ -669,26 +681,41 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     // Unwon slices fund the next round's pool (PancakeSwap auto-injection).
     this.carryRolloverScadBase = nextRollover;
 
-    // On-chain $SCAD prize payouts + burn AFTER the rows commit (fire-and-forget).
-    for (const job of prizeJobs) {
-      void this.chain
-        .lotteryPayPrize({
-          drawIndex,
-          walletAddress: job.walletAddress,
-          amountScadBase: job.amountScadBase,
-          bracket: job.bracket,
-        })
-        .then(async (sig) => {
-          if (sig) {
-            await this.prisma.lotteryTicket.update({
-              where: { id: job.ticketId },
-              data: { prizeTxSignature: sig },
-            });
-          }
-        })
-        .catch((e: unknown) =>
-          this.logger.error(`pay_prize failed for ticket ${job.ticketId}: ${String(e)}`),
+    // On-chain $SCAD prize payouts AFTER the rows commit. Solvency guard
+    // (#29): never fire payouts the treasury cannot cover — unpaid winning
+    // tickets keep prizeTxSignature null and the reconcile sweep retries them
+    // once the treasury is funded (a transient failure heals the same way).
+    if (this.chain.lotteryEnabled && prizeJobs.length > 0) {
+      const totalPrizes = prizeJobs.reduce((s, j) => s + j.amountScadBase, BigInt(0));
+      const treasury = await this.chain.lotteryTreasuryBalance();
+      if (treasury < totalPrizes) {
+        settlementsTotal.inc({ game: 'lottery', outcome: 'failed' });
+        this.logger.error(
+          `lottery #${drawIndex} SOLVENCY: treasury ${treasury} < declared prizes ${totalPrizes} — ` +
+            `payouts deferred to the reconcile sweep (fund the treasury!)`,
         );
+      } else {
+        for (const job of prizeJobs) {
+          void this.chain
+            .lotteryPayPrize({
+              drawIndex,
+              walletAddress: job.walletAddress,
+              amountScadBase: job.amountScadBase,
+              bracket: job.bracket,
+            })
+            .then(async (sig) => {
+              if (sig) {
+                await this.prisma.lotteryTicket.updateMany({
+                  where: { id: { in: job.ticketIds } },
+                  data: { prizeTxSignature: sig },
+                });
+              }
+            })
+            .catch((e: unknown) =>
+              this.logger.error(`pay_prize failed for ${job.walletAddress}: ${String(e)}`),
+            );
+        }
+      }
     }
     if (this.chain.lotteryEnabled && burnScadBase > BigInt(0)) {
       void this.chain

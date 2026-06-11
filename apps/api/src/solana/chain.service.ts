@@ -305,6 +305,19 @@ export class ChainService implements OnModuleInit {
     return this.scadMint?.toBase58() ?? null;
   }
 
+  /** $SCAD sitting in the lottery prize treasury (config PDA's ATA) — the
+   * solvency ceiling for a draw's declared prizes (#29). */
+  async lotteryTreasuryBalance(): Promise<bigint> {
+    if (!this.lotteryEnabled) return 0n;
+    try {
+      const ataAddr = ata(this.scadMint!, this.lotteryConfigPda());
+      const bal = await this.connection.getTokenAccountBalance(ataAddr);
+      return BigInt(bal.value.amount);
+    } catch {
+      return 0n;
+    }
+  }
+
   lotteryConfigPda(): PublicKey {
     return PublicKey.findProgramAddressSync([Buffer.from('lottery')], this.lotteryProgramId!)[0];
   }

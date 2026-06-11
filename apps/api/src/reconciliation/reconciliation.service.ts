@@ -88,6 +88,116 @@ export class ReconciliationService {
     return drift;
   }
 
+  /**
+   * Lottery prize sweep (#29): winning tickets of settled draws whose
+   * prizeTxSignature is still null (solvency deferral, transient RPC failure,
+   * crash between pay and mark). Aggregated per (draw, winner) — the on-chain
+   * Payout PDA is keyed that way and doubles as the double-pay backstop.
+   * Returns the number of payout attempts made.
+   */
+  async sweepLotteryPrizes(limit = 100): Promise<number> {
+    if (!this.chain.lotteryEnabled) return 0;
+    const unpaid = await this.prisma.lotteryTicket.findMany({
+      where: {
+        won: true,
+        prizeTxSignature: null,
+        draw: { status: 'drawn', drawIndex: { not: null } },
+      },
+      take: limit,
+      include: {
+        user: { select: { walletAddress: true } },
+        draw: { select: { drawIndex: true } },
+      },
+    });
+    // Group per (drawIndex, wallet).
+    const groups = new Map<
+      string,
+      { drawIndex: bigint; walletAddress: string; amount: bigint; bracket: number; ids: string[] }
+    >();
+    for (const t of unpaid) {
+      const key = `${t.draw.drawIndex}|${t.user.walletAddress}`;
+      const g = groups.get(key) ?? {
+        drawIndex: t.draw.drawIndex!,
+        walletAddress: t.user.walletAddress,
+        amount: BigInt(0),
+        bracket: t.bracket ?? 0,
+        ids: [],
+      };
+      g.amount += t.payoutScadBase;
+      g.bracket = Math.max(g.bracket, t.bracket ?? 0);
+      g.ids.push(t.id);
+      groups.set(key, g);
+    }
+    let attempts = 0;
+    const treasury = await this.chain.lotteryTreasuryBalance();
+    let budget = treasury;
+    for (const g of groups.values()) {
+      if (g.amount > budget) {
+        this.logger.error(
+          `lottery sweep SOLVENCY: draw ${g.drawIndex} winner ${g.walletAddress} needs ${g.amount}, ` +
+            `treasury budget ${budget} — deferred`,
+        );
+        continue;
+      }
+      attempts += 1;
+      try {
+        const sig = await this.chain.lotteryPayPrize({
+          drawIndex: g.drawIndex,
+          walletAddress: g.walletAddress,
+          amountScadBase: g.amount,
+          bracket: g.bracket,
+        });
+        if (sig) {
+          budget -= g.amount;
+          await this.prisma.lotteryTicket.updateMany({
+            where: { id: { in: g.ids } },
+            data: { prizeTxSignature: sig },
+          });
+        }
+      } catch (e) {
+        this.logger.error(`lottery sweep pay_prize failed for ${g.walletAddress}: ${String(e)}`);
+      }
+    }
+    return attempts;
+  }
+
+  /**
+   * Per-draw payout reconciliation (#29): Σ confirmed (signed) prizes must
+   * equal Σ declared winning prizes for every settled draw. Returns the number
+   * of drifted draws (flag-only).
+   */
+  async lotteryPayoutDrift(limit = 50): Promise<number> {
+    if (!this.chain.lotteryEnabled) return 0;
+    const draws = await this.prisma.lotteryDraw.findMany({
+      where: { status: 'drawn', drawIndex: { not: null } },
+      orderBy: { drawnAt: 'desc' },
+      take: limit,
+      select: { id: true, drawIndex: true },
+    });
+    let drift = 0;
+    for (const d of draws) {
+      const [declared, confirmed] = await Promise.all([
+        this.prisma.lotteryTicket.aggregate({
+          where: { drawId: d.id, won: true },
+          _sum: { payoutScadBase: true },
+        }),
+        this.prisma.lotteryTicket.aggregate({
+          where: { drawId: d.id, won: true, prizeTxSignature: { not: null } },
+          _sum: { payoutScadBase: true },
+        }),
+      ]);
+      const dec = declared._sum.payoutScadBase ?? BigInt(0);
+      const conf = confirmed._sum.payoutScadBase ?? BigInt(0);
+      if (dec !== conf) {
+        drift += 1;
+        this.logger.error(
+          `lottery payout drift: draw #${d.drawIndex} declared ${dec} vs confirmed ${conf}`,
+        );
+      }
+    }
+    return drift;
+  }
+
   async chainDrift(limit = 50): Promise<number> {
     if (!this.chain.enabled) return 0;
     const bets = await this.prisma.bet.findMany({
