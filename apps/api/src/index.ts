@@ -25,3 +25,4 @@ export { AirdropEngine } from './airdrop/airdrop.engine';
 export { SwapService } from './swap/swap.service';
 export { LeaderboardService } from './leaderboard/leaderboard.service';
 export { ReconciliationService } from './reconciliation/reconciliation.service';
+export { RewardsService } from './rewards/rewards.service';

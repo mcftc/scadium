@@ -97,6 +97,10 @@ model User {
   biggestWin     BigInt   @default(0)
   gamesPlayed    Int      @default(0)
   scadiumBalance BigInt   @default(0)
+  // SCAD locked by a PENDING on-chain reward claim (#28) - moved out of
+  // scadiumBalance at claim time, finalized on confirm or RESTORED to
+  // scadiumBalance on permanent failure. Never spendable.
+  scadiumReserved BigInt  @default(0)
   // Play-money balance used by the off-chain game loop until on-chain
   // programs land. New users get 10 SOL equivalent (10_000_000_000 lamports).
   // Once the vault is live this becomes a CACHE of the on-chain UserVault
@@ -597,6 +601,12 @@ model RewardClaim {
   kind        RewardKind
   period      BigInt
   amountScad  BigInt // SCAD base units (9 decimals)
+  // Claim lifecycle (#28): 'pending' (reserved, awaiting on-chain confirm) ->
+  // 'confirmed' (txSignature set, debit finalized) | 'failed' (reserve
+  // restored). 'offchain' = explicit non-value record while the chain is
+  // disabled (dailyCase demo experience). Legacy rows default to 'confirmed'.
+  status      String     @default("confirmed")
+  attempts    Int        @default(0)
   txSignature String?
   // Provably-fair trail (#22, dailyCase): { tier, roll, serverSeedHash,
   // clientSeed, nonce } from the player's active seed pair — the tier
@@ -606,6 +616,7 @@ model RewardClaim {
 
   @@unique([userId, kind, period])
   @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 enum RewardKind {

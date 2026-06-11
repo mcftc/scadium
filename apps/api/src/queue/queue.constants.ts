@@ -14,6 +14,8 @@ export const QUEUE_NAMES = {
   burn: 'burn',
   leaderboard: 'leaderboard',
   reconcile: 'reconcile',
+  /** #28: pending reward-claim reconcile sweep. */
+  rewardClaims: 'reward-claims',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
