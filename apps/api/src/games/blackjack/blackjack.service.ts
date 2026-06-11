@@ -144,7 +144,9 @@ export class BlackjackService {
       await this.debit(params.userId, extra, params.tableId);
     }
     try {
-      return this.engine.action(params);
+      // `await` is load-bearing: a bare `return promise` would skip this catch
+      // and the double's extra debit would never be refunded on rejection.
+      return await this.engine.action(params);
     } catch (e) {
       if (extra > BigInt(0)) await this.credit(params.userId, extra, params.tableId);
       throw new BadRequestException(e instanceof Error ? e.message : 'Action rejected');

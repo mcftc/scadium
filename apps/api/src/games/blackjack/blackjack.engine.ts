@@ -778,7 +778,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    * Seat action (hit/stand/double) for the user whose turn it is. `double`
    * needs the extra stake debited by the service BEFORE calling in.
    */
-  action(params: { tableId: string; userId: string; action: 'hit' | 'stand' | 'double' }) {
+  async action(params: { tableId: string; userId: string; action: 'hit' | 'stand' | 'double' }) {
     const t = this.table(params.tableId);
     if (t.phase !== 'player_turns' || t.activeSeat === null) throw new Error('Not your turn');
     const seat = t.seats.get(t.activeSeat);
@@ -796,6 +796,19 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       if (params.action === 'double') {
         seat.doubled = true;
         seat.bet!.mainLamports *= BigInt(2);
+        // Re-persist the snapshot NOW (#68): the deal-time stateJson holds the
+        // pre-double stake, so a crash between this debit and settle would
+        // under-refund the doubled increment on recovery. Best-effort — a
+        // failed write only reverts to today's deal-time refund baseline and
+        // must NOT unwind the already-mutated hand.
+        try {
+          await this.prisma.blackjackRound.update({
+            where: { id: t.roundDbId! },
+            data: { stateJson: this.snapshot(t.id) as object },
+          });
+        } catch (e) {
+          this.logger.error(`table ${t.id}: failed to persist doubled stake snapshot: ${String(e)}`);
+        }
       }
       if (isBust(seat.cards)) seat.status = 'busted';
       else if (params.action === 'double') seat.status = 'standing';

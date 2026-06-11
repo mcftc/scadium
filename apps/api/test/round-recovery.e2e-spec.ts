@@ -168,4 +168,107 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       }),
     ).toBe(1);
   });
+
+  it('blackjack #68: doubling re-persists stateJson so recovery refunds the DOUBLED stake', async () => {
+    const table = await prisma.blackjackTable.create({
+      data: {
+        name: `rec68-${Date.now().toString(36)}`,
+        status: 'player_turns',
+        minBetLamports: 1_000n,
+        maxBetLamports: 1_000_000_000n,
+      },
+    });
+    const seed = await makeSeed();
+    const doubler = await makeUser(0n); // debited 100 main + 50 side at deal, +100 on double
+    const other = await makeUser(0n); // second seat keeps the turn cycle alive (no dealer cascade)
+    const round = await prisma.blackjackRound.create({
+      data: {
+        tableId: table.id,
+        seedId: seed.id,
+        nonce: 0,
+        endedAt: null,
+        // Deal-time snapshot (#14) — still holds the PRE-double main stake.
+        stateJson: {
+          seats: [
+            {
+              userId: doubler.id,
+              bet: { mainLamports: '100', side21p3Lamports: '50', sidePerfectPairsLamports: '0' },
+            },
+          ],
+        },
+      },
+    });
+
+    // Mid-hand engine state, doubler on the clock with the first two cards.
+    const card = (rank: string) => ({ rank, suit: 'H' });
+    const seatOf = (index: number, user: { id: string; walletAddress: string }) => ({
+      index,
+      userId: user.id,
+      username: null,
+      walletAddress: user.walletAddress,
+      idleRounds: 0,
+      bet: { mainLamports: 100n, side21p3Lamports: 50n, sidePerfectPairsLamports: 0n },
+      cards: [card('5'), card('9')],
+      status: 'playing',
+      doubled: false,
+      side21p3Outcome: null,
+      sidePerfectPairsOutcome: null,
+      result: null,
+      payoutLamports: 0n,
+    });
+    const engine = makeBlackjackEngine();
+    (engine as unknown as { tables: Map<string, unknown> }).tables.set(table.id, {
+      id: table.id,
+      name: 'rec68',
+      isPrivate: false,
+      ownerId: null,
+      maxSeats: 5,
+      phase: 'player_turns',
+      closeAt: Date.now() + 15_000,
+      activeSeat: 0,
+      seats: new Map([
+        [0, seatOf(0, doubler)],
+        [1, seatOf(1, other)],
+      ]),
+      dealerCards: [card('10'), card('7')],
+      dealerHidden: true,
+      deckIndex: 6,
+      dealLog: [],
+      roundDbId: round.id,
+      seedId: seed.id,
+      serverSeed: seed.serverSeed,
+      serverSeedHash: seed.serverSeedHash,
+      clientSeed: seed.clientSeed,
+      nonce: 0,
+      timer: null,
+      lastActivityAt: Date.now(),
+      exposure: null,
+    });
+
+    await engine.action({ tableId: table.id, userId: doubler.id, action: 'double' });
+    const live = (engine as unknown as { tables: Map<string, { timer: NodeJS.Timeout | null }> })
+      .tables.get(table.id)!;
+    if (live.timer) clearTimeout(live.timer); // next seat's turn clock — not under test
+
+    // The persisted snapshot now carries the doubled main stake.
+    const persisted = await prisma.blackjackRound.findUniqueOrThrow({ where: { id: round.id } });
+    const snap = persisted.stateJson as {
+      seats: { userId: string; bet: { mainLamports: string } | null }[];
+    };
+    expect(snap.seats.find((s) => s.userId === doubler.id)!.bet!.mainLamports).toBe('200');
+
+    // Simulated restart: a FRESH engine recovers from the DB and refunds the
+    // FULL doubled stake (200 main + 50 side) — pre-fix this paid only 150.
+    await recover(makeBlackjackEngine());
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: doubler.id } })).playBalanceLamports,
+    ).toBe(250n);
+    // The other seat (in the re-persisted snapshot) gets its plain stake back.
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: other.id } })).playBalanceLamports,
+    ).toBe(150n);
+    expect((await prisma.blackjackTable.findUniqueOrThrow({ where: { id: table.id } })).status).toBe(
+      'waiting',
+    );
+  });
 });
