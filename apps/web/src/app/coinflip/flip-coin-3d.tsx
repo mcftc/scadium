@@ -8,10 +8,11 @@ import { FlipCoin, type CoinSide } from './flip-coin';
 const CoinStage = dynamic(() => import('./coin-scene'), { ssr: false, loading: () => null });
 
 /**
- * Drop-in 3D upgrade of FlipCoin — identical contract, plus an optional
- * `celebrate` flag that fires a confetti burst when the toss lands. Falls back
- * to the original DOM coin while the chunk loads, without WebGL, or with
- * reduced motion.
+ * The $SCAD coin toss theater: an android flicks the coin while the crowd
+ * watches, the camera rides in as the spin decays, and the result face (robot
+ * emblem = heads, 1 SCAD = tails) is only readable at the end. Falls back to
+ * the original DOM coin while the chunk loads, without WebGL, or with reduced
+ * motion. Same contract as FlipCoin plus `celebrate`.
  */
 export function FlipCoin3D({
   result = 'heads',
@@ -23,23 +24,26 @@ export function FlipCoin3D({
 }: {
   result?: CoinSide;
   spinning?: boolean;
+  /** Height of the 2D fallback coin; the 3D stage itself is a 16:9 tableau. */
   size?: number;
   celebrate?: boolean;
-  /** Animation speed multiplier (preview slow-motion); leave at 1 in games. */
+  /** Animation speed multiplier (preview slow-motion); clamped > 0 in the scene. */
   speed?: number;
   onSpinComplete?: () => void;
 }) {
   return (
-    <div className="relative mx-auto" style={{ width: size, height: size }}>
+    <div className="relative mx-auto aspect-video w-full overflow-hidden rounded-xl">
       <GameStage
         className="h-full w-full"
         fallback={
-          <FlipCoin
-            result={result}
-            spinning={spinning}
-            size={size}
-            onSpinComplete={onSpinComplete}
-          />
+          <div className="flex h-full w-full items-center justify-center">
+            <FlipCoin
+              result={result}
+              spinning={spinning}
+              size={size}
+              onSpinComplete={onSpinComplete}
+            />
+          </div>
         }
       >
         <CoinStage

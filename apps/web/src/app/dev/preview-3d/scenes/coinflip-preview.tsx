@@ -21,28 +21,28 @@ export function CoinflipPreview() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-center gap-10 rounded-2xl border border-border bg-background p-8">
-        <div className="flex flex-col items-center gap-3">
-          <FlipCoin3D
-            result={result}
-            spinning={spinning}
-            size={320}
-            celebrate={celebrate}
-            speed={slowmo ? 0.25 : 1}
-            onSpinComplete={() => {
-              setSpinning(false);
-              setLastLanded(result);
-            }}
-          />
+      <div className="space-y-4 rounded-2xl border border-border bg-background p-6">
+        <FlipCoin3D
+          result={result}
+          spinning={spinning}
+          size={160}
+          celebrate={celebrate}
+          speed={slowmo ? 0.25 : 1}
+          onSpinComplete={() => {
+            setSpinning(false);
+            setLastLanded(result);
+          }}
+        />
+        <div className="flex items-center justify-between">
           <span className="text-xs uppercase tracking-widest text-foreground-muted">
             3D {lastLanded ? `— landed ${lastLanded}` : spinning ? '— tossing…' : ''}
           </span>
-        </div>
-        <div className="flex flex-col items-center gap-3">
-          <FlipCoin result={result} spinning={spinning} size={140} />
-          <span className="text-xs uppercase tracking-widest text-foreground-muted">
-            2D (mevcut)
-          </span>
+          <div className="flex items-center gap-3">
+            <FlipCoin result={result} spinning={spinning} size={72} />
+            <span className="text-[10px] uppercase tracking-widest text-foreground-muted">
+              2D (mevcut)
+            </span>
+          </div>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3">

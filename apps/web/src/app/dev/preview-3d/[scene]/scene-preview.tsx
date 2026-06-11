@@ -8,7 +8,8 @@ import { TestPreview } from '../scenes/test-preview';
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
   test: { title: 'Foundation test — knot, starfield, confetti, bloom', Component: TestPreview },
   coinflip: {
-    title: 'Coinflip — 3D coin toss: parabolic arc, ease-out tumble, settle wobble, confetti',
+    title:
+      'Coinflip — $SCAD coin tossed by an android, crowd watching, camera dolly-in, late reveal',
     Component: CoinflipPreview,
   },
 };
