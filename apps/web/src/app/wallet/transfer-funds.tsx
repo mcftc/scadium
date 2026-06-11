@@ -81,6 +81,13 @@ export function TransferFunds() {
         const sig = await sendTransaction(tx, connection);
         await connection.confirmTransaction({ signature: sig, ...latest }, 'confirmed');
         setLastSig(sig);
+        // Bridge (#27): tell the API so it verifies the program's own event and
+        // credits/debits the custody-backed spendable balance (idempotent on sig).
+        await api(kind === 'deposit' ? '/vault/deposit-confirm' : '/vault/withdraw-confirm', {
+          method: 'POST',
+          token: useAuthStore.getState().accessToken,
+          body: { signature: sig },
+        });
         void qc.invalidateQueries({ queryKey: ['vault', 'balance'] });
         void qc.invalidateQueries({ queryKey: ['wallet', 'sol'] });
         void qc.invalidateQueries({ queryKey: ['me'] });
