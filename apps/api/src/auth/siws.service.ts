@@ -39,19 +39,37 @@ export class SiwsService {
     return { nonce, message: this.buildMessage(walletAddress, nonce, issuedAt) };
   }
 
+  /** Environment binding (#37): a signature is only valid for THIS deployment. */
+  static binding(env = process.env): { domain: string; uri: string; chainId: string } {
+    return {
+      domain: env.SIWS_DOMAIN ?? 'localhost:3000',
+      uri: env.SIWS_URI ?? 'http://localhost:3000',
+      chainId: `solana:${env.SOLANA_NETWORK ?? 'devnet'}`,
+    };
+  }
+
   /**
    * Canonical SIWS message format. Must match exactly what the frontend
    * displays to the user before they sign — any change invalidates existing
    * nonces. The `issuedAt` parameter is stored with the nonce at issue time
    * so verify can re-derive the identical message.
+   *
+   * Bound to domain / URI / chain (#37): verify re-derives this string from the
+   * SERVER's configured values, so a signature captured on another origin or
+   * cluster (dev vs prod, devnet vs mainnet) can never authenticate here —
+   * the re-derived message differs byte-for-byte and the signature won't match.
    */
   buildMessage(walletAddress: string, nonce: string, issuedAt: string): string {
+    const { domain, uri, chainId } = SiwsService.binding();
     return [
-      'Scadium wants you to sign in with your Solana account:',
+      `${domain} wants you to sign in with your Solana account:`,
       walletAddress,
       '',
       'Sign this message to authenticate. This will not trigger a transaction or cost any fees.',
       '',
+      `URI: ${uri}`,
+      'Version: 1',
+      `Chain ID: ${chainId}`,
       `Nonce: ${nonce}`,
       `Issued At: ${issuedAt}`,
     ].join('\n');

@@ -7,7 +7,7 @@ import { SeedManagerService } from '../src/fairness/seed-manager.service';
 import { prisma, offChain, makeUser } from './engine-harness';
 
 interface FairBlock {
-  roll: number;
+  roll: string; // persisted as a string (#128) so the trail round-trips exactly
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
@@ -56,7 +56,7 @@ describe('daily case provable fairness (issue #22)', () => {
     const { revealedServerSeed } = await seeds.rotateServerSeed(user.id);
     expect(commitServerSeed(revealedServerSeed)).toBe(trail.serverSeedHash);
     const roll = dailyCaseRoll(revealedServerSeed, trail.clientSeed, trail.nonce);
-    expect(roll).toBe(trail.roll);
+    expect(trail.roll).toBe(roll.toString()); // exact string round-trip (#128)
     expect(pickCaseTier(roll, SCAD.CASE_TIERS).tier).toBe(opened.tier);
 
     // Determinism: same inputs, same tier, every time.

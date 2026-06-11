@@ -149,7 +149,10 @@ export class RewardsService {
           kind: 'dailyCase',
           period,
           amountScad: amount,
-          resultJson: { tier: tierEntry.tier, ...fair },
+          // roll as a STRING (#128): jsonb's numeric round-trip drops the last
+          // ULP on 17-significant-digit doubles, breaking exact reproduction of
+          // the trail from the revealed seed. Same policy as lamports.
+          resultJson: { tier: tierEntry.tier, ...fair, roll: roll.toString() },
         },
       });
       const response = this.serializeDailyCase(tierEntry.tier, amount, now, fair);

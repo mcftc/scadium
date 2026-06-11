@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { GameType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -58,6 +59,8 @@ export class UsersService {
 
     const me = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!me) throw new NotFoundException('User not found');
+    // Banned accounts must not grow their wallet surface (#37).
+    if (me.banned) throw new ForbiddenException('Account banned');
     if (me.walletAddress === params.address) {
       throw new ConflictException('That is already your primary wallet');
     }
@@ -82,16 +85,18 @@ export class UsersService {
   async setPrimaryWallet(userId: string, address: string) {
     const me = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!me) throw new NotFoundException('User not found');
+    if (me.banned) throw new ForbiddenException('Account banned');
     if (me.walletAddress === address) return this.listWallets(userId);
-    const linked = await this.prisma.linkedWallet.findUnique({ where: { address } });
-    if (!linked || linked.userId !== userId) {
-      throw new BadRequestException('Not one of your wallets');
-    }
-    await this.prisma.$transaction([
-      this.prisma.linkedWallet.delete({ where: { address } }),
-      this.prisma.linkedWallet.create({ data: { userId, address: me.walletAddress } }),
-      this.prisma.user.update({ where: { id: userId }, data: { walletAddress: address } }),
-    ]);
+    // Ownership is asserted INSIDE the transaction (#37): the delete is scoped
+    // by { address, userId }, so if the row was unlinked or re-owned between
+    // the request and the commit (TOCTOU), 0 rows match, we throw, and the
+    // whole swap rolls back — no check-then-act window.
+    await this.prisma.$transaction(async (tx) => {
+      const owned = await tx.linkedWallet.deleteMany({ where: { address, userId } });
+      if (owned.count === 0) throw new BadRequestException('Not one of your wallets');
+      await tx.linkedWallet.create({ data: { userId, address: me.walletAddress } });
+      await tx.user.update({ where: { id: userId }, data: { walletAddress: address } });
+    });
     return this.listWallets(userId);
   }
 
