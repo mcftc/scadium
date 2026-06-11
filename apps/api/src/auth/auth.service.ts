@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SiwsService } from './siws.service';
@@ -51,6 +51,9 @@ export class AuthService {
     if (!ok) throw new UnauthorizedException('Invalid signature');
 
     const user = await this.upsertUser(params.walletAddress);
+    // Banned users must not mint tokens/sessions (#37) — a valid signature only
+    // proves key ownership, not standing.
+    if (user.banned) throw new ForbiddenException('Account banned');
     const { accessToken, refreshToken } = await this.issueSession(
       user.id,
       user.walletAddress,
