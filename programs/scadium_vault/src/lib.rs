@@ -83,14 +83,13 @@ pub mod scadium_vault {
         Ok(())
     }
 
-    /// Cosigner-signed settlement receipt. Nets stake vs payout between the
-    /// user vault and the house vault and emits the on-chain bet record.
-    /// The BetSettled event is the receipt of record — it always carries the
-    /// full declared stake/payout. Lamport movement is BEST-EFFORT against
-    /// the user's vault: play-money players (who never deposited) get their
-    /// vault auto-created (rent paid by the cosigner) and a zero-transfer
-    /// receipt, while funded players settle for real. Wins always pay in
-    /// full from the house vault.
+    /// Cosigner-signed AUTHORITATIVE settlement (#26): nets stake vs payout
+    /// between the user vault and the house vault, moving REAL lamports. The
+    /// BetSettled event amounts are guaranteed equal to the value netted — a
+    /// loss the vault cannot cover above rent REVERTS (InsufficientFunds)
+    /// instead of emitting a full-amount receipt for a partial/zero transfer.
+    /// Play-money rounds must use `record_bet` (an explicitly non-value
+    /// receipt) instead.
     pub fn settle_bet(
         ctx: Context<SettleBet>,
         bet_id: [u8; 16],
@@ -134,20 +133,51 @@ pub mod scadium_vault {
                 ctx.accounts.user_vault.add_lamports(net)?;
             }
         } else {
-            // House collects the net loss — clamped to what the vault holds
-            // above rent, so unfunded (play-money) bets still get a receipt.
+            // House collects the net loss — IN FULL. No clamp: if the vault
+            // cannot cover the loss above rent the settlement reverts, so the
+            // emitted receipt can never exceed the lamports actually moved.
             let net = stake - payout;
-            let available = user_vault_info.lamports().saturating_sub(user_rent_min);
-            let collect = net.min(available);
-            if collect > 0 {
-                ctx.accounts.user_vault.sub_lamports(collect)?;
-                ctx.accounts.house_vault.add_lamports(collect)?;
+            if net > 0 {
+                let available = user_vault_info.lamports().saturating_sub(user_rent_min);
+                require!(available >= net, VaultError::InsufficientFunds);
+                ctx.accounts.user_vault.sub_lamports(net)?;
+                ctx.accounts.house_vault.add_lamports(net)?;
             }
         }
 
         emit!(BetSettled {
             bet_id,
             user: ctx.accounts.user_vault.owner,
+            game,
+            stake,
+            payout,
+            multiplier_bps,
+        });
+        Ok(())
+    }
+
+    /// Cosigner-signed PLAY-MONEY receipt (#26): records a bet outcome on
+    /// chain WITHOUT moving any lamports. Deliberately a separate instruction
+    /// + event from `settle_bet`, so a value-bearing settlement receipt can
+    /// never be confused with a play-money record on an explorer.
+    pub fn record_bet(
+        ctx: Context<RecordBet>,
+        bet_id: [u8; 16],
+        game: GameType,
+        stake: u64,
+        payout: u64,
+        multiplier_bps: u32,
+    ) -> Result<()> {
+        let house = &ctx.accounts.house;
+        require!(!house.paused, VaultError::Paused);
+        require_keys_eq!(
+            ctx.accounts.cosigner.key(),
+            house.cosigner,
+            VaultError::NotCosigner
+        );
+        emit!(BetRecorded {
+            bet_id,
+            user: ctx.accounts.user.key(),
             game,
             stake,
             payout,
@@ -338,6 +368,15 @@ pub struct SettleBet<'info> {
 }
 
 #[derive(Accounts)]
+pub struct RecordBet<'info> {
+    #[account(seeds = [b"house"], bump = house.bump)]
+    pub house: Account<'info, House>,
+    /// CHECK: the player — event field only; no lamports move.
+    pub user: UncheckedAccount<'info>,
+    pub cosigner: Signer<'info>,
+}
+
+#[derive(Accounts)]
 #[instruction(kind: RewardKind, period: u64)]
 pub struct ClaimReward<'info> {
     #[account(seeds = [b"house"], bump = house.bump)]
@@ -399,6 +438,16 @@ pub struct Withdrawn {
 
 #[event]
 pub struct BetSettled {
+    pub bet_id: [u8; 16],
+    pub user: Pubkey,
+    pub game: GameType,
+    pub stake: u64,
+    pub payout: u64,
+    pub multiplier_bps: u32,
+}
+
+#[event]
+pub struct BetRecorded {
     pub bet_id: [u8; 16],
     pub user: Pubkey,
     pub game: GameType,

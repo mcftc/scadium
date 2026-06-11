@@ -410,6 +410,82 @@ export type ScadiumVault = {
       ]
     },
     {
+      "name": "recordBet",
+      "docs": [
+        "Cosigner-signed PLAY-MONEY receipt (#26): records a bet outcome on",
+        "chain WITHOUT moving any lamports. Deliberately a separate instruction",
+        "+ event from `settle_bet`, so a value-bearing settlement receipt can",
+        "never be confused with a play-money record on an explorer."
+      ],
+      "discriminator": [
+        138,
+        165,
+        80,
+        175,
+        196,
+        248,
+        195,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "house",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  117,
+                  115,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "cosigner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "betId",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "type": {
+            "defined": {
+              "name": "gameType"
+            }
+          }
+        },
+        {
+          "name": "stake",
+          "type": "u64"
+        },
+        {
+          "name": "payout",
+          "type": "u64"
+        },
+        {
+          "name": "multiplierBps",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "setPaused",
       "discriminator": [
         91,
@@ -458,14 +534,13 @@ export type ScadiumVault = {
     {
       "name": "settleBet",
       "docs": [
-        "Cosigner-signed settlement receipt. Nets stake vs payout between the",
-        "user vault and the house vault and emits the on-chain bet record.",
-        "The BetSettled event is the receipt of record — it always carries the",
-        "full declared stake/payout. Lamport movement is BEST-EFFORT against",
-        "the user's vault: play-money players (who never deposited) get their",
-        "vault auto-created (rent paid by the cosigner) and a zero-transfer",
-        "receipt, while funded players settle for real. Wins always pay in",
-        "full from the house vault."
+        "Cosigner-signed AUTHORITATIVE settlement (#26): nets stake vs payout",
+        "between the user vault and the house vault, moving REAL lamports. The",
+        "BetSettled event amounts are guaranteed equal to the value netted — a",
+        "loss the vault cannot cover above rent REVERTS (InsufficientFunds)",
+        "instead of emitting a full-amount receipt for a partial/zero transfer.",
+        "Play-money rounds must use `record_bet` (an explicitly non-value",
+        "receipt) instead."
       ],
       "discriminator": [
         115,
@@ -692,6 +767,19 @@ export type ScadiumVault = {
   ],
   "events": [
     {
+      "name": "betRecorded",
+      "discriminator": [
+        203,
+        197,
+        68,
+        83,
+        161,
+        6,
+        163,
+        208
+      ]
+    },
+    {
       "name": "betSettled",
       "discriminator": [
         57,
@@ -772,6 +860,47 @@ export type ScadiumVault = {
     }
   ],
   "types": [
+    {
+      "name": "betRecorded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "betId",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "game",
+            "type": {
+              "defined": {
+                "name": "gameType"
+              }
+            }
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "multiplierBps",
+            "type": "u32"
+          }
+        ]
+      }
+    },
     {
       "name": "betSettled",
       "type": {

@@ -349,7 +349,7 @@ export class CoinflipService {
     if (!settled.replayed && this.chain.enabled) {
       for (const s of settled.settles) {
         void this.chain
-          .settleBet({
+          .recordBet({
             betId: s.betId,
             walletAddress: s.walletAddress,
             game: 'coinflip',
@@ -366,7 +366,7 @@ export class CoinflipService {
             }
           })
           .catch((e: unknown) =>
-            this.logger.error(`on-chain settle failed for ${s.betId}: ${String(e)}`),
+            this.logger.error(`on-chain record failed for ${s.betId}: ${String(e)}`),
           );
       }
     }

@@ -12,6 +12,7 @@ import {
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
+import { settlementMoved } from './settlement-verify';
 
 /**
  * Thin Solana layer for the scadium_vault program (Phase A).
@@ -27,7 +28,8 @@ import { readFileSync } from 'fs';
 @Injectable()
 export class ChainService implements OnModuleInit {
   private readonly logger = new Logger(ChainService.name);
-  private connection!: Connection;
+  /** Exposed for reconciliation (#26) and integration tests. */
+  connection!: Connection;
   private cosigner: Keypair | null = null;
   private programId: PublicKey | null = null;
   enabled = false;
@@ -135,9 +137,12 @@ export class ChainService implements OnModuleInit {
   // ------------------------------------------------------------ settle
 
   /**
-   * Fire the on-chain settlement receipt for a resolved bet.
-   * Returns the tx signature (for Bet.txSignature) or null when disabled
-   * or on failure — settlement must never block the game loop.
+   * AUTHORITATIVE on-chain settlement (#26): moves real lamports between the
+   * user vault and the house vault, then VERIFIES the confirmed transaction —
+   * `meta.err == null` and the house-vault lamport delta equals the requested
+   * net — before reporting success. Returns the tx signature only when the
+   * value provably moved; null on failure/mismatch (callers must NOT credit a
+   * mirror ledger off a null). Play-money receipts belong in `recordBet`.
    */
   async settleBet(params: {
     betId: string; // uuid — packed into 16 bytes
@@ -158,11 +163,12 @@ export class ChainService implements OnModuleInit {
         u64le(params.payoutLamports),
         u32le(Math.round((params.multiplier ?? 0) * 10_000)),
       ]);
+      const houseVault = this.houseVaultPda();
       const ix = new TransactionInstruction({
         programId: this.programId!,
         keys: [
           { pubkey: this.housePda(), isSigner: false, isWritable: false },
-          { pubkey: this.houseVaultPda(), isSigner: false, isWritable: true },
+          { pubkey: houseVault, isSigner: false, isWritable: true },
           { pubkey: this.userVaultPda(user), isSigner: false, isWritable: true },
           { pubkey: user, isSigner: false, isWritable: false },
           // Cosigner pays rent when init_if_needed creates a fresh vault.
@@ -176,9 +182,73 @@ export class ChainService implements OnModuleInit {
         commitment: 'confirmed',
         maxRetries: 3,
       });
+
+      // Post-confirm verification: the receipt is only as good as the lamports
+      // that actually moved. The HOUSE delta is rent-noise-free (the cosigner
+      // pays any init_if_needed rent), so it must equal ±net exactly.
+      const confirmed = await this.connection.getTransaction(sig, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      const expectedHouseDelta =
+        params.stakeLamports >= params.payoutLamports
+          ? params.stakeLamports - params.payoutLamports // loss → house gains net
+          : -(params.payoutLamports - params.stakeLamports); // win → house pays net
+      if (!settlementMoved(confirmed, houseVault.toBase58(), expectedHouseDelta)) {
+        this.logger.error(
+          `settle_bet ${params.betId}: confirmed tx did not move the expected ` +
+            `${expectedHouseDelta} lamports through the house vault — NOT reporting success`,
+        );
+        return null;
+      }
       return sig;
     } catch (e) {
       this.logger.error(`settle_bet failed for bet ${params.betId}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * PLAY-MONEY receipt (#26): records the bet outcome on chain WITHOUT moving
+   * lamports (the program's `record_bet` — a separate instruction + event so a
+   * value-bearing settlement can never be confused with a play-money record).
+   * Fire-and-forget like the old receipt path: returns the signature or null.
+   */
+  async recordBet(params: {
+    betId: string;
+    walletAddress: string;
+    game: 'crash' | 'coinflip' | 'blackjack' | 'lottery' | 'jackpot';
+    stakeLamports: bigint;
+    payoutLamports: bigint;
+    multiplier: number | null;
+  }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner) return null;
+    try {
+      const user = new PublicKey(params.walletAddress);
+      const data = Buffer.concat([
+        anchorDiscriminator('record_bet'),
+        uuidToBytes(params.betId),
+        Buffer.from([GAME_INDEX[params.game]]),
+        u64le(params.stakeLamports),
+        u64le(params.payoutLamports),
+        u32le(Math.round((params.multiplier ?? 0) * 10_000)),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.programId!,
+        keys: [
+          { pubkey: this.housePda(), isSigner: false, isWritable: false },
+          { pubkey: user, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+        ],
+        data,
+      });
+      const tx = new Transaction().add(ix);
+      return await sendAndConfirmTransaction(this.connection, tx, [this.cosigner], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+    } catch (e) {
+      this.logger.error(`record_bet failed for bet ${params.betId}: ${(e as Error).message}`);
       return null;
     }
   }

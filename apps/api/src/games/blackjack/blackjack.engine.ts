@@ -993,7 +993,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (this.chain.enabled) {
       for (const d of seatData) {
         void this.chain
-          .settleBet({
+          .recordBet({
             betId: d.betId,
             walletAddress: d.seat.walletAddress,
             game: 'blackjack',

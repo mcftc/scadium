@@ -492,7 +492,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     if (this.chain.enabled) {
       for (const job of settleJobs) {
         void this.chain
-          .settleBet({
+          .recordBet({
             betId: job.betId,
             walletAddress: job.walletAddress,
             game: 'jackpot',
@@ -509,7 +509,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             }
           })
           .catch((e: unknown) =>
-            this.logger.error(`on-chain settle failed for ${job.betId}: ${String(e)}`),
+            this.logger.error(`on-chain record failed for ${job.betId}: ${String(e)}`),
           );
       }
     }

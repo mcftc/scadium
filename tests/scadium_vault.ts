@@ -157,28 +157,51 @@ describe('scadium_vault', () => {
     assert.equal(vaultAfter - vaultBefore, 0.15 * LAMPORTS_PER_SOL);
   });
 
-  it('settle_bet auto-creates a vault for a never-deposited user (zero-transfer receipt)', async () => {
-    const fresh = Keypair.generate(); // no airdrop, no deposit — pure play-money user
+  it('settle_bet REVERTS when the vault cannot cover the loss (#26 — no zero-transfer receipts)', async () => {
+    const fresh = Keypair.generate(); // no airdrop, no deposit — unfunded user
     const freshVault = pda(Buffer.from('user_vault'), fresh.publicKey.toBuffer());
     const houseBefore = (await provider.connection.getAccountInfo(houseVaultPda))!.lamports;
     const betId = Array.from({ length: 16 }, () => 9);
+    try {
+      await program.methods
+        .settleBet(betId, { blackjack: {} }, new anchor.BN(0.5 * LAMPORTS_PER_SOL), new anchor.BN(0), 0)
+        .accounts({
+          house: housePda,
+          houseVault: houseVaultPda,
+          userVault: freshVault,
+          user: fresh.publicKey,
+          cosigner: cosigner.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([cosigner])
+        .rpc();
+      assert.fail('should have thrown — a full-amount receipt must never cover a zero transfer');
+    } catch (e: any) {
+      assert.include(String(e), 'InsufficientFunds');
+    }
+    // Nothing moved.
+    const houseAfter = (await provider.connection.getAccountInfo(houseVaultPda))!.lamports;
+    assert.equal(houseAfter, houseBefore);
+  });
+
+  it('record_bet emits a play-money receipt and moves NOTHING (#26)', async () => {
+    const fresh = Keypair.generate(); // play-money user — no vault at all
+    const houseBefore = (await provider.connection.getAccountInfo(houseVaultPda))!.lamports;
+    const betId = Array.from({ length: 16 }, () => 11);
     await program.methods
-      .settleBet(betId, { blackjack: {} }, new anchor.BN(0.5 * LAMPORTS_PER_SOL), new anchor.BN(0), 0)
+      .recordBet(betId, { coinflip: {} }, new anchor.BN(0.3 * LAMPORTS_PER_SOL), new anchor.BN(0), 0)
       .accounts({
         house: housePda,
-        houseVault: houseVaultPda,
-        userVault: freshVault,
         user: fresh.publicKey,
         cosigner: cosigner.publicKey,
-        systemProgram: SystemProgram.programId,
       })
       .signers([cosigner])
       .rpc();
-    const vault = await (program.account as any).userVault.fetch(freshVault);
-    assert.equal(vault.owner.toBase58(), fresh.publicKey.toBase58());
-    // Loss was clamped to zero — the house took nothing it wasn't owed.
     const houseAfter = (await provider.connection.getAccountInfo(houseVaultPda))!.lamports;
-    assert.equal(houseAfter, houseBefore);
+    assert.equal(houseAfter, houseBefore); // declared amounts, zero value moved
+    // No vault was created either — the receipt is pure metadata.
+    const freshVault = pda(Buffer.from('user_vault'), fresh.publicKey.toBuffer());
+    assert.isNull(await provider.connection.getAccountInfo(freshVault));
   });
 
   it('settle_bet rejects a non-cosigner', async () => {
