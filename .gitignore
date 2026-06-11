@@ -72,9 +72,17 @@ skills-lock.json
 !.claude/README.md
 .claude/settings.local.json
 
-# Rust/Anchor build artifacts
-target/
+# Rust/Anchor build artifacts — but TRACK the generated IDL + TS types and the
+# devnet program keypairs (#25): the IDLs are the on-chain ABI the setup
+# scripts/tests consume, and the keypairs pin the deployed program ids to the
+# declare_id! values. NOTE: `dir/` can't be re-included from inside, hence the
+# `target/*` + negation form.
+target/*
 !target/idl/
+!target/types/
+!target/deploy/
+target/deploy/*
+!target/deploy/*-keypair.json
 
 # firecrawl scrape cache
 .firecrawl/
