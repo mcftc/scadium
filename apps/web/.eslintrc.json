@@ -1,3 +1,16 @@
 {
-  "extends": "next/core-web-vitals"
+  "extends": "next/core-web-vitals",
+  "overrides": [
+    {
+      "files": [
+        "src/components/three/**/*.tsx",
+        "src/**/*-scene.tsx",
+        "src/**/*-stage.tsx",
+        "src/app/dev/preview-3d/**/*.tsx"
+      ],
+      "rules": {
+        "react/no-unknown-property": "off"
+      }
+    }
+  ]
 }

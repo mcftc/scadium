@@ -86,3 +86,4 @@ target/deploy/*
 
 # firecrawl scrape cache
 .firecrawl/
+.preview-shots/
