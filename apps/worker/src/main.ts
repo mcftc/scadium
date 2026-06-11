@@ -62,6 +62,13 @@ async function bootstrap(): Promise<void> {
     new Worker(QUEUE_NAMES.leaderboard, async () => leaderboard.snapshot('hourly'), { connection }),
     new Worker(QUEUE_NAMES.reconcile, async () => reconciliation.reconcileAll(), { connection }),
     new Worker(
+      QUEUE_NAMES.lotteryPayouts,
+      // #29: pay_prize retry sweep — Payout PDA per (draw,winner) backstops
+      // double-pays; solvency-budgeted per run.
+      async () => reconciliation.sweepLotteryPrizes(),
+      { connection },
+    ),
+    new Worker(
       QUEUE_NAMES.rewardClaims,
       // #28: sweep pending claims — every transition is status-guarded and the
       // on-chain ClaimRecord PDA blocks double-pays, so N workers are safe.
@@ -82,12 +89,14 @@ async function bootstrap(): Promise<void> {
   const leaderboardQueue = new Queue(QUEUE_NAMES.leaderboard, { connection });
   const reconcileQueue = new Queue(QUEUE_NAMES.reconcile, { connection });
   const rewardClaimsQueue = new Queue(QUEUE_NAMES.rewardClaims, { connection });
+  const lotteryPayoutsQueue = new Queue(QUEUE_NAMES.lotteryPayouts, { connection });
 
   await airdropQueue.upsertJobScheduler('airdrop-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
   await burnQueue.upsertJobScheduler('burn-10min', { every: 10 * 60_000 }, { name: 'burn' });
   await leaderboardQueue.upsertJobScheduler('leaderboard-hourly', { every: 60 * 60_000 }, { name: 'snapshot' });
   await reconcileQueue.upsertJobScheduler('reconcile-hourly', { every: 60 * 60_000 }, { name: 'reconcile' });
   await rewardClaimsQueue.upsertJobScheduler('reward-claims-5min', { every: 5 * 60_000 }, { name: 'sweep' });
+  await lotteryPayoutsQueue.upsertJobScheduler('lottery-payouts-5min', { every: 5 * 60_000 }, { name: 'sweep' });
 
   logger.log('worker up — 4 queues, schedulers registered');
 

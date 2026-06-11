@@ -326,6 +326,38 @@ describe('scadium_lottery', () => {
     }
   });
 
+  it('pay_prize REVERTS when the treasury cannot cover the prize (#29)', async () => {
+    // Treasury was seeded SCAD(1000) and has paid 50 + sales — demand far more.
+    const richWinner = Keypair.generate();
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(richWinner.publicKey, LAMPORTS_PER_SOL),
+      'confirmed',
+    );
+    const winnerAta = (
+      await getOrCreateAssociatedTokenAccount(provider.connection, payer, scadMint, richWinner.publicKey)
+    ).address;
+    try {
+      await program.methods
+        .payPrize(DRAW_INDEX, new anchor.BN(SCAD(1_000_000n).toString()), 5)
+        .accounts({
+          config,
+          draw: drawPda(1),
+          winner: richWinner.publicKey,
+          payout: payoutPda(1, richWinner.publicKey),
+          treasuryScad: treasury,
+          winnerScad: winnerAta,
+          scadMint,
+          cosigner: cosigner.publicKey,
+        })
+        .signers([cosigner])
+        .rpc();
+      assert.fail('should have thrown — treasury is underfunded');
+    } catch (e) {
+      // SPL token transfer fails with insufficient funds (0x1).
+      assert.isTrue(/insufficient|0x1/i.test(String(e)));
+    }
+  });
+
   it('burn_pool reduces $SCAD supply', async () => {
     const burn = SCAD(20n);
     const supplyBefore = (await getMint(provider.connection, scadMint)).supply;

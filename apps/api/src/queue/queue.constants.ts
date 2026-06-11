@@ -16,6 +16,8 @@ export const QUEUE_NAMES = {
   reconcile: 'reconcile',
   /** #28: pending reward-claim reconcile sweep. */
   rewardClaims: 'reward-claims',
+  /** #29: unpaid lottery prize sweep. */
+  lotteryPayouts: 'lottery-payouts',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
