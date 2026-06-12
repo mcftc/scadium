@@ -71,24 +71,9 @@ export function CrashPreview() {
         >
           <CrashStage multiplier={snap.multiplier} phase={snap.phase} roundId={snap.roundId} />
         </GameStage>
-        {/* Minimal HUD stand-in (the real DOM HUD stays in the game page) */}
+        {/* The multiplier readout lives IN the scene (rides with the rocket);
+            only the waiting countdown is DOM, like the real game page. */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          {snap.phase === 'running' && (
-            <span
-              className="text-7xl font-black"
-              style={{
-                color: snap.multiplier > 2 ? '#22d3ee' : '#fff',
-                textShadow: '0 0 50px rgba(34,211,238,0.45)',
-              }}
-            >
-              {snap.multiplier.toFixed(2)}x
-            </span>
-          )}
-          {snap.phase === 'busted' && (
-            <span className="text-7xl font-black text-red-500" style={{ textShadow: '0 0 50px rgba(239,68,68,0.6)' }}>
-              {snap.multiplier.toFixed(2)}x
-            </span>
-          )}
           {snap.phase === 'waiting' && (
             <span className="text-2xl font-bold uppercase tracking-[0.4em] text-purple-300/80">
               Starting…
