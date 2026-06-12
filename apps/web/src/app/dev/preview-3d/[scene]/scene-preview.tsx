@@ -2,10 +2,16 @@
 
 import Link from 'next/link';
 import type { ComponentType } from 'react';
+import { CoinflipPreview } from '../scenes/coinflip-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
   test: { title: 'Foundation test — knot, starfield, confetti, bloom', Component: TestPreview },
+  coinflip: {
+    title:
+      'Coinflip — $SCAD coin tossed by an android, crowd watching, camera dolly-in, late reveal',
+    Component: CoinflipPreview,
+  },
 };
 
 export function ScenePreview({ scene }: { scene: string }) {

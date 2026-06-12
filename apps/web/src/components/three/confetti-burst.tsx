@@ -125,22 +125,24 @@ export function ConfettiBurst({
     if (!active.current) return;
     const mesh = meshRef.current;
     if (!mesh) return;
-    elapsed.current += delta;
+    // Clamp: a throttled-tab gap otherwise teleports particles / kills the burst.
+    const dt = Math.min(delta, 1 / 30);
+    elapsed.current += dt;
     const t = elapsed.current;
     const fade = MathUtils.clamp(1 - t / duration, 0, 1);
-    const drag = Math.max(0, 1 - 1.2 * delta);
+    const drag = Math.max(0, 1 - 1.2 * dt);
     for (let i = 0; i < particles.current.length; i++) {
       const p = particles.current[i];
       if (!p) continue;
-      p.vy -= gravity * delta;
+      p.vy -= gravity * dt;
       p.vx *= drag;
       p.vz *= drag;
-      p.px += p.vx * delta;
-      p.py += p.vy * delta;
-      p.pz += p.vz * delta;
-      p.rx += p.sx * delta;
-      p.ry += p.sy * delta;
-      p.rz += p.sz * delta;
+      p.px += p.vx * dt;
+      p.py += p.vy * dt;
+      p.pz += p.vz * dt;
+      p.rx += p.sx * dt;
+      p.ry += p.sy * dt;
+      p.rz += p.sz * dt;
       dummy.position.set(p.px, p.py, p.pz);
       dummy.rotation.set(p.rx, p.ry, p.rz);
       dummy.scale.setScalar(p.scale * fade);

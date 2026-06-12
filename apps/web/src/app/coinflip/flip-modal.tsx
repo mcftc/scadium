@@ -8,7 +8,7 @@ import { subscribeFlipResolved, type CoinflipGame } from '@/hooks/use-coinflip';
 import { useMe } from '@/hooks/use-me';
 import { shortAddress, formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { FlipCoin } from './flip-coin';
+import { FlipCoin3D } from './flip-coin-3d';
 
 type Stage = 'waiting' | 'flipping' | 'done';
 
@@ -90,12 +90,13 @@ export function FlipModal({
           )}
         </div>
 
-        {/* The coin */}
+        {/* The coin — 3D toss, falls back to the DOM coin without WebGL */}
         <div className="py-3">
-          <FlipCoin
+          <FlipCoin3D
             result={game.result ?? game.creatorSide}
             spinning={stage === 'flipping'}
             size={150}
+            celebrate={iWon}
             onSpinComplete={() => setStage('done')}
           />
         </div>

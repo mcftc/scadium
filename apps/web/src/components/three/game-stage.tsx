@@ -80,7 +80,9 @@ export function GameStage({ children, fallback, className, interactive = false }
 
   return (
     <div ref={rootRef} className={cn('relative', className)}>
-      <div className={cn('absolute inset-0', showCanvas && ready && 'invisible')}>{fallback}</div>
+      {/* Unmounted (not just hidden) once the canvas draws — a hidden fallback would
+          keep animating and fire its callbacks (e.g. FlipCoin onSpinComplete) twice. */}
+      {showCanvas && ready ? null : <div className="absolute inset-0">{fallback}</div>}
       {showCanvas ? (
         <div
           className={cn(
