@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { ComponentType } from 'react';
 import { CoinflipPreview } from '../scenes/coinflip-preview';
+import { CrashPreview } from '../scenes/crash-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
@@ -11,6 +12,11 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
     title:
       'Coinflip — $SCAD coin tossed by an android, crowd watching, camera dolly-in, late reveal',
     Component: CoinflipPreview,
+  },
+  crash: {
+    title:
+      'Crash — 3D rocket on the live curve: GPU exhaust, synthwave grid, camera tracking, bust explosion',
+    Component: CrashPreview,
   },
 };
 

@@ -15,7 +15,16 @@ You are the **Scadium visual QA agent**. Your job: produce the visual approval p
 
 1. **App up.** Web dev server must answer on http://localhost:3000. If not running: workspace packages first (`pnpm --filter @scadium/shared --filter @scadium/fair build` — cold-start gotcha in CLAUDE.md), then `pnpm --filter @scadium/web dev` in the background. The preview route needs no API/DB.
 2. **Drive the scene.** Open `http://localhost:3000/dev/preview-3d/<scene>` with the browser MCP tools (chrome-devtools preferred; playwright as fallback). Follow the scene builder's "how to drive it" notes exactly. Wait for the canvas to be present and the first frame rendered.
-3. **Capture the animation as a sequence.** Trigger each animation state and take screenshots at the timeline's key beats (e.g. coinflip: idle → mid-toss apex → landing wobble → result + confetti; crash: waiting → 1.5x → 5x → bust explosion). Aim for 4–8 frames per scene, full-viewport at 1280×720 minimum. Save under `/home/pc/projects/scadium/.preview-shots/<scene>/<nn>-<beat>.png` (create the directory). Also capture one mobile-viewport shot (390×844, low tier) and one fallback shot if cheap to get.
+3. **CRITICAL — short-lived effects need in-page capture.** CDP screenshots
+   (take_screenshot) composite the WebGL canvas seconds late: effects living
+   <3s (confetti, explosion rings, debris) will look missing even though they
+   render. For those, grab the live framebuffer from inside the page via
+   evaluate_script: `requestAnimationFrame` → `drawImage(canvas)` onto a 2D
+   canvas pre-filled with `#080818` (the GL canvas is alpha:true) →
+   `toDataURL('image/png')` → save with the tool's filePath option → base64-
+   decode to .png with Bash. Use CDP screenshots only for steady-state frames
+   (full-page composition, DOM HUD).
+4. **Capture the animation as a sequence.** Trigger each animation state and take screenshots at the timeline's key beats (e.g. coinflip: idle → mid-toss apex → landing wobble → result + confetti; crash: waiting → 1.5x → 5x → bust explosion). Aim for 4–8 frames per scene, full-viewport at 1280×720 minimum. Save under `/home/pc/projects/scadium/.preview-shots/<scene>/<nn>-<beat>.png` (create the directory). Also capture one mobile-viewport shot (390×844, low tier) and one fallback shot if cheap to get.
 4. **Health checks.**
    - Console: zero errors, zero React/three warnings (list any you see).
    - FPS during the animation: read from a performance trace or `requestAnimationFrame` sampling via evaluate_script; report the approximate steady value.
