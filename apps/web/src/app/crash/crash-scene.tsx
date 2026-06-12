@@ -4,11 +4,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
   CanvasTexture,
+  Color,
   MathUtils,
   SRGBColorSpace,
   Vector3,
   type Group,
   type Mesh,
+  type MeshBasicMaterial,
   type PerspectiveCamera,
   type Sprite,
 } from 'three';
@@ -18,7 +20,7 @@ import { NEON, emissive } from '@/components/three/palette';
 import { Starfield } from '@/components/three/starfield';
 import { Rocket3D } from './crash-rocket-3d';
 import { ExhaustTrail, type ExhaustHandles } from './exhaust-trail';
-import { GridFloor } from './grid-floor';
+import { StageBackdrop } from './grid-floor';
 
 export type CrashPhase = 'waiting' | 'running' | 'busted';
 
@@ -28,24 +30,37 @@ export interface CrashStageProps {
   roundId: string | number | null;
 }
 
-// Side-view flight: the rocket holds a FIXED heading (up-right climb) while
-// the world streams past it — ground scrolls, stars streak, altitude grows
-// with the multiplier. Aviator-style staging, our neon look.
-const HEADING = Math.atan2(0.62, 0.79); // ~38° climb
+// Film staging, true side profile: the rocket waits ON the launch pad, lifts
+// off vertically at round start, pitches over onto a fixed up-right heading,
+// and the camera tracks it laterally like a dolly shot — horizon in frame.
+const HEADING = Math.atan2(0.62, 0.79); // ~38° climb once airborne
 const DIR = new Vector3(Math.cos(HEADING), Math.sin(HEADING), 0);
-const ROCKET_X = -1.3;
-const BASE_Y = 0.1; // airborne even at 1.00x — never sitting on the floor
-const CLIMB = 1.1; // how far up the frame it climbs as log(m) grows
+const GROUND_Y = -2.1;
+const PAD = new Vector3(-2.7, GROUND_Y + 0.78, 0); // rocket center, standing on the pad
+const CRUISE = new Vector3(-1.2, 0.35, 0); // where the climb settles after pitch-over
+const CLIMB = 1.15; // additional altitude as log(m) grows
+const LAUNCH_S = 1.7; // liftoff + pitch-over duration
 
-const CAM_POS = new Vector3(0.4, 0.55, 7.2);
-const lookTarget = new Vector3(ROCKET_X, BASE_Y, 0);
-const rocketPos = new Vector3(ROCKET_X, BASE_Y, 0);
+const CAM_POS = new Vector3(0.3, 0.4, 7.6);
+const lookTarget = new Vector3(PAD.x, PAD.y, 0);
+const rocketPos = new Vector3().copy(PAD);
 const nozzle = new Vector3();
 const back = new Vector3();
-const wobble = new Vector3();
+const down = new Vector3(0, -1, 0);
 
 const TRAIL_POINTS = 26;
-const TRAIL_LEN = 4.2;
+
+const FIRE_WHITE = new Color('#ffffff').multiplyScalar(3);
+const FIRE_ORANGE = new Color('#ff6a00').multiplyScalar(2.2);
+const FIRE_RED = new Color('#ef4444').multiplyScalar(2.6);
+const fireTmp = new Color();
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+function easeInCubic(t: number): number {
+  return t * t * t;
+}
 
 /** Live multiplier readout riding next to the rocket — canvas-texture sprite. */
 function MultiplierLabel({ labelRef }: { labelRef: { current: Sprite | null } }) {
@@ -93,43 +108,62 @@ function MultiplierLabel({ labelRef }: { labelRef: { current: Sprite | null } })
 function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
   const rocketRef = useRef<Group>(null);
   const ringRef = useRef<Mesh>(null);
+  const fireballRef = useRef<Mesh>(null);
   const labelRef = useRef<Sprite>(null);
   const exhaust = useRef<ExhaustHandles | null>(null);
-  const gridSpeed = useRef(0.3);
+  const gridSpeed = useRef(0.25);
   const camera = useThree((state) => state.camera) as PerspectiveCamera;
 
-  // Log-space interpolation of the 20Hz ticks: extrapolate-then-correct so
-  // corrections are imperceptible while the flight keeps moving at 60fps.
+  // Log-space interpolation of the 20Hz ticks.
   const logTarget = useRef(0);
   const logDisplay = useRef(0);
   logTarget.current = Math.log(Math.max(1.0001, multiplier));
 
   const phaseRef = useRef(phase);
+  const runTime = useRef(0); // seconds since liftoff
+  const bustTime = useRef(0); // seconds since the explosion
   const [burstId, setBurstId] = useState(0);
-  const [burstOrigin, setBurstOrigin] = useState<[number, number, number]>([ROCKET_X, BASE_Y, 0]);
-  const shake = useRef(0);
-  const trail = useMemo(() => Array.from({ length: TRAIL_POINTS }, () => new Vector3()), []);
+  const [burstOrigin, setBurstOrigin] = useState<[number, number, number]>([PAD.x, PAD.y, 0]);
+  // The wake is the rocket's REAL recent path, drifting backwards with the world.
+  const history = useMemo(
+    () => Array.from({ length: TRAIL_POINTS }, () => new Vector3().copy(PAD)),
+    [],
+  );
 
-  // Hidden until the first bust (imperative — see the note on the mesh below).
+  // Explosion props are imperative; hide them before the first frame.
   useLayoutEffect(() => {
     if (ringRef.current) ringRef.current.visible = false;
+    if (fireballRef.current) fireballRef.current.visible = false;
   }, []);
 
-  // Bust: pin the display value, fire the explosion at the rocket, kick the camera.
   useEffect(() => {
+    if (phase === 'running' && phaseRef.current !== 'running') {
+      runTime.current = 0;
+    }
     if (phase === 'busted' && phaseRef.current !== 'busted') {
+      bustTime.current = 0;
       setBurstOrigin([rocketPos.x, rocketPos.y, rocketPos.z]);
       setBurstId((n) => n + 1);
-      shake.current = 0.3;
       if (ringRef.current) {
         ringRef.current.visible = true;
         ringRef.current.scale.setScalar(0.2);
         ringRef.current.position.copy(rocketPos);
+        (ringRef.current.material as MeshBasicMaterial).opacity = 0.9;
+      }
+      if (fireballRef.current) {
+        fireballRef.current.visible = true;
+        fireballRef.current.scale.setScalar(0.1);
+        fireballRef.current.position.copy(rocketPos);
       }
     }
-    if (phase === 'waiting') logDisplay.current = 0;
+    if (phase === 'waiting') {
+      logDisplay.current = 0;
+      if (ringRef.current) ringRef.current.visible = false;
+      if (fireballRef.current) fireballRef.current.visible = false;
+      for (const p of history) p.copy(PAD);
+    }
     phaseRef.current = phase;
-  }, [phase, roundId]);
+  }, [phase, roundId, history]);
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 1 / 30);
@@ -143,63 +177,101 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       logDisplay.current = logTarget.current;
     }
     const displayM = Math.exp(logDisplay.current);
-    // Altitude + speed grow with log(m): the climb is steady, the FEEL accelerates.
     const altitude = Math.min(CLIMB, logDisplay.current * 0.42);
     const speedFeel = 1 + logDisplay.current * 1.4;
 
     if (phase === 'running') {
+      runTime.current += dt;
       rocket.visible = true;
+      const launch = MathUtils.clamp(runTime.current / LAUNCH_S, 0, 1);
+      // Liftoff: straight up first (y eases out), drift downrange late (x eases
+      // in), nose pitching from vertical onto the heading.
       rocketPos.set(
-        ROCKET_X + altitude * 0.55, // drifts slightly forward as it climbs
-        BASE_Y + altitude + Math.sin(t * 2.1) * 0.05,
+        MathUtils.lerp(PAD.x, CRUISE.x, easeInCubic(launch)) + altitude * 0.5,
+        MathUtils.lerp(PAD.y, CRUISE.y, easeOutCubic(launch)) + altitude + Math.sin(t * 2.1) * 0.04 * launch,
         0,
       );
       rocket.position.copy(rocketPos);
-      rocket.rotation.z = HEADING - Math.PI / 2 + Math.sin(t * 1.7) * 0.03; // nose on heading
-      // Exhaust trail: straight wake along -heading with a live wobble + droop.
-      nozzle.copy(rocketPos).addScaledVector(DIR, -0.45);
-      for (let i = 0; i < TRAIL_POINTS; i++) {
-        const f = i / (TRAIL_POINTS - 1); // 1 = at nozzle, 0 = tail end
-        const dist = (1 - f) * TRAIL_LEN;
-        const p = trail[i];
-        if (!p) continue;
-        p.copy(nozzle).addScaledVector(DIR, -dist);
-        // perpendicular wobble + gravity droop toward the tail
-        wobble.set(-DIR.y, DIR.x, 0).multiplyScalar(Math.sin(t * 9 - dist * 2.2) * 0.05 * (1 - f));
-        p.add(wobble);
-        p.y -= (1 - f) * (1 - f) * 0.85;
+      rocket.rotation.z = MathUtils.lerp(0, HEADING - Math.PI / 2, easeInCubic(launch));
+      // Wake = real flight path, streaming backwards once cruising.
+      nozzle.copy(rocketPos);
+      nozzle.x -= Math.sin(rocket.rotation.z) * -0.6;
+      nozzle.y -= Math.cos(rocket.rotation.z) * 0.6;
+      for (const p of history) {
+        p.addScaledVector(DIR, -speedFeel * launch * dt * 1.3);
       }
-      exhaust.current?.setRibbon(trail, true);
-      back.copy(DIR).multiplyScalar(-1);
-      exhaust.current?.emit(nozzle, back, 3);
-      gridSpeed.current = 0.5 + speedFeel * 0.8;
+      for (let i = 0; i < TRAIL_POINTS - 1; i++) history[i]!.copy(history[i + 1]!);
+      history[TRAIL_POINTS - 1]!.copy(nozzle);
+      exhaust.current?.setRibbon(history, runTime.current > 0.1);
+      // Ignition blast downward while lifting, then backwash along the wake.
+      if (launch < 0.45) {
+        exhaust.current?.emit(nozzle, down, 5);
+      } else {
+        back.set(-Math.cos(rocket.rotation.z + Math.PI / 2), -Math.sin(rocket.rotation.z + Math.PI / 2), 0);
+        exhaust.current?.emit(nozzle, back.normalize(), 3);
+      }
+      gridSpeed.current = 0.4 + speedFeel * launch * 0.8;
     } else if (phase === 'busted') {
+      bustTime.current += dt;
+      const e = bustTime.current;
       rocket.visible = false;
-      exhaust.current?.setRibbon(trail, false);
-      gridSpeed.current = MathUtils.damp(gridSpeed.current, 0.05, 4, dt);
+      exhaust.current?.setRibbon(history, false);
+      gridSpeed.current = MathUtils.damp(gridSpeed.current, 0.04, 4, dt);
+      // Real detonation: white-hot fireball flash → orange swell → collapse
+      // into a glowing red point that pulses until the next round.
+      const fireball = fireballRef.current;
+      if (fireball?.visible) {
+        const material = fireball.material as MeshBasicMaterial;
+        if (e < 0.16) {
+          fireball.scale.setScalar(MathUtils.lerp(0.1, 1.9, easeOutCubic(e / 0.16)));
+          material.color.copy(fireTmp.copy(FIRE_WHITE).lerp(FIRE_ORANGE, e / 0.16));
+          material.opacity = 1;
+        } else if (e < 0.55) {
+          const s = (e - 0.16) / 0.39;
+          fireball.scale.setScalar(MathUtils.lerp(1.9, 2.3, s));
+          material.color.copy(fireTmp.copy(FIRE_ORANGE).lerp(FIRE_RED, s * 0.6));
+          material.opacity = 1 - s * 0.25;
+        } else {
+          // Collapse to the red point.
+          const s = Math.min(1, (e - 0.55) / 0.5);
+          fireball.scale.setScalar(MathUtils.lerp(2.3, 0.12, easeInCubic(s)));
+          material.color.copy(fireTmp.copy(FIRE_RED));
+          material.opacity = 1;
+          if (s >= 1) {
+            // The lingering red ember, breathing.
+            fireball.scale.setScalar(0.12 + Math.sin(t * 6) * 0.02);
+          }
+        }
+      }
       const ring = ringRef.current;
       if (ring?.visible) {
-        ring.scale.addScalar(dt * 9);
-        if (ring.scale.x > 6) ring.visible = false;
+        ring.scale.addScalar(dt * 14);
+        const material = ring.material as MeshBasicMaterial;
+        material.opacity = Math.max(0, material.opacity - dt * 1.6);
+        if (material.opacity <= 0.01) ring.visible = false;
       }
     } else {
-      // Waiting: hovering on idle thrust — airborne, never parked on the floor.
+      // Waiting: standing on the pad, engines cold — wisps of idle vapor.
       rocket.visible = true;
-      rocketPos.set(ROCKET_X, BASE_Y + Math.sin(t * 1.8) * 0.07, 0);
+      rocketPos.copy(PAD);
       rocket.position.copy(rocketPos);
-      rocket.rotation.z = HEADING - Math.PI / 2;
-      nozzle.copy(rocketPos).addScaledVector(DIR, -0.45);
-      back.copy(DIR).multiplyScalar(-1);
-      if (Math.random() < 0.5) exhaust.current?.emit(nozzle, back, 1); // idle puffs
-      exhaust.current?.setRibbon(trail, false);
-      gridSpeed.current = 0.3;
+      rocket.rotation.z = 0;
+      exhaust.current?.setRibbon(history, false);
+      if (Math.random() < 0.12) {
+        nozzle.copy(PAD);
+        nozzle.y -= 0.62;
+        exhaust.current?.emit(nozzle, down, 1);
+      }
+      gridSpeed.current = 0.25;
     }
 
-    // Multiplier readout rides above the nose, always facing the camera.
+    // Multiplier readout — beside the action, always on top.
     const label = labelRef.current;
     if (label) {
       label.visible = phase !== 'waiting';
-      label.position.set(rocketPos.x + 1.15, rocketPos.y + 0.75, 0);
+      const anchorX = phase === 'busted' ? burstOrigin[0] : rocketPos.x;
+      const anchorY = phase === 'busted' ? burstOrigin[1] : rocketPos.y;
+      label.position.set(anchorX + 1.3, anchorY + 0.85, 0);
       const setText = label.userData.setText as ((text: string, color: string) => void) | undefined;
       if (phase === 'running') {
         setText?.(
@@ -207,27 +279,22 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
           displayM >= 10 ? NEON.purple : displayM >= 2 ? NEON.cyan : '#ffffff',
         );
       } else if (phase === 'busted') {
-        label.position.set(burstOrigin[0] + 1.15, burstOrigin[1] + 0.75, 0);
         setText?.(`${Math.exp(logTarget.current).toFixed(2)}x`, NEON.danger);
       }
     }
 
-    // Side camera: gentle parallax following the climb, FOV opens with speed,
-    // decaying shake on bust.
-    lookTarget.set(rocketPos.x + 0.6, MathUtils.damp(lookTarget.y, rocketPos.y * 0.8, 5, dt), 0);
-    shake.current = Math.max(0, shake.current - dt * 0.6);
-    const jitter = shake.current * shake.current;
+    // EXACT side shot — pure lateral dolly, zero tilt, zero yaw, fixed FOV.
+    // The camera tracks the action's height and slides with it; depth comes
+    // only from the backdrop parallax, never from camera-angle tricks.
+    const focusY = phase === 'busted' ? burstOrigin[1] : rocketPos.y;
+    const focusX = phase === 'busted' ? burstOrigin[0] : rocketPos.x;
     camera.position.set(
-      CAM_POS.x + (Math.random() - 0.5) * jitter,
-      CAM_POS.y + rocketPos.y * 0.25 + (Math.random() - 0.5) * jitter,
+      MathUtils.damp(camera.position.x, focusX + 0.7, 5, dt),
+      MathUtils.damp(camera.position.y, focusY + 0.25, 5, dt),
       CAM_POS.z,
     );
+    lookTarget.set(camera.position.x, camera.position.y, 0);
     camera.lookAt(lookTarget);
-    const targetFov = 45 + Math.min(8, logDisplay.current * 2.4);
-    if (Math.abs(camera.fov - targetFov) > 0.05) {
-      camera.fov = MathUtils.damp(camera.fov, targetFov, 6, dt);
-      camera.updateProjectionMatrix();
-    }
   });
 
   return (
@@ -235,21 +302,39 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       <Rocket3D ref={rocketRef} scale={1.5} />
       <MultiplierLabel labelRef={labelRef} />
       <ExhaustTrail handles={exhaust} />
-      <GridFloor speedRef={gridSpeed} />
-      {/* Shockwave ring — driven imperatively on bust. NOTE: no `visible` prop —
-          the rig toggles mesh.visible and a declared prop would reapply on every
-          20Hz re-render, silently overriding the imperative state. */}
-      <mesh ref={ringRef}>
-        <ringGeometry args={[0.42, 0.5, 48]} />
-        <meshBasicMaterial color={emissive(NEON.amber, 2)} transparent opacity={0.8} toneMapped={false} />
+      <StageBackdrop speedRef={gridSpeed} groundY={GROUND_Y} />
+      {/* Launch pad on the ground */}
+      <group position={[PAD.x, GROUND_Y, 0]}>
+        <mesh position={[0, 0.08, 0]}>
+          <cylinderGeometry args={[0.65, 0.78, 0.16, 32]} />
+          <meshStandardMaterial color={NEON.surfaceElevated} metalness={0.6} roughness={0.5} />
+        </mesh>
+        <mesh position={[0, 0.17, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.56, 0.015, 8, 48]} />
+          <meshStandardMaterial
+            color={NEON.purpleDeep}
+            emissive={emissive(NEON.purple, 1)}
+            emissiveIntensity={2}
+          />
+        </mesh>
+      </group>
+      {/* Detonation fireball → collapses into the lingering red ember */}
+      <mesh ref={fireballRef}>
+        <sphereGeometry args={[0.5, 24, 16]} />
+        <meshBasicMaterial transparent toneMapped={false} depthWrite={false} />
       </mesh>
-      {/* Debris burst on bust — the instanced confetti with fire colors */}
+      {/* Shockwave ring — imperative (no `visible` prop: re-renders would reapply it) */}
+      <mesh ref={ringRef}>
+        <ringGeometry args={[0.46, 0.5, 48]} />
+        <meshBasicMaterial color={emissive(NEON.amber, 2)} transparent opacity={0.9} toneMapped={false} />
+      </mesh>
+      {/* Debris burst — instanced confetti with fire colors */}
       <ConfettiBurst
         burstId={burstId}
         origin={burstOrigin}
-        power={6}
-        gravity={2.5}
-        duration={1.4}
+        power={7}
+        gravity={3}
+        duration={1.2}
         size={0.14}
         colors={['#ffd36b', '#ff6a00', '#ff3d00', '#fff7e6']}
       />
