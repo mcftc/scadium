@@ -2,45 +2,56 @@
 
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { AdditiveBlending, Color, ShaderMaterial, Vector2 } from 'three';
+import { AdditiveBlending, Color, ShaderMaterial } from 'three';
 import { NEON } from '@/components/three/palette';
 
 const VERT = /* glsl */ `
   varying vec2 vUv;
+  varying vec3 vWorld;
   void main() {
     vUv = uv;
+    vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
-// Anti-aliased grid lines (fwidth) on a vertical BACKDROP wall, streaming
-// opposite the flight heading so the world slides past the rocket. Fades out
-// toward the top so the stars take over.
+// The backdrop IS the chart graticule: horizontal lines sit exactly at the
+// nice multiplier altitudes (fed as uniforms — the right ruler labels the
+// very same lines), vertical lines are time streaming with the world drift.
 const FRAG = /* glsl */ `
   uniform float uScroll;
-  uniform vec2 uDir;
+  uniform float uLevels[12];
+  uniform int uCount;
   uniform vec3 uColor;
   varying vec2 vUv;
+  varying vec3 vWorld;
   void main() {
-    vec2 cells = vUv * vec2(30.0, 16.0) - uDir * uScroll;
-    vec2 grid = abs(fract(cells - 0.5) - 0.5) / fwidth(cells);
-    float line = 1.0 - min(min(grid.x, grid.y), 1.0);
-    float fade = line * smoothstep(1.0, 0.45, vUv.y) * 0.5;
+    float xc = vWorld.x + uScroll;
+    float gx = abs(fract(xc - 0.5) - 0.5) / fwidth(xc);
+    float line = (1.0 - min(gx, 1.0)) * 0.7;
+    for (int i = 0; i < 12; i++) {
+      if (i >= uCount) break;
+      float d = abs(vWorld.y - uLevels[i]) / fwidth(vWorld.y);
+      line = max(line, 1.0 - min(d, 1.0));
+    }
+    float fade = line * smoothstep(1.0, 0.45, vUv.y) * 0.55;
     if (fade < 0.01) discard;
     gl_FragColor = vec4(uColor * fade, fade);
   }
 `;
 
 /**
- * Side-scroller staging (per design direction): the neon grid is a backdrop
- * wall behind the action — NOT the ground — and the ground is a plain flat
- * plane with a glowing horizon seam. No camera-angle depth tricks.
+ * Side-scroller staging: grid backdrop wall (the chart graticule), plain flat
+ * ground, glowing horizon seam. `levelsRef` carries the world-y positions of
+ * the nice multiplier lines so backdrop and ruler can never disagree.
  */
 export function StageBackdrop({
   speedRef,
+  levelsRef,
   groundY,
 }: {
   speedRef: { current: number };
+  levelsRef: { current: number[] };
   groundY: number;
 }) {
   const material = useMemo(
@@ -50,8 +61,9 @@ export function StageBackdrop({
         fragmentShader: FRAG,
         uniforms: {
           uScroll: { value: 0 },
-          uDir: { value: new Vector2(0.79, 0.62) }, // the flight heading
-          uColor: { value: new Color(NEON.purpleDeep).multiplyScalar(1.4) },
+          uLevels: { value: new Array(12).fill(-999) },
+          uCount: { value: 0 },
+          uColor: { value: new Color(NEON.purpleDeep).multiplyScalar(1.5) },
         },
         transparent: true,
         depthWrite: false,
@@ -64,13 +76,17 @@ export function StageBackdrop({
   useFrame((_, delta) => {
     scroll.current += Math.min(delta, 1 / 30) * speedRef.current;
     material.uniforms.uScroll!.value = scroll.current;
+    const levels = levelsRef.current;
+    const target = material.uniforms.uLevels!.value as number[];
+    for (let i = 0; i < 12; i++) target[i] = levels[i] ?? -999;
+    material.uniforms.uCount!.value = Math.min(12, levels.length);
   });
 
   return (
     <group>
-      {/* The grid wall behind the scene */}
-      <mesh position={[0, groundY + 8, -5]} material={material}>
-        <planeGeometry args={[44, 16]} />
+      {/* The graticule wall behind the scene */}
+      <mesh position={[0, groundY + 9, -5]} material={material}>
+        <planeGeometry args={[44, 18]} />
       </mesh>
       {/* Plain flat ground */}
       <mesh position={[0, groundY - 0.01, -1]} rotation={[-Math.PI / 2, 0, 0]}>

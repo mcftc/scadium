@@ -3,8 +3,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
+  AdditiveBlending,
+  BufferAttribute,
+  BufferGeometry,
   CanvasTexture,
   Color,
+  DynamicDrawUsage,
+  Line,
+  LineBasicMaterial,
   MathUtils,
   SRGBColorSpace,
   Vector3,
@@ -19,6 +25,15 @@ import { StageCanvas } from '@/components/three/canvas-inner';
 import { NEON, emissive } from '@/components/three/palette';
 import { Starfield } from '@/components/three/starfield';
 import { Rocket3D } from './crash-rocket-3d';
+import {
+  ChartAxes,
+  altitudeOf,
+  niceLevels,
+  CRUISE_Y,
+  ALT_PER_LOG,
+  type AxesHandles,
+  type SecondMark,
+} from './crash-axes';
 import { ExhaustTrail, type ExhaustHandles } from './exhaust-trail';
 import { StageBackdrop } from './grid-floor';
 
@@ -37,9 +52,9 @@ const HEADING = Math.atan2(0.62, 0.79); // ~38° climb once airborne
 const DIR = new Vector3(Math.cos(HEADING), Math.sin(HEADING), 0);
 const GROUND_Y = -2.1;
 const PAD = new Vector3(-2.7, GROUND_Y + 0.78, 0); // rocket center, standing on the pad
-const CRUISE = new Vector3(-1.2, 0.35, 0); // where the climb settles after pitch-over
-const CLIMB = 1.15; // additional altitude as log(m) grows
+const CRUISE = new Vector3(-1.2, CRUISE_Y, 0); // where the climb settles after pitch-over
 const LAUNCH_S = 1.7; // liftoff + pitch-over duration
+const TAIL_MAX = 420; // persistent flight-path tail (the curve the rocket draws)
 
 const CAM_POS = new Vector3(0.3, 0.4, 7.6);
 const lookTarget = new Vector3(PAD.x, PAD.y, 0);
@@ -129,6 +144,36 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
     () => Array.from({ length: TRAIL_POINTS }, () => new Vector3().copy(PAD)),
     [],
   );
+  // Chart anatomy: seconds marks for the bottom axis + the persistent tail.
+  const axes = useRef<AxesHandles | null>(null);
+  const marks = useRef<SecondMark[]>([]);
+  const levelYs = useRef<number[]>([]); // shared with the backdrop shader
+  const lastSec = useRef(0);
+  const tailPts = useRef<{ x: number; y: number }[]>([]);
+  const tailLine = useMemo(() => {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(TAIL_MAX * 3), 3).setUsage(DynamicDrawUsage),
+    );
+    geometry.setAttribute(
+      'color',
+      new BufferAttribute(new Float32Array(TAIL_MAX * 3), 3).setUsage(DynamicDrawUsage),
+    );
+    geometry.setDrawRange(0, 0);
+    const line = new Line(
+      geometry,
+      new LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.9,
+        blending: AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    line.frustumCulled = false;
+    return line;
+  }, []);
 
   // Explosion props are imperative; hide them before the first frame.
   useLayoutEffect(() => {
@@ -161,9 +206,13 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       if (ringRef.current) ringRef.current.visible = false;
       if (fireballRef.current) fireballRef.current.visible = false;
       for (const p of history) p.copy(PAD);
+      marks.current = [];
+      lastSec.current = 0;
+      tailPts.current = [];
+      tailLine.geometry.setDrawRange(0, 0);
     }
     phaseRef.current = phase;
-  }, [phase, roundId, history]);
+  }, [phase, roundId, history, tailLine]);
 
   useFrame((state, delta) => {
     const dt = Math.min(delta, 1 / 30);
@@ -177,7 +226,7 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       logDisplay.current = logTarget.current;
     }
     const displayM = Math.exp(logDisplay.current);
-    const altitude = Math.min(CLIMB, logDisplay.current * 0.42);
+    const altitude = altitudeOf(displayM); // uncapped — the ruler tracks it forever
     const speedFeel = 1 + logDisplay.current * 1.4;
 
     if (phase === 'running') {
@@ -197,12 +246,45 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       nozzle.copy(rocketPos);
       nozzle.x -= Math.sin(rocket.rotation.z) * -0.6;
       nozzle.y -= Math.cos(rocket.rotation.z) * 0.6;
+      const drift = speedFeel * launch * dt * 1.3;
       for (const p of history) {
-        p.addScaledVector(DIR, -speedFeel * launch * dt * 1.3);
+        p.addScaledVector(DIR, -drift);
       }
       for (let i = 0; i < TRAIL_POINTS - 1; i++) history[i]!.copy(history[i + 1]!);
       history[TRAIL_POINTS - 1]!.copy(nozzle);
       exhaust.current?.setRibbon(history, runTime.current > 0.1);
+      // Persistent tail (the curve the rocket draws) + the seconds marks
+      // drift with the same world stream so the whole chart stays coherent.
+      for (const p of tailPts.current) {
+        p.x -= DIR.x * drift;
+        p.y -= DIR.y * drift;
+      }
+      for (const mark of marks.current) mark.x -= DIR.x * drift;
+      tailPts.current.push({ x: nozzle.x, y: nozzle.y });
+      if (tailPts.current.length > TAIL_MAX) tailPts.current.shift();
+      if (Math.floor(runTime.current) > lastSec.current) {
+        lastSec.current = Math.floor(runTime.current);
+        marks.current.push({ sec: lastSec.current, x: rocketPos.x });
+        if (marks.current.length > 24) marks.current.shift();
+      }
+      {
+        const pts = tailPts.current;
+        const position = tailLine.geometry.getAttribute('position') as BufferAttribute;
+        const color = tailLine.geometry.getAttribute('color') as BufferAttribute;
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i]!;
+          position.setXYZ(i, p.x, p.y, -0.1);
+          const f = i / Math.max(1, pts.length - 1); // 1 = newest, at the rocket
+          // deep purple far back → cyan → near-white at the rocket
+          const r = MathUtils.lerp(0.25, 0.7, f * f);
+          const g = MathUtils.lerp(0.1, 0.85, f);
+          const b = MathUtils.lerp(0.45, 1.0, f);
+          color.setXYZ(i, r, g, b);
+        }
+        position.needsUpdate = true;
+        color.needsUpdate = true;
+        tailLine.geometry.setDrawRange(0, pts.length);
+      }
       // Ignition blast downward while lifting, then backwash along the wake.
       if (launch < 0.45) {
         exhaust.current?.emit(nozzle, down, 5);
@@ -295,6 +377,21 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
     );
     lookTarget.set(camera.position.x, camera.position.y, 0);
     camera.lookAt(lookTarget);
+
+    // Chart anatomy follows the camera. The nice multiplier levels are shared
+    // between the right ruler and the backdrop graticule so they always align.
+    const vLo = Math.max(1, Math.exp((camera.position.y - 3.05 - CRUISE_Y) / ALT_PER_LOG));
+    const vHi = Math.exp((camera.position.y + 3.05 - CRUISE_Y) / ALT_PER_LOG);
+    const levels = niceLevels(vLo, vHi);
+    levelYs.current = levels.map((l) => l.y);
+    axes.current?.update(
+      camera.position.x,
+      camera.position.y,
+      displayM,
+      marks.current,
+      levels,
+      phase !== 'waiting',
+    );
   });
 
   return (
@@ -302,7 +399,9 @@ function CrashRig({ multiplier, phase, roundId }: CrashStageProps) {
       <Rocket3D ref={rocketRef} scale={1.5} />
       <MultiplierLabel labelRef={labelRef} />
       <ExhaustTrail handles={exhaust} />
-      <StageBackdrop speedRef={gridSpeed} groundY={GROUND_Y} />
+      <ChartAxes handles={axes} />
+      <primitive object={tailLine} />
+      <StageBackdrop speedRef={gridSpeed} levelsRef={levelYs} groundY={GROUND_Y} />
       {/* Launch pad on the ground */}
       <group position={[PAD.x, GROUND_Y, 0]}>
         <mesh position={[0, 0.08, 0]}>
