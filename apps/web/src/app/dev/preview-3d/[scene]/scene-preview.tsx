@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { ComponentType } from 'react';
 import { CoinflipPreview } from '../scenes/coinflip-preview';
+import { JackpotPreview } from '../scenes/jackpot-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
@@ -11,6 +12,11 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
     title:
       'Coinflip — $SCAD coin tossed by an android, crowd watching, camera dolly-in, late reveal',
     Component: CoinflipPreview,
+  },
+  jackpot: {
+    title:
+      'Jackpot — roulette of players: wedges ∝ pot share, marquee bulbs, pointer ticks, winner pop + gold confetti',
+    Component: JackpotPreview,
   },
 };
 
