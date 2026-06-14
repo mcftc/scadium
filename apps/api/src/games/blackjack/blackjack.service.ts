@@ -144,7 +144,7 @@ export class BlackjackService {
       await this.debit(params.userId, extra, params.tableId);
     }
     try {
-      return this.engine.action(params);
+      return await this.engine.action(params);
     } catch (e) {
       if (extra > BigInt(0)) await this.credit(params.userId, extra, params.tableId);
       throw new BadRequestException(e instanceof Error ? e.message : 'Action rejected');
