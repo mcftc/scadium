@@ -17,8 +17,8 @@ const PALETTE = [
   '#fb7185',
   '#4ade80',
 ];
-const MIN_W = 96; // px — smallest stake still reads on the reel
-const POT_W = 1100; // px — nominal width of one full-pot pass
+const MIN_W = 150; // px — smallest stake still reads as a full card on the reel
+const POT_W = 1500; // px — nominal width of one full-pot pass
 const REPS = 8; // pot passes in the strip (long enough for a real spin)
 const SPIN_MS = 5200;
 const HOLD_MS = 3500; // winner banner dwell before dismiss
@@ -100,16 +100,19 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
       </div>
       <div
         ref={wrapRef}
-        className="relative h-24 overflow-hidden rounded-xl border border-border bg-background"
+        className="relative h-44 overflow-hidden rounded-2xl border border-border bg-background"
       >
         {/* center pointer */}
-        <div className="absolute left-1/2 top-0 bottom-0 z-20 -translate-x-1/2 w-0.5 bg-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.9)]" />
-        <div className="absolute left-1/2 top-0 z-20 -translate-x-1/2 text-amber-400 text-xs leading-none pt-0.5">
+        <div className="absolute left-1/2 top-0 bottom-0 z-20 -translate-x-1/2 w-[3px] bg-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.95)]" />
+        <div className="absolute left-1/2 -top-0.5 z-20 -translate-x-1/2 text-amber-400 text-lg leading-none drop-shadow-[0_0_6px_rgba(245,158,11,0.9)]">
+          ▼
+        </div>
+        <div className="absolute left-1/2 -bottom-0.5 z-20 -translate-x-1/2 rotate-180 text-amber-400 text-lg leading-none drop-shadow-[0_0_6px_rgba(245,158,11,0.9)]">
           ▼
         </div>
         {/* edge fades */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-20 bg-gradient-to-r from-background to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-20 bg-gradient-to-l from-background to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-28 bg-gradient-to-r from-background via-background/80 to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-28 bg-gradient-to-l from-background via-background/80 to-transparent" />
         {/* strip */}
         <div
           className="absolute top-0 bottom-0 flex will-change-transform"
@@ -127,21 +130,43 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
             return (
               <div
                 key={i}
-                className={cn(
-                  'flex h-full shrink-0 flex-col items-center justify-center gap-1 border-r border-border/40 transition-opacity',
-                  phase === 'won' && !isWinnerTile && 'opacity-30',
-                )}
-                style={{ width: s.w, background: `${s.color}1a` }}
+                className="flex h-full shrink-0 items-center p-2"
+                style={{ width: s.w }}
               >
+                {/* solpump-style player card */}
                 <div
-                  className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black"
-                  style={{ background: s.color, color: '#0b0b0f' }}
+                  className={cn(
+                    'relative flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border px-2 transition-all duration-300',
+                    isWinnerTile
+                      ? 'scale-105 border-amber-400 shadow-[0_0_28px_rgba(245,158,11,0.6)]'
+                      : phase === 'won'
+                        ? 'border-border/40 opacity-25'
+                        : 'border-border/60',
+                  )}
+                  style={{
+                    borderTopColor: s.color,
+                    borderTopWidth: 3,
+                    background: `linear-gradient(180deg, ${s.color}26 0%, rgba(10,10,16,0.4) 70%)`,
+                  }}
                 >
-                  {name.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="max-w-full truncate px-1.5 text-[10px] font-semibold">{name}</div>
-                <div className="text-[9px] font-mono text-foreground-muted">
-                  {(s.p.chance * 100).toFixed(0)}%
+                  <div
+                    className="flex h-14 w-14 items-center justify-center rounded-full text-xl font-black shadow-lg ring-2 ring-white/10"
+                    style={{ background: s.color, color: '#0b0b0f' }}
+                  >
+                    {name.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="max-w-full truncate px-1 text-sm font-bold text-foreground">
+                    {name}
+                  </div>
+                  <div className="font-mono text-xs text-foreground-muted">
+                    {formatSol(s.p.amountLamports, 2)} SOL
+                  </div>
+                  <div
+                    className="rounded-full px-2.5 py-0.5 text-xs font-black"
+                    style={{ background: `${s.color}33`, color: s.color }}
+                  >
+                    {(s.p.chance * 100).toFixed(0)}%
+                  </div>
                 </div>
               </div>
             );

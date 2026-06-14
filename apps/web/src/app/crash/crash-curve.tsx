@@ -6,6 +6,9 @@ import type { CrashBet, CrashCashoutMarker, CrashSnapshot } from '@/hooks/use-cr
 import { cn } from '@/lib/cn';
 import { CrashRocket } from './crash-rocket';
 
+/** Canopy colors so concurrent cash-out parachutes stay distinct. */
+const PARACHUTE_HUES = ['#22d3ee', '#a855f7', '#f59e0b', '#22c55e', '#f472b6', '#38bdf8'];
+
 /**
  * Immersive crash visualizer (solpump structure, our scene):
  *  - starfield + 3D perspective grid receding floor
@@ -96,8 +99,8 @@ export function CrashCurve({
       {/* Crash curve + rocket (only when running or busted) */}
       {(running || busted) && <CrashTrail multiplier={m} busted={busted} cashouts={cashouts} />}
 
-      {/* Center display */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+      {/* Center display — nudged a little below centre so it sits over the curve */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center pt-[12%] z-10 pointer-events-none">
         <AnimatePresence mode="wait">
           {waiting && (
             <motion.div
@@ -146,13 +149,11 @@ export function CrashCurve({
                 Current Payout
               </div>
               <motion.div
-                className="text-7xl md:text-9xl font-black leading-none"
+                className="text-4xl md:text-5xl font-black leading-none tracking-tight"
                 style={{
-                  color: m > 2 ? '#22d3ee' : '#ffffff',
+                  color: m > 2 ? '#9be9f5' : '#e8eaf0',
                   textShadow:
-                    m > 2
-                      ? '0 0 60px rgba(34,211,238,0.5), 0 0 120px rgba(34,211,238,0.2)'
-                      : '0 0 40px rgba(255,255,255,0.2)',
+                    m > 2 ? '0 0 26px rgba(34,211,238,0.35)' : '0 0 18px rgba(255,255,255,0.12)',
                 }}
                 animate={{ scale: [1, 1.01, 1] }}
                 transition={{ duration: 0.15 }}
@@ -187,8 +188,8 @@ export function CrashCurve({
                 Busted at
               </div>
               <div
-                className="text-7xl md:text-9xl font-black text-red-500 leading-none"
-                style={{ textShadow: '0 0 60px rgba(239,68,68,0.6)' }}
+                className="text-4xl md:text-5xl font-black text-red-500 leading-none tracking-tight"
+                style={{ textShadow: '0 0 30px rgba(239,68,68,0.5)' }}
               >
                 {m.toFixed(2)}x
               </div>
@@ -432,27 +433,41 @@ function CrashTrail({
         ))}
       </svg>
 
-      {/* Cashout markers pinned where players exited (positions rescale with the axes) */}
+      {/* Cash-outs: the player bails off the curve and parachutes away with their winnings */}
       {cashouts.map((c, i) => {
         const p = toXY(c.multiplier);
         const payoutSol = Number(BigInt(c.payoutLamports)) / 1e9;
+        const hue = PARACHUTE_HUES[(c.userId.charCodeAt(0) + i) % PARACHUTE_HUES.length]!;
         return (
-          <motion.div
+          <div
             key={`${c.userId}-${i}`}
-            initial={{ opacity: 0, scale: 0.5, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
             className="absolute z-[9] pointer-events-none"
-            style={{ left: `${p.x}%`, top: `${p.y}%`, transform: 'translate(-50%, -110%)' }}
+            style={{ left: `${p.x}%`, top: `${p.y}%`, transform: 'translate(-50%, -100%)' }}
           >
-            <div className="flex items-center gap-1">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-primary text-[9px] font-bold text-white ring-1 ring-white/30">
-                {c.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-mono font-bold text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]">
-                +{payoutSol.toFixed(4)}
-              </span>
-            </div>
-          </motion.div>
+            <motion.div
+              className="flex flex-col items-center"
+              initial={{ opacity: 0, y: -6, scale: 0.55 }}
+              animate={{ opacity: [0, 1, 1, 1, 0], y: [-6, 10, 64, 116, 158], x: [0, 7, -7, 5, 0], scale: 1 }}
+              transition={{ duration: 3, times: [0, 0.12, 0.5, 0.82, 1], ease: 'easeOut' }}
+            >
+              {/* Canopy */}
+              <svg width="46" height="26" viewBox="0 0 46 26" className="drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
+                <path d={`M2 15 A21 21 0 0 1 44 15 L37 15 L31 19 L23 15 L15 19 L9 15 Z`} fill={hue} fillOpacity={0.92} />
+                <path d="M23 2 L23 15 M13.5 4 L15 15 M32.5 4 L31 15" stroke="rgba(255,255,255,0.45)" strokeWidth={1} fill="none" />
+                {/* shroud lines to the payload */}
+                <path d="M3 15 L23 25 M15 17 L23 25 M31 17 L23 25 M43 15 L23 25" stroke="rgba(216,212,240,0.7)" strokeWidth={0.8} fill="none" />
+              </svg>
+              {/* Hanging player + winnings */}
+              <div className="-mt-0.5 flex items-center gap-1">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-primary text-[9px] font-bold text-white ring-1 ring-white/30">
+                  {c.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-mono font-bold text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]">
+                  +{payoutSol.toFixed(4)}
+                </span>
+              </div>
+            </motion.div>
+          </div>
         );
       })}
 
@@ -469,7 +484,7 @@ function CrashTrail({
               transform: `rotate(${rocketDeg.toFixed(1)}deg)`,
             }}
           >
-            <CrashRocket size={56} />
+            <CrashRocket size={132} />
           </div>
         </div>
       )}

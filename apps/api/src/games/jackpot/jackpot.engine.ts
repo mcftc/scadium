@@ -21,6 +21,19 @@ import { settlementsTotal } from '../../observability/metrics.registry';
 const JACKPOT_LOCK_KEY = 'lock:engine:jackpot';
 const JACKPOT_LOCK_TTL_MS = 10_000;
 
+// Demo-only bot players (JACKPOT_DEMO_BOTS=1): real User rows with a huge play
+// balance that auto-join each round so solo/local play actually draws (and the
+// 3D wheel reveal fires). They enter through the same money-safe debit + entry
+// path as anyone else, so settlement and the ledger are untouched.
+const DEMO_BOTS = [
+  { id: 'd0d0d0d0-0000-4000-8000-000000000001', username: 'DegenBot', wallet: 'DemoBot1degenking1111111111111111111111111' },
+  { id: 'd0d0d0d0-0000-4000-8000-000000000002', username: 'MoonBot', wallet: 'DemoBot2moonshot2222222222222222222222222' },
+  { id: 'd0d0d0d0-0000-4000-8000-000000000003', username: 'LuckyBot', wallet: 'DemoBot3lucky33333333333333333333333333333' },
+  { id: 'd0d0d0d0-0000-4000-8000-000000000004', username: 'BonkBot', wallet: 'DemoBot4bonk44444444444444444444444444444' },
+  { id: 'd0d0d0d0-0000-4000-8000-000000000005', username: 'ApeBot', wallet: 'DemoBot5ape555555555555555555555555555555' },
+] as const;
+const DEMO_BOT_BALANCE = BigInt('100000000000000'); // 100k SOL of play money
+
 interface CurrentRound {
   id: string;
   seedId: string;
@@ -85,7 +98,19 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     return this.election ? this.election.isLeader() : true;
   }
 
+  private get demoBots(): boolean {
+    return process.env.JACKPOT_DEMO_BOTS === '1';
+  }
+
   async onModuleInit(): Promise<void> {
+    // Demo bots are a local convenience — never let them break API boot.
+    if (this.demoBots) {
+      try {
+        await this.ensureBots();
+      } catch (e) {
+        this.logger.error(`demo bots init failed (disabling): ${String(e)}`);
+      }
+    }
     if (!this.election) {
       await this.recoverStrandedRounds();
       await this.openNewRound();
@@ -117,6 +142,71 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       totalLamports: BigInt(0),
       players: new Set(),
     };
+  }
+
+  /** Idempotently create the demo bot users with a big play balance. */
+  private async ensureBots(): Promise<void> {
+    let ready = 0;
+    for (const bot of DEMO_BOTS) {
+      try {
+        await this.prisma.user.upsert({
+          where: { id: bot.id },
+          update: { playBalanceLamports: DEMO_BOT_BALANCE },
+          create: {
+            id: bot.id,
+            username: bot.username,
+            walletAddress: bot.wallet,
+            refCode: `bot${bot.id.slice(-4)}`,
+            playBalanceLamports: DEMO_BOT_BALANCE,
+          },
+        });
+        ready++;
+      } catch (e) {
+        this.logger.warn(`demo bot ${bot.username} not provisioned: ${String(e)}`);
+      }
+    }
+    this.logger.log(`jackpot demo bots ready (${ready}/${DEMO_BOTS.length})`);
+  }
+
+  /** Auto-join a couple of bots into the open round so a draw happens. */
+  private async fillBots(roundId: string): Promise<void> {
+    if (!this.demoBots || !this.isLeader()) return;
+    if (this.current.id !== roundId || this.current.status !== 'open') return;
+    const shuffled = [...DEMO_BOTS].sort(() => Math.random() - 0.5);
+    const count = 2 + Math.floor(Math.random() * 2); // 2–3 per wave
+    for (const bot of shuffled.slice(0, count)) {
+      if (this.current.id !== roundId || this.current.players.has(bot.id)) continue;
+      const sol = 0.05 + Math.random() * 1.5;
+      await this.enterBot(roundId, bot, BigInt(Math.floor(sol * 1e9)));
+    }
+  }
+
+  /** One bot entry through the same money-safe debit + entry path as a real player. */
+  private async enterBot(
+    roundId: string,
+    bot: (typeof DEMO_BOTS)[number],
+    amount: bigint,
+  ): Promise<void> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await applyBalanceDelta(tx, bot.id, -amount, {
+          reason: 'jackpot_entry',
+          refType: 'JackpotRound',
+          refId: roundId,
+        });
+        await tx.jackpotEntry.create({
+          data: { roundId, userId: bot.id, amountLamports: amount },
+        });
+      });
+      await this.onEntry({
+        userId: bot.id,
+        username: bot.username,
+        walletAddress: bot.wallet,
+        amountLamports: amount,
+      });
+    } catch (e) {
+      this.logger.warn(`jackpot bot ${bot.username} entry skipped: ${String(e)}`);
+    }
   }
 
   private async assumeLeadership(): Promise<void> {
@@ -273,6 +363,13 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     });
 
     setTimeout(() => void this.drawAndSettle(), JACKPOT.ROUND_WINDOW_MS);
+
+    // Demo: stagger a couple of bot waves into the window so the round always draws.
+    if (this.demoBots) {
+      const rid = round.id;
+      setTimeout(() => void this.fillBots(rid), 4000);
+      setTimeout(() => void this.fillBots(rid), 11000);
+    }
   }
 
   private async drawAndSettle(): Promise<void> {
