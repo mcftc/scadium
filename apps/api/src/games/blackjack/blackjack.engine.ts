@@ -778,7 +778,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    * Seat action (hit/stand/double) for the user whose turn it is. `double`
    * needs the extra stake debited by the service BEFORE calling in.
    */
-  action(params: { tableId: string; userId: string; action: 'hit' | 'stand' | 'double' }) {
+  async action(params: { tableId: string; userId: string; action: 'hit' | 'stand' | 'double' }) {
     const t = this.table(params.tableId);
     if (t.phase !== 'player_turns' || t.activeSeat === null) throw new Error('Not your turn');
     const seat = t.seats.get(t.activeSeat);
@@ -802,6 +802,16 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       else if (handValue(seat.cards).total === 21) seat.status = 'standing';
     } else {
       seat.status = 'standing';
+    }
+
+    // #68: `double` mutates the locked main stake (×2) in RAM. Re-persist the
+    // round snapshot so on-boot recovery (#14) refunds the *doubled* stake —
+    // a crash between here and settle otherwise under-refunds the increment.
+    if (params.action === 'double' && t.roundDbId) {
+      await this.prisma.blackjackRound.update({
+        where: { id: t.roundDbId },
+        data: { stateJson: this.snapshot(t.id) as object },
+      });
     }
 
     t.lastActivityAt = Date.now();
