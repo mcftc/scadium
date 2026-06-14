@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import { BookOpen, DoorOpen, Loader2, User as UserIcon } from 'lucide-react';
 import { Card as UICard } from '@/components/ui/card';
 import { Dialog } from '@/components/ui/dialog';
@@ -164,25 +165,24 @@ export function BlackjackTable() {
           </svg>
 
           {/* Dealer zone */}
-          <div className="absolute top-[6%] left-1/2 -translate-x-1/2 flex flex-col items-center">
-            <div className="flex items-end mb-2">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className="w-8 h-11 rounded-sm bg-gradient-to-br from-indigo-900 to-indigo-950 border border-indigo-700/30"
-                  style={{ marginLeft: i > 0 ? -6 : 0, transform: `translateY(${i * -1}px)` }}
-                />
-              ))}
+          <div className="absolute top-[5%] left-1/2 -translate-x-1/2 flex flex-col items-center">
+            <div className="flex items-end gap-3">
+              <DealerAvatar dealing={state?.phase === 'dealing' || state?.phase === 'dealer_turn'} />
+              <CardShoe />
             </div>
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-purple-500/30 to-indigo-500/30 border-2 border-purple-400/30 flex items-center justify-center mb-1.5">
-              <span className="text-lg">🤖</span>
-            </div>
-            <div className="text-[10px] uppercase tracking-wider text-foreground-muted/60 mb-2">
-              Dealer{state?.dealerTotal != null ? ` · ${state.dealerTotal}` : ''}
+            <div className="mt-1.5 mb-2 flex items-center gap-2 rounded-full bg-black/40 px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-foreground-muted/70 backdrop-blur-sm">
+              Dealer
+              {state?.dealerTotal != null && (
+                <span className="font-mono text-cyan-300">{state.dealerTotal}</span>
+              )}
             </div>
             <div className="flex gap-1.5">
               {state?.dealerCards.length
-                ? state.dealerCards.map((c, i) => <CardFace key={i} card={c} />)
+                ? state.dealerCards.map((c, i) => (
+                    <DealtCard key={i} index={i}>
+                      <CardFace card={c} />
+                    </DealtCard>
+                  ))
                 : [0, 1].map((i) => <CardFace key={i} card={null} placeholder />)}
             </div>
           </div>
@@ -266,6 +266,92 @@ export function BlackjackTable() {
   );
 }
 
+/** A card sliding in from the dealer's shoe as it's dealt. */
+function DealtCard({ index, children }: { index: number; children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={{ x: 60, y: -28, opacity: 0, rotate: -10 }}
+      animate={{ x: 0, y: 0, opacity: 1, rotate: 0 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 26, delay: index * 0.08 }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** A 2D neon-android croupier — idle float, blinking eyes, pulsing core. */
+function DealerAvatar({ dealing = false }: { dealing?: boolean }) {
+  return (
+    <motion.div
+      animate={{ y: [0, -4, 0] }}
+      transition={{ duration: 3.4, repeat: Infinity, ease: 'easeInOut' }}
+      className="relative flex flex-col items-center"
+    >
+      {/* soft aura */}
+      <div className="absolute -inset-5 -z-10 rounded-full bg-purple-500/20 blur-2xl" />
+      {/* antenna */}
+      <div className="h-3 w-px bg-purple-300/40" />
+      <motion.div
+        animate={{ opacity: [0.4, 1, 0.4], scale: [1, 1.25, 1] }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+        className="-mb-0.5 h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]"
+      />
+      {/* head */}
+      <div className="relative mt-1 h-14 w-16 rounded-2xl border border-purple-300/30 bg-gradient-to-b from-[#3b3660] to-[#241f3a] shadow-[0_6px_22px_rgba(124,92,255,0.4)]">
+        {/* visor */}
+        <div className="absolute left-1/2 top-1/2 flex h-5 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-2.5 rounded-md bg-[#07090d] shadow-inner">
+          {[0, 1].map((i) => (
+            <motion.span
+              key={i}
+              animate={{ scaleY: [1, 1, 0.1, 1], opacity: [1, 1, 0.4, 1] }}
+              transition={{ duration: 4.2, repeat: Infinity, times: [0, 0.9, 0.95, 1], delay: i * 0.04 }}
+              className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.95)]"
+            />
+          ))}
+        </div>
+      </div>
+      {/* neck */}
+      <div className="h-1.5 w-3 bg-[#15121f]" />
+      {/* shoulders + bow tie + chest core */}
+      <div className="relative h-7 w-24 rounded-t-[28px] border-t border-purple-300/20 bg-gradient-to-b from-[#2c2742] to-[#181527]">
+        <div className="absolute left-1/2 top-1.5 flex -translate-x-1/2 items-center">
+          <span className="h-0 w-0 border-y-[5px] border-r-[8px] border-y-transparent border-r-fuchsia-400/90" />
+          <span className="h-2 w-2 rounded-[3px] bg-fuchsia-300" />
+          <span className="h-0 w-0 border-y-[5px] border-l-[8px] border-y-transparent border-l-fuchsia-400/90" />
+        </div>
+        <motion.div
+          animate={{ opacity: dealing ? [0.6, 1, 0.6] : [0.4, 0.8, 0.4] }}
+          transition={{ duration: dealing ? 0.8 : 2.4, repeat: Infinity, ease: 'easeInOut' }}
+          className="absolute bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.85)]"
+        />
+      </div>
+    </motion.div>
+  );
+}
+
+/** The dealing shoe at the dealer's side — where the cards come from. */
+function CardShoe() {
+  return (
+    <div className="relative mb-1 flex flex-col items-center" title="Card shoe">
+      <div className="relative h-10 w-14 overflow-hidden rounded-md border border-purple-400/25 bg-gradient-to-br from-[#2a2540] to-[#15121f] shadow-[inset_0_2px_6px_rgba(0,0,0,0.5)]">
+        {/* a couple of card edges peeking from the shoe */}
+        <div className="absolute left-1.5 top-1 flex">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="-ml-3.5 h-7 w-5 rounded-[3px] border border-primary-400/30 bg-gradient-to-br from-primary-600 to-primary-800 first:ml-0"
+              style={{ transform: `translateY(${-i}px)` }}
+            />
+          ))}
+        </div>
+        {/* lip of the shoe */}
+        <div className="absolute inset-x-0 bottom-0 h-2 bg-gradient-to-t from-black/60 to-transparent" />
+      </div>
+      <span className="mt-0.5 text-[8px] uppercase tracking-widest text-foreground-muted/50">Shoe</span>
+    </div>
+  );
+}
+
 function SeatSpot({
   seat,
   isMe,
@@ -309,7 +395,9 @@ function SeatSpot({
         <div className="-mt-16 mb-1 flex">
           {seat.cards.map((c, i) => (
             <div key={i} className="origin-bottom scale-[0.55]" style={{ marginLeft: i > 0 ? -34 : 0 }}>
-              <CardFace card={c} />
+              <DealtCard index={i}>
+                <CardFace card={c} />
+              </DealtCard>
             </div>
           ))}
         </div>

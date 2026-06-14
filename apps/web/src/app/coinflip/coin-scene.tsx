@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Environment, Lightformer } from '@react-three/drei';
+import { Environment, Grid, Lightformer } from '@react-three/drei';
 import { Vector3, type Group, type Mesh, type MeshBasicMaterial } from 'three';
+import { AndroidMascot, type MascotRig } from '@/components/three/android-mascot';
 import { BlobShadow } from '@/components/three/blob-shadow';
 import { StageCanvas } from '@/components/three/canvas-inner';
 import { ConfettiBurst } from '@/components/three/confetti-burst';
@@ -22,43 +23,57 @@ export interface CoinStageProps {
   onSpinComplete?: () => void;
 }
 
-const TOSS_S = 3.2; // a beat longer than the DOM coin: the camera ride needs room
-const SETTLE_S = 0.6;
-const REVS = 6;
-const TOSS_HEIGHT = 1.5;
+const TOSS_S = 3.0;
+const SETTLE_S = 0.7;
+const REVS = 7;
+const COIN_HOME = 0.2; // resting hover height above the pedestal
+const ARC = 1.95; // toss apex above home
 
-// Camera choreography: wide tableau (robot + crowd) → dolly in with the toss →
-// close-up as the spin dies, so the face is only readable at the very end.
-const CAM_WIDE = new Vector3(0, 0.9, 7.6);
-const CAM_CLOSE = new Vector3(0, 0.4, 2.9);
+// Camera choreography: wide tableau (tosser + crowd) holds through the spin, then
+// a late dolly-in so the face only resolves at the very end of the toss.
+const CAM_WIDE = new Vector3(0.1, 0.95, 7.9);
+const CAM_CLOSE = new Vector3(0, 0.45, 3.25);
+const DOLLY_START = 0.72;
 const camTmp = new Vector3();
+const lookTmp = new Vector3();
 
-/** Fast off the robot's flick, long dramatic deceleration into the reveal. */
 function easeOutQuint(t: number): number {
   return 1 - Math.pow(1 - t, 5);
 }
-
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+/** 0→1→0 hump for a single quick gesture inside a [a,b] window. */
+function pulse(t: number, a: number, b: number): number {
+  if (t <= a || t >= b) return 0;
+  return Math.sin(((t - a) / (b - a)) * Math.PI);
+}
+/** Eased ramp from value `from` to `to` across the window [a,b], clamped outside. */
+function ramp(t: number, a: number, b: number, from: number, to: number): number {
+  if (t <= a) return from;
+  if (t >= b) return to;
+  return from + (to - from) * easeInOutCubic((t - a) / (b - a));
 }
 
 type Phase = 'idle' | 'toss' | 'settle';
 
-const SPECTATORS: ReadonlyArray<readonly [number, number, number, number]> = [
-  [2.4, -0.85, -1.2, -0.5],
-  [1.5, -0.9, -2.4, -0.25],
-  [-1.6, -0.88, -2.6, 0.35],
-  [3.1, -0.8, 0.1, -0.9],
-  [-2.9, -0.86, -1.8, 0.7],
-];
+// Throwing-arm joint angles (rotation.z): rest → wind-up → release.
+const ARM_REST = 0.55;
+const ARM_WIND = -0.35;
+const ARM_THROW = 2.55;
+const FORE_REST = 0.7;
+const FORE_THROW = 0.05;
 
 function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplete }: CoinStageProps) {
-  const spd = Math.max(speed, 0.05); // speed=0 would freeze the toss and never fire onSpinComplete
+  const spd = Math.max(speed, 0.05);
   const tossGroup = useRef<Group>(null);
   const spinGroup = useRef<Group>(null);
   const shadowMesh = useRef<Mesh>(null);
-  const armGroup = useRef<Group>(null);
-  const spectatorHeads = useRef<(Group | null)[]>([]);
+  const rig = useRef<MascotRig>({});
+  const torso = useRef<Group>(null);
+  const head = useRef<Group>(null);
+  const rUpper = useRef<Group>(null);
+  const rFore = useRef<Group>(null);
   const phase = useRef<Phase>('idle');
   const elapsed = useRef(0);
   const wasSpinning = useRef(false);
@@ -69,8 +84,18 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
 
   const headsFace = getCoinFaceTexture('heads');
   const tailsFace = getCoinFaceTexture('tails');
+  const edge = getCoinEdgeTexture();
+
+  rig.current = { torso, head, rUpperArm: rUpper, rForeArm: rFore };
 
   const restAngle = (side: CoinSide) => Math.PI / 2 + (side === 'tails' ? Math.PI : 0);
+
+  const setArm = (upper: number, fore: number, lean: number, headTilt: number) => {
+    if (rUpper.current) rUpper.current.rotation.z = upper;
+    if (rFore.current) rFore.current.rotation.z = fore;
+    if (torso.current) torso.current.rotation.z = lean;
+    if (head.current) head.current.rotation.x = headTilt;
+  };
 
   useEffect(() => {
     if (spinning && !wasSpinning.current) {
@@ -80,8 +105,10 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
       invalidate();
     }
     wasSpinning.current = spinning;
-    if (!spinning && phase.current === 'idle' && spinGroup.current) {
-      spinGroup.current.rotation.x = restAngle(result);
+    if (!spinning && phase.current === 'idle') {
+      if (spinGroup.current) spinGroup.current.rotation.x = restAngle(result);
+      if (tossGroup.current) tossGroup.current.position.y = COIN_HOME;
+      setArm(ARM_REST, FORE_REST, 0, 0);
       invalidate();
     }
   }, [spinning, result, invalidate]);
@@ -93,34 +120,37 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
     if (!toss || !spin) return;
     if (phase.current === 'idle') return;
 
-    // Demand frameloop: clamp the post-idle delta spike or the toss ends in one frame.
     elapsed.current += Math.min(delta, 1 / 30) * spd;
 
     if (phase.current === 'toss') {
       const t = Math.min(elapsed.current / TOSS_S, 1);
-      const y = TOSS_HEIGHT * 4 * t * (1 - t);
+
+      // Coin: parabolic arc up from home, fast-then-slow tumble (face hides until late).
+      const y = COIN_HOME + ARC * 4 * t * (1 - t);
       toss.position.y = y;
+      toss.rotation.z = Math.sin(t * 13) * 0.09 * (1 - t);
       spin.rotation.x = Math.PI / 2 + targetSpin.current * easeOutQuint(t);
-      toss.rotation.z = Math.sin(t * 14) * 0.1 * (1 - t);
+
+      // Robot throw: wind-up → snap → follow-through back to rest.
+      const wind = pulse(t, 0.0, 0.16); // pull back before the throw
+      const upper = ramp(t, 0.12, 0.26, ARM_WIND, ARM_THROW) - wind * 0.5 + ramp(t, 0.32, 1, 0, ARM_REST - ARM_THROW);
+      const fore = ramp(t, 0.12, 0.24, FORE_REST, FORE_THROW) + ramp(t, 0.3, 1, 0, FORE_REST - FORE_THROW);
+      const lean = pulse(t, 0.1, 0.4) * -0.22 + ramp(t, 0.0, 0.12, 0, 0.1);
+      setArm(upper, fore, lean, -Math.min(y, 2) * 0.18);
+
       if (shadow) {
-        const lift = y / TOSS_HEIGHT;
-        shadow.scale.setScalar(2.1 * (1 - 0.4 * lift));
-        (shadow.material as MeshBasicMaterial).opacity = 0.5 - 0.3 * lift;
+        const lift = (y - COIN_HOME) / ARC;
+        shadow.scale.setScalar(2.0 * (1 - 0.45 * lift));
+        (shadow.material as MeshBasicMaterial).opacity = 0.5 - 0.32 * lift;
       }
-      // The robot's flick — a snap at the very start of the toss.
-      if (armGroup.current) {
-        const flick = Math.min((t * TOSS_S) / 0.45, 1);
-        armGroup.current.rotation.z = -0.5 - 1.7 * Math.sin(flick * Math.PI);
-      }
-      // The crowd looks up, following the coin.
-      for (const head of spectatorHeads.current) {
-        if (head) head.rotation.x = -y * 0.3;
-      }
-      // Dolly: wide tableau → in on the coin as the spin decays.
-      camTmp.lerpVectors(CAM_WIDE, CAM_CLOSE, easeInOutCubic(t));
+      // Hold wide, then dolly in for the reveal.
+      const d = t < DOLLY_START ? 0 : easeInOutCubic((t - DOLLY_START) / (1 - DOLLY_START));
+      camTmp.lerpVectors(CAM_WIDE, CAM_CLOSE, d);
       camera.position.copy(camTmp);
-      camera.position.y += y * 0.12;
-      camera.lookAt(0, y * 0.6, 0);
+      camera.position.y += (1 - d) * y * 0.1;
+      lookTmp.set(0, y * (1 - d) * 0.55 + d * COIN_HOME, 0);
+      camera.lookAt(lookTmp);
+
       if (t >= 1) {
         phase.current = 'settle';
         elapsed.current = 0;
@@ -128,24 +158,21 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
       }
     } else if (phase.current === 'settle') {
       const s = Math.min(elapsed.current / SETTLE_S, 1);
-      spin.rotation.x = restAngle(result) + 0.08 * Math.exp(-6 * s) * Math.sin(24 * s);
-      toss.position.y = 0;
+      spin.rotation.x = restAngle(result) + 0.09 * Math.exp(-6 * s) * Math.sin(22 * s);
+      toss.position.y = COIN_HOME - 0.04 * Math.exp(-9 * s) * Math.sin(20 * s);
       toss.rotation.z = 0;
-      if (armGroup.current) armGroup.current.rotation.z = -0.5;
-      for (const head of spectatorHeads.current) {
-        if (head) head.rotation.x = 0;
-      }
-      const dip = 0.05 * Math.exp(-10 * s);
+      setArm(ARM_REST, FORE_REST, 0, 0);
       camera.position.copy(CAM_CLOSE);
-      camera.position.y -= dip;
-      camera.lookAt(0, 0, 0);
+      camera.position.y -= 0.05 * Math.exp(-10 * s);
+      camera.lookAt(0, COIN_HOME, 0);
       if (shadow) {
-        shadow.scale.setScalar(2.1);
+        shadow.scale.setScalar(2.0);
         (shadow.material as MeshBasicMaterial).opacity = 0.5;
       }
       if (s >= 1) {
         phase.current = 'idle';
         spin.rotation.x = restAngle(result);
+        toss.position.y = COIN_HOME;
         onSpinComplete?.();
       }
     }
@@ -154,168 +181,109 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
 
   return (
     <>
-      {/* The $SCAD coin */}
-      <group ref={tossGroup}>
+      {/* The $SCAD coin — milled metal disc with embossed relief faces. */}
+      <group ref={tossGroup} position={[0, COIN_HOME, 0]}>
         <group ref={spinGroup} rotation={[Math.PI / 2, 0, 0]}>
           <mesh>
-            <cylinderGeometry args={[1, 1, 0.14, 72]} />
-            <meshStandardMaterial
-              attach="material-0"
-              map={getCoinEdgeTexture()}
-              metalness={0.7}
-              roughness={0.35}
-            />
-            <meshStandardMaterial attach="material-1" color="#3a3360" metalness={0.6} roughness={0.4} />
-            <meshStandardMaterial attach="material-2" color="#3a3360" metalness={0.6} roughness={0.4} />
+            <cylinderGeometry args={[1, 1, 0.18, 96]} />
+            <meshStandardMaterial attach="material-0" map={edge} metalness={0.92} roughness={0.28} envMapIntensity={1.4} />
+            <meshStandardMaterial attach="material-1" color="#2a2548" metalness={0.7} roughness={0.4} />
+            <meshStandardMaterial attach="material-2" color="#2a2548" metalness={0.7} roughness={0.4} />
           </mesh>
-          <mesh position={[0, 0.0712, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[0.985, 72]} />
+          {/* Heads face (robot bust) — solid satin metal, no self-glow. */}
+          <mesh position={[0, 0.0925, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.985, 96]} />
             <meshStandardMaterial
               map={headsFace}
-              emissiveMap={headsFace}
-              emissive="#ffffff"
-              emissiveIntensity={0.38}
-              metalness={0.4}
-              roughness={0.32}
+              bumpMap={headsFace}
+              bumpScale={0.03}
+              metalness={0.9}
+              roughness={0.42}
+              envMapIntensity={0.85}
             />
           </mesh>
-          <mesh position={[0, -0.0712, 0]} rotation={[Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[0.985, 72]} />
+          {/* Tails face (1 SCAD). */}
+          <mesh position={[0, -0.0925, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.985, 96]} />
             <meshStandardMaterial
               map={tailsFace}
-              emissiveMap={tailsFace}
-              emissive="#ffffff"
-              emissiveIntensity={0.38}
-              metalness={0.4}
-              roughness={0.32}
+              bumpMap={tailsFace}
+              bumpScale={0.03}
+              metalness={0.9}
+              roughness={0.42}
+              envMapIntensity={0.85}
             />
           </mesh>
-          {/* Neon rim feeding the bloom pass */}
+          {/* Chamfer rings — bevel the silhouette so it reads as struck metal. */}
+          {[0.082, -0.082].map((y) => (
+            <mesh key={y} position={[0, y, 0]} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[0.97, 0.03, 10, 96]} />
+              <meshStandardMaterial color="#3a3360" metalness={0.92} roughness={0.4} envMapIntensity={0.9} />
+            </mesh>
+          ))}
+          {/* Subtle neon edge — kept low so the spinning coin doesn't flare. */}
           <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[1.005, 0.022, 12, 96]} />
+            <torusGeometry args={[1.01, 0.018, 12, 110]} />
             <meshStandardMaterial
               color={NEON.purpleDeep}
               emissive={emissive(NEON.purple, 1)}
-              emissiveIntensity={1.7}
-              metalness={0.6}
-              roughness={0.3}
+              emissiveIntensity={0.7}
+              metalness={0.7}
+              roughness={0.35}
             />
           </mesh>
         </group>
       </group>
 
-      {/* The android who throws the coin */}
-      <group position={[-2.5, -0.7, -0.7]} rotation={[0, 0.5, 0]}>
-        <mesh position={[0, 0.45, 0]}>
-          <capsuleGeometry args={[0.3, 0.62, 8, 16]} />
-          <meshStandardMaterial color="#2A2640" metalness={0.85} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 1.12, 0]}>
-          <sphereGeometry args={[0.24, 24, 16]} />
-          <meshStandardMaterial color="#332e52" metalness={0.85} roughness={0.25} />
-        </mesh>
-        {/* Glowing eyes, antenna and chest core — these bloom */}
-        <mesh position={[-0.085, 1.16, 0.2]}>
-          <sphereGeometry args={[0.04, 12, 8]} />
-          <meshStandardMaterial emissive={emissive(NEON.cyan, 1)} emissiveIntensity={2.6} color="#0a3a44" />
-        </mesh>
-        <mesh position={[0.085, 1.16, 0.2]}>
-          <sphereGeometry args={[0.04, 12, 8]} />
-          <meshStandardMaterial emissive={emissive(NEON.cyan, 1)} emissiveIntensity={2.6} color="#0a3a44" />
-        </mesh>
-        <mesh position={[0, 1.42, 0]}>
-          <cylinderGeometry args={[0.012, 0.012, 0.14, 6]} />
-          <meshStandardMaterial color="#332e52" metalness={0.8} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 1.52, 0]}>
-          <sphereGeometry args={[0.03, 10, 8]} />
-          <meshStandardMaterial emissive={emissive(NEON.purple, 1)} emissiveIntensity={2.4} color="#3a1a40" />
-        </mesh>
-        <mesh position={[0, 0.62, 0.27]}>
-          <circleGeometry args={[0.07, 16]} />
-          <meshStandardMaterial emissive={emissive(NEON.purple, 1)} emissiveIntensity={2} color="#3a1a40" />
-        </mesh>
-        {/* Throwing arm — flicks at toss start */}
-        <group ref={armGroup} position={[0.3, 0.78, 0]} rotation={[0, 0, -0.5]}>
-          <mesh position={[0.26, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-            <capsuleGeometry args={[0.07, 0.42, 6, 12]} />
-            <meshStandardMaterial color="#2A2640" metalness={0.85} roughness={0.3} />
-          </mesh>
-          <mesh position={[0.52, 0, 0]}>
-            <sphereGeometry args={[0.09, 12, 8]} />
-            <meshStandardMaterial color="#332e52" metalness={0.85} roughness={0.25} />
-          </mesh>
-        </group>
+      {/* The android tosser. */}
+      <group position={[-1.35, -1.45, -0.1]} rotation={[0, 0.42, 0]}>
+        <AndroidMascot rig={rig.current} accent={NEON.cyan} />
       </group>
 
-      {/* The crowd, waiting on the result */}
-      {SPECTATORS.map(([x, y, z, ry], i) => (
-        <group key={i} position={[x, y, z]} rotation={[0, ry, 0]}>
-          <mesh position={[0, 0.4, 0]}>
-            <capsuleGeometry args={[0.26, 0.55, 6, 12]} />
-            <meshStandardMaterial
-              color={NEON.surfaceElevated}
-              emissive={emissive(NEON.purpleDeep, 1)}
-              emissiveIntensity={0.12}
-              roughness={0.8}
-            />
-          </mesh>
-          <group
-            ref={(node) => {
-              spectatorHeads.current[i] = node;
-            }}
-            position={[0, 0.98, 0]}
-          >
-            <mesh>
-              <sphereGeometry args={[0.19, 20, 14]} />
-              <meshStandardMaterial
-                color={NEON.surfaceElevated}
-                emissive={emissive(NEON.purpleDeep, 1)}
-                emissiveIntensity={0.15}
-                roughness={0.8}
-              />
-            </mesh>
-          </group>
-        </group>
-      ))}
-
-      {/* Pedestal + glow ring under the coin */}
+      {/* Pedestal + glow ring under the coin. */}
       <mesh position={[0, -1.52, 0]}>
-        <cylinderGeometry args={[1.3, 1.45, 0.16, 48]} />
-        <meshStandardMaterial color={NEON.surface} metalness={0.4} roughness={0.6} />
+        <cylinderGeometry args={[1.25, 1.42, 0.16, 56]} />
+        <meshStandardMaterial color={NEON.surface} metalness={0.5} roughness={0.55} />
       </mesh>
       <mesh position={[0, -1.43, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[1.18, 0.018, 8, 64]} />
-        <meshStandardMaterial
-          color={NEON.purpleDeep}
-          emissive={emissive(NEON.purple, 1)}
-          emissiveIntensity={2.2}
-          metalness={0.5}
-          roughness={0.4}
-        />
+        <torusGeometry args={[1.14, 0.018, 8, 72]} />
+        <meshStandardMaterial color={NEON.purpleDeep} emissive={emissive(NEON.purple, 1)} emissiveIntensity={1.8} metalness={0.5} roughness={0.4} />
       </mesh>
-      <BlobShadow meshRef={shadowMesh} position={[0, -1.42, 0]} scale={2.1} opacity={0.5} />
-      <ConfettiBurst burstId={burstId} origin={[0, 0.2, 0.9]} power={3.2} gravity={3.2} duration={3.2} />
+
+      {/* Synthwave grid floor receding into the space backdrop. */}
+      <Grid
+        position={[0, -1.6, -1]}
+        args={[40, 40]}
+        cellSize={0.7}
+        cellThickness={1}
+        cellColor={NEON.purpleDeep}
+        sectionSize={3.5}
+        sectionThickness={1.5}
+        sectionColor={NEON.cyan}
+        fadeDistance={26}
+        fadeStrength={3}
+        followCamera={false}
+        infiniteGrid
+      />
+      <BlobShadow meshRef={shadowMesh} position={[0, -1.42, 0]} scale={2.0} opacity={0.5} />
+      <ConfettiBurst burstId={burstId} origin={[0, COIN_HOME, 0.5]} power={3.4} gravity={3.0} duration={3.2} />
     </>
   );
 }
 
 export default function CoinStage(props: CoinStageProps) {
   return (
-    <StageCanvas
-      frameloop="demand"
-      camera={{ position: [CAM_WIDE.x, CAM_WIDE.y, CAM_WIDE.z], fov: 38 }}
-    >
-      <ambientLight intensity={0.45} />
-      <directionalLight position={[3, 5, 4]} intensity={1.1} />
-      <pointLight position={[-4, 1, -2]} color={NEON.cyan} intensity={5} />
-      <pointLight position={[0, -0.5, 2.5]} color={NEON.purple} intensity={3} />
+    <StageCanvas frameloop="demand" camera={{ position: [CAM_WIDE.x, CAM_WIDE.y, CAM_WIDE.z], fov: 38 }}>
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[3, 5, 4]} intensity={0.9} />
+      <spotLight position={[0, 5, 2.5]} angle={0.5} penumbra={0.9} intensity={1.2} color="#ffffff" />
+      <pointLight position={[-4, 1, -2]} color={NEON.cyan} intensity={3.2} />
+      <pointLight position={[3, -0.5, 2.5]} color={NEON.purple} intensity={2.2} />
       <Starfield radius={24} depth={12} size={0.07} opacity={0.55} />
-      {/* Procedural environment — metal reflections without any network fetch. */}
       <Environment resolution={64}>
-        <Lightformer intensity={1.8} position={[0, 3, 4]} scale={[6, 3, 1]} color="#ffffff" />
-        <Lightformer intensity={1} position={[-4, 0, 2]} scale={[3, 6, 1]} color={NEON.cyan} />
-        <Lightformer intensity={1.3} position={[4, -1, 3]} scale={[3, 6, 1]} color={NEON.purple} />
+        <Lightformer intensity={1.3} position={[0, 3, 4]} scale={[6, 3, 1]} color="#ffffff" />
+        <Lightformer intensity={0.9} position={[-4, 0, 2]} scale={[3, 6, 1]} color={NEON.cyan} />
+        <Lightformer intensity={1.1} position={[4, -1, 3]} scale={[3, 6, 1]} color={NEON.purple} />
       </Environment>
       <CoinRig {...props} />
     </StageCanvas>

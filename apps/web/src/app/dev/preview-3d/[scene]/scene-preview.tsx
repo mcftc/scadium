@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import type { ComponentType } from 'react';
 import { CoinflipPreview } from '../scenes/coinflip-preview';
+import { CrashPreview } from '../scenes/crash-preview';
 import { JackpotPreview } from '../scenes/jackpot-preview';
 import { TestPreview } from '../scenes/test-preview';
 
@@ -13,9 +14,14 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
       'Coinflip — $SCAD coin tossed by an android, crowd watching, camera dolly-in, late reveal',
     Component: CoinflipPreview,
   },
+  crash: {
+    title:
+      'Crash — the original neon-curve animation, bigger rocket; cash-outs now parachute off the curve with their winnings',
+    Component: CrashPreview,
+  },
   jackpot: {
     title:
-      'Jackpot — roulette of players: wedges ∝ pot share, marquee bulbs, pointer ticks, winner pop + gold confetti',
+      'Jackpot — solpump/CSGO-style horizontal reel: segments ∝ pot share spin and decelerate onto the winner',
     Component: JackpotPreview,
   },
 };

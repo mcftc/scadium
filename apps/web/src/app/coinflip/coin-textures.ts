@@ -3,61 +3,86 @@ import type { CoinSide } from './flip-coin';
 
 /**
  * Runtime textures for the $SCAD coin (no asset files, cached per key):
- * heads = the android-robot emblem face (purple), tails = the "1 SCAD"
- * denomination face (cyan), like a real minted coin. Ridged rim ring and a
- * circular legend around each face.
+ * heads = the android-mascot bust (purple), tails = the "1 SCAD" denomination
+ * (cyan), struck like a real minted coin — milled rim with per-wedge bevel
+ * shading, a beaded inner ring, a circular legend and an embossed relief that
+ * doubles as the material's bump map so the device catches the light in 3D.
  */
 
 const cache = new Map<string, CanvasTexture>();
 
-const SIZE = 512;
+const SIZE = 1024;
 
 const FACE = {
   heads: {
-    ridgeA: '#7c5fd4',
-    ridgeB: '#4c3f8f',
-    gradient: ['#c4a8ff', '#8b5cf6', '#5b3fa8'],
-    legend: '★ SCADIUM ★ CASINO ★ SCADIUM ★ CASINO ',
+    ridgeA: '#8f72e8',
+    ridgeB: '#4a3c84',
+    rim: '#6c57b8',
+    gradient: ['#d9c6ff', '#9a6ff0', '#5a3fa6'],
+    field: '#7d5bd0',
+    legendTop: 'SCADIUM CASINO',
+    legendBottom: 'PROVABLY FAIR',
   },
   tails: {
-    ridgeA: '#22a8c4',
-    ridgeB: '#156a80',
-    gradient: ['#a5f3ff', '#22d3ee', '#0e7490'],
-    legend: '★ 1 SCAD ★ PROVABLY FAIR ★ 1 SCAD ★ FAIR ',
+    ridgeA: '#3fc6e6',
+    ridgeB: '#0f5a72',
+    rim: '#1d93b4',
+    gradient: ['#bdf6ff', '#34d6ee', '#0c6f8c'],
+    field: '#1aa6c6',
+    legendTop: 'ONE SCAD',
+    legendBottom: 'SOLANA CASINO',
   },
 } as const;
-
-const EMBOSS = 'rgba(255,255,255,0.92)';
 
 function finalize(canvas: HTMLCanvasElement): CanvasTexture {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
   return texture;
 }
 
-/** Characters laid out on a circle, reading clockwise from the top. */
+/**
+ * Characters laid out on a circular baseline. `flip` (for the lower arc) keeps
+ * the glyphs upright/readable instead of letting them hang upside-down.
+ */
 function ringText(
   ctx: CanvasRenderingContext2D,
   text: string,
   cx: number,
   cy: number,
   radius: number,
+  startAngle: number,
+  sweep: number,
+  size: number,
+  color: string,
+  flip = false,
 ): void {
-  const step = (Math.PI * 2) / text.length;
   ctx.save();
-  ctx.font = `700 ${SIZE * 0.052}px "Geist Mono", ui-monospace, monospace`;
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = `800 ${size}px "Geist Mono", ui-monospace, monospace`;
+  ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  const step = sweep / Math.max(1, text.length - 1);
   for (let i = 0; i < text.length; i++) {
     const ch = text[i] ?? ' ';
+    const a = startAngle + i * step;
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(i * step);
-    ctx.translate(0, -radius);
+    ctx.translate(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+    ctx.rotate(flip ? a - Math.PI / 2 : a + Math.PI / 2);
     ctx.fillText(ch, 0, 0);
     ctx.restore();
+  }
+  ctx.restore();
+}
+
+function beadedRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, count: number, r: number, color: string): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius, r, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -65,139 +90,169 @@ function ringText(
 function drawBase(ctx: CanvasRenderingContext2D, side: CoinSide): void {
   const spec = FACE[side];
   const c = SIZE / 2;
-  // Ridged rim: alternating 6° wedges.
-  for (let i = 0; i < 60; i++) {
+  // Milled rim: alternating wedges, each shaded outer→inner to read as a bevel.
+  const wedges = 120;
+  for (let i = 0; i < wedges; i++) {
+    const a0 = (i / wedges) * Math.PI * 2;
+    const a1 = ((i + 1) / wedges) * Math.PI * 2;
+    const grad = ctx.createRadialGradient(c, c, c * 0.86, c, c, c);
+    grad.addColorStop(0, i % 2 === 0 ? spec.ridgeA : spec.ridgeB);
+    grad.addColorStop(1, i % 2 === 0 ? spec.ridgeB : spec.ridgeA);
     ctx.beginPath();
     ctx.moveTo(c, c);
-    ctx.arc(c, c, c, (i * 6 * Math.PI) / 180, ((i + 1) * 6 * Math.PI) / 180);
+    ctx.arc(c, c, c, a0, a1);
     ctx.closePath();
-    ctx.fillStyle = i % 2 === 0 ? spec.ridgeA : spec.ridgeB;
+    ctx.fillStyle = grad;
     ctx.fill();
   }
-  // Coin face.
-  const inner = c * 0.9;
-  const grad = ctx.createRadialGradient(c * 0.7, c * 0.6, inner * 0.05, c, c, inner);
+  // Bevelled rim band.
+  ctx.beginPath();
+  ctx.arc(c, c, c * 0.865, 0, Math.PI * 2);
+  ctx.fillStyle = spec.rim;
+  ctx.fill();
+  // Coin field — domed radial gradient (offset highlight = a metal sheen).
+  const inner = c * 0.84;
+  const grad = ctx.createRadialGradient(c * 0.72, c * 0.6, inner * 0.05, c, c, inner);
   grad.addColorStop(0, spec.gradient[0]);
-  grad.addColorStop(0.45, spec.gradient[1]);
+  grad.addColorStop(0.5, spec.gradient[1]);
   grad.addColorStop(1, spec.gradient[2]);
   ctx.beginPath();
   ctx.arc(c, c, inner, 0, Math.PI * 2);
   ctx.fillStyle = grad;
   ctx.fill();
-  // Inner border ring framing the legend.
+  // Beaded ring + framing lines around the legend channel.
+  beadedRing(ctx, c, c, inner * 0.93, 96, SIZE * 0.006, 'rgba(255,255,255,0.55)');
+  ctx.lineWidth = SIZE * 0.006;
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
   ctx.beginPath();
-  ctx.arc(c, c, inner * 0.97, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.lineWidth = SIZE * 0.008;
+  ctx.arc(c, c, inner * 0.76, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(c, c, inner * 0.78, 0, Math.PI * 2);
-  ctx.stroke();
-  ringText(ctx, spec.legend, c, c, inner * 0.875);
-  // Glint.
+  // Circular legend: top arc reads normally, bottom arc curves the other way.
+  ringText(ctx, spec.legendTop, c, c, inner * 0.85, Math.PI * 1.5 - 0.6, 1.2, SIZE * 0.045, 'rgba(255,255,255,0.85)');
+  ringText(ctx, spec.legendBottom, c, c, inner * 0.85, Math.PI * 0.5 + 0.6, -1.2, SIZE * 0.038, 'rgba(255,255,255,0.7)', true);
+  // Sheen sweep.
   ctx.save();
-  ctx.translate(c * 0.6, c * 0.5);
-  ctx.rotate((-30 * Math.PI) / 180);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(c * 0.62, c * 0.52);
+  ctx.rotate((-32 * Math.PI) / 180);
   ctx.beginPath();
   ctx.ellipse(0, 0, SIZE * 0.1, SIZE * 0.045, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
   ctx.fill();
   ctx.restore();
 }
 
-/** The android mascot, embossed like a portrait on a minted coin. */
+/** The android mascot, struck in relief like a portrait on a minted coin. */
 function drawRobot(ctx: CanvasRenderingContext2D): void {
   const c = SIZE / 2;
   ctx.save();
-  ctx.strokeStyle = EMBOSS;
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = SIZE * 0.018;
   ctx.lineCap = 'round';
-  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.lineJoin = 'round';
+  const ink = 'rgba(255,255,255,0.92)';
+  const fill = 'rgba(255,255,255,0.16)';
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = fill;
+  ctx.lineWidth = SIZE * 0.014;
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowOffsetY = SIZE * 0.006;
 
-  const headW = SIZE * 0.34;
-  const headH = SIZE * 0.27;
-  const headX = c - headW / 2;
-  const headY = c - SIZE * 0.21;
-  const r = SIZE * 0.06;
-  // Head.
+  // Shoulders / chest plate.
   ctx.beginPath();
-  ctx.moveTo(headX + r, headY);
-  ctx.arcTo(headX + headW, headY, headX + headW, headY + headH, r);
-  ctx.arcTo(headX + headW, headY + headH, headX, headY + headH, r);
-  ctx.arcTo(headX, headY + headH, headX, headY, r);
-  ctx.arcTo(headX, headY, headX + headW, headY, r);
+  ctx.moveTo(c - SIZE * 0.18, c + SIZE * 0.2);
+  ctx.quadraticCurveTo(c - SIZE * 0.2, c + SIZE * 0.04, c - SIZE * 0.11, c + SIZE * 0.01);
+  ctx.lineTo(c + SIZE * 0.11, c + SIZE * 0.01);
+  ctx.quadraticCurveTo(c + SIZE * 0.2, c + SIZE * 0.04, c + SIZE * 0.18, c + SIZE * 0.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Chest core.
+  ctx.beginPath();
+  ctx.arc(c, c + SIZE * 0.085, SIZE * 0.028, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fill();
+
+  // Head — rounded helmet.
+  const headW = SIZE * 0.27;
+  const headH = SIZE * 0.24;
+  const hx = c - headW / 2;
+  const hy = c - SIZE * 0.2;
+  const r = SIZE * 0.07;
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.moveTo(hx + r, hy);
+  ctx.arcTo(hx + headW, hy, hx + headW, hy + headH, r);
+  ctx.arcTo(hx + headW, hy + headH, hx, hy + headH, r * 1.3);
+  ctx.arcTo(hx, hy + headH, hx, hy, r * 1.3);
+  ctx.arcTo(hx, hy, hx + headW, hy, r);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
   // Antenna.
   ctx.beginPath();
-  ctx.moveTo(c, headY);
-  ctx.lineTo(c, headY - SIZE * 0.055);
+  ctx.moveTo(c, hy);
+  ctx.lineTo(c, hy - SIZE * 0.06);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(c, headY - SIZE * 0.075, SIZE * 0.02, 0, Math.PI * 2);
-  ctx.fillStyle = EMBOSS;
+  ctx.arc(c, hy - SIZE * 0.078, SIZE * 0.022, 0, Math.PI * 2);
+  ctx.fillStyle = ink;
   ctx.fill();
-  // Eyes — glowing.
-  ctx.shadowColor = 'rgba(255,255,255,0.8)';
-  ctx.shadowBlur = SIZE * 0.025;
-  ctx.shadowOffsetY = 0;
-  const eyeY = headY + headH * 0.45;
-  for (const dx of [-headW * 0.22, headW * 0.22]) {
-    ctx.beginPath();
-    ctx.arc(c + dx, eyeY, SIZE * 0.038, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.shadowBlur = 0;
-  ctx.shadowColor = 'rgba(0,0,0,0.25)';
-  ctx.shadowOffsetY = SIZE * 0.006;
+  // Visor band (the face) — a dark inset with two bright eyes.
+  const vY = hy + headH * 0.46;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,255,255,0.85)';
+  ctx.shadowBlur = SIZE * 0.02;
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.roundRect(c - headW * 0.34, vY - SIZE * 0.018, headW * 0.68, SIZE * 0.036, SIZE * 0.018);
+  ctx.fill();
+  ctx.restore();
   // Mouth grill.
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  const grillY = headY + headH * 0.74;
-  for (const dx of [-SIZE * 0.045, 0, SIZE * 0.045]) {
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  for (const dx of [-SIZE * 0.04, 0, SIZE * 0.04]) {
     ctx.beginPath();
-    ctx.roundRect(c + dx - SIZE * 0.011, grillY, SIZE * 0.022, headH * 0.14, SIZE * 0.008);
+    ctx.roundRect(c + dx - SIZE * 0.01, hy + headH * 0.74, SIZE * 0.02, headH * 0.16, SIZE * 0.006);
     ctx.fill();
   }
-  // Shoulders.
-  ctx.beginPath();
-  ctx.moveTo(c - headW * 0.62, c + SIZE * 0.21);
-  ctx.quadraticCurveTo(c, c + SIZE * 0.075, c + headW * 0.62, c + SIZE * 0.21);
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.fill();
-  ctx.stroke();
   ctx.restore();
 }
 
-/** The denomination, like the number side of a real coin. */
+/** The denomination side — big "1", SCAD, and laurel sprigs. */
 function drawDenomination(ctx: CanvasRenderingContext2D): void {
   const c = SIZE / 2;
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
   ctx.shadowOffsetY = SIZE * 0.008;
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
   ctx.font = `900 ${SIZE * 0.4}px "Geist Sans", Inter, system-ui, sans-serif`;
-  ctx.fillText('1', c, c - SIZE * 0.045);
-  ctx.font = `800 ${SIZE * 0.105}px "Geist Sans", Inter, system-ui, sans-serif`;
-  ctx.fillText('SCAD', c, c + SIZE * 0.185);
-  // Side sprigs.
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.lineWidth = SIZE * 0.012;
+  ctx.fillText('1', c, c - SIZE * 0.05);
+  ctx.font = `800 ${SIZE * 0.1}px "Geist Sans", Inter, system-ui, sans-serif`;
+  ctx.fillText('SCAD', c, c + SIZE * 0.17);
+  // Laurel sprigs either side.
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,255,255,0.66)';
+  ctx.lineWidth = SIZE * 0.011;
   ctx.lineCap = 'round';
   for (const dir of [-1, 1]) {
+    const bx = c + dir * SIZE * 0.27;
     ctx.beginPath();
-    ctx.moveTo(c + dir * SIZE * 0.26, c + SIZE * 0.1);
-    ctx.quadraticCurveTo(c + dir * SIZE * 0.32, c - SIZE * 0.02, c + dir * SIZE * 0.27, c - SIZE * 0.15);
+    ctx.moveTo(bx, c + SIZE * 0.12);
+    ctx.quadraticCurveTo(c + dir * SIZE * 0.34, c, c + dir * SIZE * 0.28, c - SIZE * 0.16);
     ctx.stroke();
+    for (let k = 0; k < 5; k++) {
+      const ly = c + SIZE * 0.1 - k * SIZE * 0.055;
+      const lx = bx + dir * SIZE * 0.012 + dir * k * SIZE * 0.004;
+      ctx.beginPath();
+      ctx.ellipse(lx + dir * SIZE * 0.022, ly, SIZE * 0.024, SIZE * 0.011, dir * 0.7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
 
-/** heads = robot emblem (TURA), tails = 1 SCAD denomination (YAZI). */
+/** heads = robot bust (TURA), tails = 1 SCAD denomination (YAZI). */
 export function getCoinFaceTexture(side: CoinSide): CanvasTexture {
   const key = `face:${side}`;
   const hit = cache.get(key);
@@ -219,7 +274,8 @@ export function getCoinFaceTexture(side: CoinSide): CanvasTexture {
 
 /**
  * Milled coin edge — neutral (NOT result-colored: a side-tinted edge would
- * telegraph the outcome while the coin is still in the air).
+ * telegraph the outcome while the coin is still in the air). Shaded ridges so
+ * the reeding catches light as the coin tumbles.
  */
 export function getCoinEdgeTexture(): CanvasTexture {
   const key = 'edge';
@@ -227,18 +283,22 @@ export function getCoinEdgeTexture(): CanvasTexture {
   if (hit) return hit;
 
   const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 8;
+  canvas.width = 128;
+  canvas.height = 16;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    for (let x = 0; x < 64; x += 4) {
-      ctx.fillStyle = (x / 4) % 2 === 0 ? '#6F5FCC' : '#3a3360';
-      ctx.fillRect(x, 0, 4, 8);
+    for (let x = 0; x < 128; x += 4) {
+      const g = ctx.createLinearGradient(x, 0, x + 4, 0);
+      g.addColorStop(0, '#2c2748');
+      g.addColorStop(0.5, '#7866c8');
+      g.addColorStop(1, '#2c2748');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, 4, 16);
     }
   }
   const texture = finalize(canvas);
   texture.wrapS = RepeatWrapping;
-  texture.repeat.set(24, 1);
+  texture.repeat.set(48, 1);
   cache.set(key, texture);
   return texture;
 }

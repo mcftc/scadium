@@ -1,8 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { JackpotWheel } from '@/app/jackpot/jackpot-wheel';
-import type { JackpotReveal } from '@/app/jackpot/jackpot-reel';
+import { JackpotReel, type JackpotReveal } from '@/app/jackpot/jackpot-reel';
 import type { JackpotPlayer } from '@/hooks/use-jackpot';
 
 const FAKE_PLAYERS: JackpotPlayer[] = [
@@ -32,7 +31,7 @@ export function JackpotPreview() {
   return (
     <div className="space-y-4">
       {/* key remounts the whole reveal — exactly how the game page uses it */}
-      <JackpotWheel key={run} reveal={reveal} onDone={() => setDone(true)} />
+      <JackpotReel key={run} reveal={reveal} onDone={() => setDone(true)} />
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
