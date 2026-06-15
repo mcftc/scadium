@@ -1,0 +1,83 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scadium.fullname" . }}-api
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "api") | nindent 8 }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "scadium.image" (dict "ctx" . "image" .Values.api.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: {{ .Values.api.port }} }
+          envFrom:
+            - configMapRef: { name: {{ include "scadium.fullname" . }}-config }
+            - secretRef: { name: {{ include "scadium.secretName" . }} }
+          livenessProbe:
+            httpGet: { path: {{ .Values.api.livenessPath }}, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: {{ .Values.api.readinessPath }}, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scadium.fullname" . }}-api
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "api") | nindent 4 }}
+  ports:
+    - { name: http, port: {{ .Values.api.port }}, targetPort: http }
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "scadium.fullname" . }}-api
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "scadium.fullname" . }}-api
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- if .Values.api.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "scadium.fullname" . }}-api
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.pdb.minAvailable }}
+  selector:
+    matchLabels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+{{- end }}
+{{- end }}

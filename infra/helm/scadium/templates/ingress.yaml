@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "scadium.fullname" . }}
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # API + Socket.io under /api; everything else to the web app.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "scadium.fullname" . }}-api
+                port: { name: http }
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "scadium.fullname" . }}-api
+                port: { name: http }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "scadium.fullname" . }}-web
+                port: { name: http }
+{{- end }}

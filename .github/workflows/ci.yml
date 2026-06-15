@@ -252,6 +252,33 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
+  helm-chart:
+    # Validate the production Helm chart (#52): lint + render in the default and
+    # external-managed-datastore configs. No cluster needed — catches template/
+    # values regressions on every PR.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: helm lint
+        run: helm lint infra/helm/scadium
+      - name: helm template (default)
+        run: helm template scadium infra/helm/scadium > /dev/null
+      - name: helm template (external managed datastores via chart secret)
+        run: |
+          helm template scadium infra/helm/scadium \
+            --set postgres.external.enabled=true \
+            --set redis.external.enabled=true \
+            --set redis.external.url='rediss://managed-redis:6380' \
+            --set secrets.databaseUrl='postgresql://x:y@ext:5432/db' > /dev/null
+      - name: helm template (production: external secret store)
+        run: |
+          helm template scadium infra/helm/scadium \
+            --set postgres.external.enabled=true \
+            --set redis.external.enabled=true \
+            --set redis.external.url='rediss://managed-redis:6380' \
+            --set secrets.existingSecret=scadium-prod-secrets > /dev/null
+
   web-e2e:
     # Browser e2e for the web app (#142). Stands up the Playwright harness #42
     # asked for; runs the on-chain copy-gating specs against the production build
