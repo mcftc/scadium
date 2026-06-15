@@ -62,7 +62,10 @@ export class LotteryService {
   }
 
   private validateDigits(digits: number[]) {
-    if (digits.length !== LOTTERY.DIGITS || digits.some((d) => d < 0 || d > 9 || !Number.isInteger(d))) {
+    if (
+      digits.length !== LOTTERY.DIGITS ||
+      digits.some((d) => d < 0 || d > 9 || !Number.isInteger(d))
+    ) {
       throw new BadRequestException('Ticket must be 6 digits, each 0..9');
     }
   }
@@ -78,6 +81,9 @@ export class LotteryService {
     if (!this.chain.lotteryEnabled) {
       throw new BadRequestException('On-chain lottery is not enabled');
     }
+    // Absolute blocks apply to the on-chain $SCAD purchase too (self-exclusion /
+    // cooling-off / age gate #146); 0n since it is $SCAD-denominated, not SOL.
+    await this.rg.assertCanWager(params.userId, 0n);
     const open = this.engine.getOpenDraw();
     if (!open) throw new BadRequestException('No open draw');
 
@@ -150,6 +156,9 @@ export class LotteryService {
 
   /** Spend one earned free ticket on the caller's picks (no $SCAD moves). */
   async useFreeTicket(params: { userId: string; digits: number[] }) {
+    // Same absolute blocks as a paid ticket (self-exclusion / cooling-off /
+    // age gate #146) — a free ticket is still a lottery entry (0n: no SOL wager).
+    await this.rg.assertCanWager(params.userId, 0n);
     this.validateDigits(params.digits);
     const open = this.engine.getOpenDraw();
     if (!open) throw new BadRequestException('No open draw');

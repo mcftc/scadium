@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { ComplianceModule } from '../compliance/compliance.module';
 import { RgController } from './rg.controller';
 import { RgService } from './rg.service';
 
@@ -10,7 +11,7 @@ import { RgService } from './rg.service';
  */
 @Global()
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, ComplianceModule],
   controllers: [RgController],
   providers: [RgService],
   exports: [RgService],

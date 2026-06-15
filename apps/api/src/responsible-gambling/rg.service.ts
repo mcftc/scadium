@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MaintenanceService } from '../maintenance/maintenance.service';
+import { ComplianceService } from '../compliance/compliance.service';
 
 export interface RgState {
   selfExcludedUntil: string | null;
@@ -32,6 +33,7 @@ export class RgService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly maintenance: MaintenanceService,
+    private readonly compliance: ComplianceService,
   ) {}
 
   async state(userId: string): Promise<RgState> {
@@ -71,12 +73,19 @@ export class RgService {
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: {
+        ageConfirmedAt: true,
         selfExcludedUntil: true,
         coolOffUntil: true,
         dailyLossLimitLamports: true,
         dailyWagerLimitLamports: true,
       },
     });
+    // Age gate (#146): real money requires a confirmed 18+ acknowledgement at the
+    // API, not just the client modal (#44). Enforced only when real money is on —
+    // the play-money demo's gate is a presented acknowledgement, not a control.
+    if (this.compliance.realMoneyEnabled && u.ageConfirmedAt == null) {
+      throw new ForbiddenException('Age verification required');
+    }
     const now = new Date();
     if (u.selfExcludedUntil && u.selfExcludedUntil > now) {
       throw new ForbiddenException(`Self-excluded until ${u.selfExcludedUntil.toISOString()}`);
@@ -112,8 +121,12 @@ export class RgService {
     }
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { dailyDepositLimitLamports: true },
+      select: { ageConfirmedAt: true, dailyDepositLimitLamports: true },
     });
+    // Age gate (#146): block real-money deposits by an un-acknowledged user.
+    if (this.compliance.realMoneyEnabled && u.ageConfirmedAt == null) {
+      throw new ForbiddenException('Age verification required');
+    }
     if (u.dailyDepositLimitLamports == null) return;
     const agg = await this.prisma.vaultTransfer.aggregate({
       where: { userId, kind: 'deposit', createdAt: { gte: startOfUtcDay() } },

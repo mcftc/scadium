@@ -9,6 +9,7 @@ const makeSvc = (
     amountLamports: 0n,
     payoutLamports: 0n,
   },
+  realMoneyEnabled = false,
 ) =>
   new RgService(
     {
@@ -16,9 +17,11 @@ const makeSvc = (
       bet: { aggregate: vi.fn().mockResolvedValue({ _sum: sum }) },
     } as never,
     { isPaused: async () => false } as never,
+    { realMoneyEnabled } as never,
   );
 
 const active = {
+  ageConfirmedAt: new Date('2000-01-01'),
   selfExcludedUntil: null,
   coolOffUntil: null,
   dailyLossLimitLamports: null,
@@ -63,5 +66,31 @@ describe('RgService.assertCanWager (#46)', () => {
   it('enforces only exclusion/cool-off for a 0n amount (lottery/tip path)', async () => {
     const svc = makeSvc({ ...active, dailyWagerLimitLamports: 1n });
     await expect(svc.assertCanWager('u', 0n)).resolves.toBeUndefined();
+  });
+});
+
+describe('RgService age gate (#146)', () => {
+  it('blocks (403) an un-acked user when real money is enabled', async () => {
+    const svc = makeSvc({ ...active, ageConfirmedAt: null }, undefined, true);
+    await expect(svc.assertCanWager('u', 100n)).rejects.toThrow(/age verification/i);
+  });
+
+  it('allows an un-acked user when real money is OFF (play-money demo)', async () => {
+    const svc = makeSvc({ ...active, ageConfirmedAt: null }, undefined, false);
+    await expect(svc.assertCanWager('u', 100n)).resolves.toBeUndefined();
+  });
+
+  it('allows an age-confirmed user when real money is enabled', async () => {
+    const svc = makeSvc({ ...active }, undefined, true);
+    await expect(svc.assertCanWager('u', 100n)).resolves.toBeUndefined();
+  });
+
+  it('blocks (403) a real-money deposit by an un-acked user', async () => {
+    const svc = makeSvc(
+      { ...active, ageConfirmedAt: null, dailyDepositLimitLamports: null },
+      undefined,
+      true,
+    );
+    await expect(svc.assertCanDeposit('u', 100n)).rejects.toThrow(/age verification/i);
   });
 });

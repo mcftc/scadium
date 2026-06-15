@@ -21,6 +21,7 @@ describe('global pause kill-switch', () => {
     const rg = new RgService(
       prismaThatWouldThrow as never,
       { isPaused: async () => true } as never,
+      { realMoneyEnabled: false } as never,
     );
     await expect(rg.assertCanWager('u1', 1000n)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
@@ -31,6 +32,7 @@ describe('global pause kill-switch', () => {
     const rg = new RgService(
       prismaThatWouldThrow as never,
       { isPaused: async () => true } as never,
+      { realMoneyEnabled: false } as never,
     );
     await expect(rg.assertCanDeposit('u1', 1000n)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
@@ -41,6 +43,7 @@ describe('global pause kill-switch', () => {
     const rg = new RgService(
       prismaThatWouldThrow as never,
       { isPaused: async () => false } as never,
+      { realMoneyEnabled: false } as never,
     );
     // Not paused -> falls through to prisma, which our stub makes throw a plain Error
     // (NOT ServiceUnavailable). Proves the pause gate let it through.
