@@ -27,6 +27,8 @@ export interface MeResponse {
   /** Last accepted legal version + when; null = never accepted (#48). */
   acceptedLegalVersion: string | null;
   acceptedLegalAt: string | null;
+  /** KYC / identity verification status (#45). */
+  kycStatus: 'none' | 'pending' | 'approved' | 'rejected';
   /** Responsible-gambling controls (#46). */
   responsibleGambling: {
     selfExcludedUntil: string | null;

@@ -68,6 +68,13 @@ enum BlackjackTableStatus {
   settling
 }
 
+enum KycStatus {
+  none
+  pending
+  approved
+  rejected
+}
+
 // ==================== USERS & AUTH ====================
 
 model User {
@@ -134,6 +141,13 @@ model User {
   // Salted hash of the signup IP (#47) — same-IP referrer/referee pairs are
   // flagged as sybil and accrue no commission. Raw IPs are never stored.
   signupIpHash String?
+  // KYC / identity verification (#45). Hard-gates deposits/withdrawals when KYC
+  // is enabled. We store only the provider reference + status — never raw
+  // identity documents.
+  kycStatus        KycStatus @default(none)
+  kycProviderRef   String?
+  sanctionsCleared Boolean   @default(false)
+  kycReviewedAt    DateTime?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)

@@ -7,14 +7,17 @@ import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ArrowDownToLine, ArrowUpFromLine, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import Link from 'next/link';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
+import { useMe } from '@/hooks/use-me';
 import { buildDepositTx, buildWithdrawTx, userVaultPda } from '@/lib/vault';
 
 interface VaultConfig {
   enabled: boolean;
   programId: string | null;
   cluster: string;
+  kycEnabled?: boolean;
 }
 interface VaultBalance {
   vaultLamports: string;
@@ -48,6 +51,9 @@ export function TransferFunds() {
     queryFn: () => api<VaultBalance>('/vault/balance', { token }),
     refetchInterval: 15_000,
   });
+  // KYC gate (#45): when KYC is enabled, deposits/withdrawals require approval.
+  const { data: me } = useMe();
+  const kycBlocked = !!config.data?.kycEnabled && me?.kycStatus !== 'approved';
   const walletBalance = useQuery({
     queryKey: ['wallet', 'sol', publicKey?.toBase58()],
     enabled: !!publicKey,
@@ -117,6 +123,18 @@ export function TransferFunds() {
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
+      {kycBlocked && (
+        <Card>
+          <CardContent className="py-4 text-sm">
+            <span className="font-bold text-amber-400">Verify your identity</span> to deposit or
+            withdraw real funds.{' '}
+            <Link href="/verify" className="text-primary-400 underline">
+              Start verification
+            </Link>
+            .
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Transfer Funds</CardTitle>
@@ -151,7 +169,7 @@ export function TransferFunds() {
             <Button
               variant="primary"
               size="lg"
-              disabled={busy !== null || !publicKey}
+              disabled={busy !== null || !publicKey || kycBlocked}
               onClick={() => void run('deposit')}
             >
               <ArrowDownToLine className="h-4 w-4" />
@@ -160,7 +178,7 @@ export function TransferFunds() {
             <Button
               variant="secondary"
               size="lg"
-              disabled={busy !== null || !publicKey}
+              disabled={busy !== null || !publicKey || kycBlocked}
               onClick={() => void run('withdraw')}
             >
               <ArrowUpFromLine className="h-4 w-4" />
