@@ -23,8 +23,9 @@ export default function WhitepaperPage() {
                 Crash, Coinflip, Blackjack, Jackpot and an on-chain Lottery. Players connect
                 their wallets directly, wager in SOL (the PancakeSwap-style 6-digit lottery
                 buys tickets and pays pooled prizes in $SCAD), and enjoy
-                provably fair gameplay with cryptographic verification — every bet
-                settlement, token claim, swap and lottery draw is a real Solana transaction.
+                provably fair gameplay with cryptographic verification. Once on-chain
+                settlement goes live, every bet settlement, token claim, swap and lottery
+                draw becomes a real Solana transaction (play-money beta today).
               </p>
             </Section>
 
@@ -80,8 +81,8 @@ export default function WhitepaperPage() {
             <Section n="5" title="Roadmap">
               <Phase title="Phase 1 — Platform Launch">
                 Crash, Coinflip, Blackjack, Jackpot and Lottery live with provably fair
-                seeds; SIWS wallet auth; on-chain vault custody (deposit/withdraw) and
-                per-bet settlement receipts.
+                seeds and SIWS wallet auth (play-money beta); on-chain vault custody
+                (deposit/withdraw) and per-bet settlement receipts are the next milestone.
               </Phase>
               <Phase title="Phase 2 — Token &amp; Rewards">
                 $SCAD launch with the SCAD/SOL pool, in-app trading and liquidity

@@ -1,5 +1,6 @@
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
 export const metadata = { title: 'About Us' };
 
@@ -19,7 +20,11 @@ export default function AboutPage() {
           </p>
           <p>
             Crash, Coinflip, Blackjack, Jackpot and a bc.game-style Lottery — every round
-            verifiable by anyone, every payout settled on-chain.
+            verifiable by anyone.{' '}
+            <ChainCopy
+              onchain="Every payout settled on-chain."
+              playMoney="Play-money beta — settlement runs off-chain today."
+            />
           </p>
           <p className="text-xs">
             Scadium is for entertainment purposes. 18+. Play responsibly. Not available in

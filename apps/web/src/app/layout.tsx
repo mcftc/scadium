@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     template: '%s · Scadium',
   },
   description:
-    'Scadium is a non-custodial, provably-fair Solana casino. Play Crash, Coinflip, and Blackjack with instant on-chain settlement. Connect your wallet and start.',
+    'Scadium is a non-custodial, provably-fair Solana casino. Play Crash, Coinflip, and Blackjack. Connect your wallet and start.',
   keywords: [
     'Solana',
     'casino',

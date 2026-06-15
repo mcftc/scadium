@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
 const footerSections = [
   {
@@ -53,7 +54,10 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Logo />
             <p className="mt-4 text-sm text-foreground-muted max-w-xs">
-              Non-custodial, provably-fair Solana casino. Play with instant on-chain settlement.
+              <ChainCopy
+                onchain="Non-custodial, provably-fair Solana casino. Play with instant on-chain settlement."
+                playMoney="Non-custodial, provably-fair Solana casino. Play-money beta — provably fair."
+              />
             </p>
           </div>
           {footerSections.map((section) => (

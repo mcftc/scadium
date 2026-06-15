@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { TrendingUp, Coins, Spade } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
 const games = [
   {
@@ -42,7 +43,10 @@ export function GamesGrid() {
             Pick your <span className="text-gradient">game</span>
           </h2>
           <p className="mt-4 text-foreground-muted max-w-xl mx-auto">
-            Every bet is on-chain. Every result is verifiable. Every payout is instant.
+            <ChainCopy
+              onchain="Every bet is on-chain. Every result is verifiable. Every payout is instant."
+              playMoney="Every result is provably fair and verifiable. Play-money beta."
+            />
           </p>
         </div>
         <div className="grid md:grid-cols-3 gap-6">
