@@ -10,10 +10,13 @@ const makeSvc = (
     payoutLamports: 0n,
   },
 ) =>
-  new RgService({
-    user: { findUniqueOrThrow: vi.fn().mockResolvedValue(user) },
-    bet: { aggregate: vi.fn().mockResolvedValue({ _sum: sum }) },
-  } as never);
+  new RgService(
+    {
+      user: { findUniqueOrThrow: vi.fn().mockResolvedValue(user) },
+      bet: { aggregate: vi.fn().mockResolvedValue({ _sum: sum }) },
+    } as never,
+    { isPaused: async () => false } as never,
+  );
 
 const active = {
   selfExcludedUntil: null,

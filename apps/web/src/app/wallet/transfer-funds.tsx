@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useMe } from '@/hooks/use-me';
+import { useStatus } from '@/hooks/use-status';
 import { buildDepositTx, buildWithdrawTx, userVaultPda } from '@/lib/vault';
 
 interface VaultConfig {
@@ -54,6 +55,9 @@ export function TransferFunds() {
   // KYC gate (#45): when KYC is enabled, deposits/withdrawals require approval.
   const { data: me } = useMe();
   const kycBlocked = !!config.data?.kycEnabled && me?.kycStatus !== 'approved';
+  // Global pause (#56): block deposits/withdrawals while ops have the kill-switch on.
+  const { data: status } = useStatus();
+  const paused = !!status?.paused;
   const walletBalance = useQuery({
     queryKey: ['wallet', 'sol', publicKey?.toBase58()],
     enabled: !!publicKey,
@@ -141,9 +145,8 @@ export function TransferFunds() {
         </CardHeader>
         <CardContent className="space-y-6">
           <p className="text-sm text-foreground-muted">
-            Move SOL between your wallet and your on-site vault. Bets settle against the
-            vault instantly — no per-bet wallet confirmations. Only your wallet signature
-            can withdraw.
+            Move SOL between your wallet and your on-site vault. Bets settle against the vault
+            instantly — no per-bet wallet confirmations. Only your wallet signature can withdraw.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
@@ -169,7 +172,7 @@ export function TransferFunds() {
             <Button
               variant="primary"
               size="lg"
-              disabled={busy !== null || !publicKey || kycBlocked}
+              disabled={busy !== null || !publicKey || kycBlocked || paused}
               onClick={() => void run('deposit')}
             >
               <ArrowDownToLine className="h-4 w-4" />
@@ -178,6 +181,8 @@ export function TransferFunds() {
             <Button
               variant="secondary"
               size="lg"
+              // Withdrawals are NEVER blocked by the pause (#56): players must
+              // always be able to get money out. Only deposits are gated.
               disabled={busy !== null || !publicKey || kycBlocked}
               onClick={() => void run('withdraw')}
             >
