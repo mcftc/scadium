@@ -285,7 +285,7 @@ jobs:
             --set redis.external.enabled=true \
             --set redis.external.url='rediss://managed-redis:6380' \
             --set secrets.databaseUrl='postgresql://x:y@ext:5432/db' > /dev/null
-      - name: helm template (production: external secret store)
+      - name: helm template (production external secret store)
         run: |
           helm template scadium infra/helm/scadium \
             --set postgres.external.enabled=true \
