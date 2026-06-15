@@ -26,11 +26,20 @@ describe('geo audit (#43, integration, real Postgres)', () => {
 
   it('writes a GeoCheck row (allowed:false, country, hashed IP) on a blocked request', async () => {
     const geo = new GeoService(cfg({ GEO_IP_SALT: 'test-salt' }));
-    const guard = new GeoGuard(geo, new VpnDetectionService(cfg({})), prisma as never);
+    const guard = new GeoGuard(
+      geo,
+      new VpnDetectionService(cfg({})),
+      prisma as never,
+      {
+        realMoneyEnabled: false,
+      } as never,
+    );
     const rawIp = '203.0.113.7';
     const before = await prisma.geoCheck.count();
 
-    const err = await guard.canActivate(ctx({ 'x-vercel-ip-country': 'US' }, rawIp)).catch((e) => e);
+    const err = await guard
+      .canActivate(ctx({ 'x-vercel-ip-country': 'US' }, rawIp))
+      .catch((e) => e);
     expect(err).toBeInstanceOf(HttpException);
 
     const rows = await prisma.geoCheck.findMany({

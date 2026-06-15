@@ -7,6 +7,8 @@ import { RedisIoAdapter } from './redis/redis-io.adapter';
 import { initSentry } from './observability/sentry';
 import { setupSwagger } from './observability/swagger';
 import { ComplianceService } from './compliance/compliance.service';
+import { GeoService } from './compliance/geo.service';
+import { VpnDetectionService } from './compliance/vpn-detection.service';
 import { KycService } from './kyc/kyc.service';
 import { assertRealMoneyReady } from './compliance/real-money-gate';
 
@@ -28,10 +30,16 @@ async function bootstrap() {
   // licence is held and KYC is on (geoblocking is always enforced). Fail-closed.
   const compliance = app.get(ComplianceService);
   const kyc = app.get(KycService);
+  const geo = app.get(GeoService);
+  const vpn = app.get(VpnDetectionService);
   assertRealMoneyReady({
     realMoneyEnabled: compliance.realMoneyEnabled,
     licensed: compliance.licensed,
     kycEnabled: kyc.enabled,
+    geoIpSaltSet: geo.ipSaltConfigured,
+    geoProxySecretSet: geo.proxySecretConfigured,
+    vpnDetectionEnabled: vpn.enabled,
+    vpnProviderConfigured: vpn.providerConfigured,
   });
 
   // Behind Caddy/any reverse proxy: honor X-Forwarded-For so rate-limiting and logging
