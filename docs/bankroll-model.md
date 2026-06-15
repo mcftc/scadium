@@ -36,6 +36,15 @@ can lose to a single bet, regardless of stake × multiplier.
    `scadium_house_vault_lamports` and raises `scadium_low_bankroll_alerts_total` + an error
    log when the vault drops below `rent floor + MIN_BANKROLL_BUFFER_LAMPORTS` (1 SOL)
    (`ReconciliationService.houseSolvency`).
+5. **Pre-payout reserve guard (API, #54).** Before `settle_bet` pays a net win, the API
+   reads the live `house_vault` balance and refuses the payout if it would leave the vault
+   below the **reserve floor** (`rent floor + MIN_BANKROLL_BUFFER` ≈ 1.0009 SOL), bumping
+   `scadium_treasury_payout_blocked_total{kind}` — a clean refusal + alert *before* the
+   on-chain `InsufficientFunds` revert (limit #1), so a low bankroll never strands a
+   settlement. Fails **open** when the balance is unreadable (the on-chain floor stays the
+   hard stop). A payout that does fail/can't be verified bumps
+   `scadium_payout_failed_total{kind}` for the reconcile sweep (no silent loss).
+   (`ChainService.reserveCoversPayout` / `apps/api/src/solana/treasury-guard.ts`.)
 
 ## Minimum funded bankroll
 
@@ -69,7 +78,9 @@ The cosigner hot key signs every settlement and lives in the API process
 ## Pointers
 
 - Constants: `packages/shared/src/constants.ts` → `HOUSE`
-- Guard: `apps/api/src/common/exposure-guard.ts` (+ unit spec alongside)
+- Exposure guard: `apps/api/src/common/exposure-guard.ts` (+ unit spec alongside)
+- Pre-payout reserve guard (#54): `apps/api/src/solana/treasury-guard.ts` (+ `chain.service.ts`)
 - On-chain floor: `programs/scadium_vault/src/lib.rs` `settle_bet` (+ `tests/scadium_vault.ts`)
 - Monitor: `apps/api/src/reconciliation/reconciliation.service.ts` `houseSolvency()`
 - Float derivation: `scripts/init-house.ts`
+- Ops runbooks (#54): `docs/runbooks/incident-response.md`, `docs/runbooks/key-management.md`

@@ -100,7 +100,11 @@ export class ReconciliationService {
    * docs/bankroll-model.md. Flag-only; the on-chain rent-floor check in
    * `settle_bet` is the hard stop, this is the early warning.
    */
-  async houseSolvency(): Promise<{ balanceLamports: bigint; floorLamports: bigint; ok: boolean } | null> {
+  async houseSolvency(): Promise<{
+    balanceLamports: bigint;
+    floorLamports: bigint;
+    ok: boolean;
+  } | null> {
     if (!this.chain.enabled) return null;
     const balance = await this.chain.houseVaultBalance();
     if (balance === null) {
@@ -362,7 +366,12 @@ export class ReconciliationService {
         // un-ledgered opening balance.
         const ledger = ledgerByUser.get(u.id);
         if (ledger) {
-          flag(u.id, 'playBalanceLamports', u.playBalanceLamports, BigInt(ledger.latest.toString()));
+          flag(
+            u.id,
+            'playBalanceLamports',
+            u.playBalanceLamports,
+            BigInt(ledger.latest.toString()),
+          );
         }
       }
 
