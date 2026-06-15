@@ -40,6 +40,12 @@ export class UsersController {
     return this.users.updateProfile(ctx.userId, dto);
   }
 
+  @Post('age-ack')
+  @ApiOperation({ summary: 'Acknowledge the blocking 18+ age gate (idempotent)' })
+  ackAge(@CurrentUser() ctx: AuthContext) {
+    return this.users.ackAge(ctx.userId);
+  }
+
   @Put('connection')
   @ApiOperation({ summary: 'Link or unlink a social account (google/telegram/discord)' })
   updateConnection(@CurrentUser() ctx: AuthContext, @Body() dto: ConnectionDto) {

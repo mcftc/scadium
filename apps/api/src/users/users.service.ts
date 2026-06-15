@@ -115,6 +115,23 @@ export class UsersService {
     return this.serializeUser(user);
   }
 
+  /**
+   * Stamp the 18+ age-gate acknowledgement (#44). Idempotent: the guarded
+   * updateMany only writes when `ageConfirmedAt` is still null, so re-acking
+   * never errors and keeps the EARLIEST timestamp. Returns the fresh profile.
+   *
+   * NOTE: this only RECORDS the acknowledgement. The gate is presented
+   * client-side; server-side enforcement on bet/entry endpoints (403 when
+   * unconfirmed) is tracked separately in #146 (required before real money).
+   */
+  async ackAge(id: string) {
+    await this.prisma.user.updateMany({
+      where: { id, ageConfirmedAt: null },
+      data: { ageConfirmedAt: new Date() },
+    });
+    return this.findById(id);
+  }
+
   async updateProfile(
     id: string,
     input: {
@@ -278,6 +295,7 @@ export class UsersService {
     gamesPlayed: number;
     scadiumBalance: bigint;
     playBalanceLamports: bigint;
+    ageConfirmedAt: Date | null;
     createdAt: Date;
   }) {
     return {
@@ -306,6 +324,7 @@ export class UsersService {
       },
       scadiumBalance: user.scadiumBalance.toString(),
       playBalanceLamports: user.playBalanceLamports.toString(),
+      ageConfirmedAt: user.ageConfirmedAt?.toISOString() ?? null,
       ...xpInfo(user.totalWagered),
     };
   }
