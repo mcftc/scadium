@@ -87,3 +87,8 @@ target/deploy/*
 # firecrawl scrape cache
 .firecrawl/
 .preview-shots/
+
+# Playwright e2e artifacts (#142)
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/blob-report/

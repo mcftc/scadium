@@ -6,13 +6,22 @@ const enabledMock = vi.fn();
 vi.mock('@/hooks/use-chain-enabled', () => ({ useChainEnabled: () => enabledMock() }));
 // Footer also renders <LicensingLine> (useLicensing) — stub it so Footer mounts.
 vi.mock('@/hooks/use-licensing', () => ({
-  useLicensing: () => ({ licensed: false, licenseNumber: null, regulator: null, jurisdiction: null }),
+  useLicensing: () => ({
+    licensed: false,
+    licenseNumber: null,
+    regulator: null,
+    jurisdiction: null,
+  }),
 }));
 
 import { ChainCopy } from './chain-copy';
 import { Footer } from '@/components/layout/footer';
 import { GamesGrid } from '@/components/landing/games-grid';
 import AboutPage from '@/app/about/page';
+import FaqPage from '@/app/faq/page';
+import { FAQSection } from '@/components/landing/faq-section';
+import { HeroSection } from '@/components/landing/hero-section';
+import { FeaturesSection } from '@/components/landing/features-section';
 
 /**
  * #42 — on-chain settlement marketing copy must only render when on-chain
@@ -73,5 +82,67 @@ describe('on-chain copy gating (#42)', () => {
     enabledMock.mockReturnValue(true);
     render(<AboutPage />);
     expect(screen.getByText(/every payout settled on-chain/i)).toBeTruthy();
+  });
+
+  // #142 — residual vault-custody claims must be gated too.
+
+  it('AboutPage hides "Funds live in on-chain vaults you control" when disabled', () => {
+    enabledMock.mockReturnValue(false);
+    render(<AboutPage />);
+    expect(screen.queryByText(/funds live in on-chain vaults you control/i)).toBeNull();
+  });
+
+  it('AboutPage shows the vault-custody claim when enabled', () => {
+    enabledMock.mockReturnValue(true);
+    render(<AboutPage />);
+    expect(screen.getByText(/funds live in on-chain vaults you control/i)).toBeTruthy();
+  });
+
+  it('FaqPage hides the "on-chain vault PDA" deposit claim when disabled', () => {
+    enabledMock.mockReturnValue(false);
+    render(<FaqPage />);
+    expect(screen.queryByText(/on-chain vault pda/i)).toBeNull();
+  });
+
+  it('FaqPage shows the on-chain deposit claim when enabled', () => {
+    enabledMock.mockReturnValue(true);
+    render(<FaqPage />);
+    expect(screen.getByText(/on-chain vault pda/i)).toBeTruthy();
+  });
+
+  it('FAQSection hides "your SOL never leaves your control" when disabled', () => {
+    enabledMock.mockReturnValue(false);
+    render(<FAQSection />);
+    expect(screen.queryByText(/your SOL never leaves your control/i)).toBeNull();
+  });
+
+  it('FAQSection shows the non-custodial SOL claim when enabled', () => {
+    enabledMock.mockReturnValue(true);
+    render(<FAQSection />);
+    expect(screen.getByText(/your SOL never leaves your control/i)).toBeTruthy();
+  });
+
+  it('HeroSection hides "your SOL stays in your control" when disabled', () => {
+    enabledMock.mockReturnValue(false);
+    render(<HeroSection />);
+    expect(screen.queryByText(/your SOL stays in your control/i)).toBeNull();
+  });
+
+  it('HeroSection shows the on-chain custody claim when enabled', () => {
+    enabledMock.mockReturnValue(true);
+    render(<HeroSection />);
+    expect(screen.getByText(/your SOL stays in your control/i)).toBeTruthy();
+  });
+
+  it('FeaturesSection hides "payouts land directly in your address" when disabled', () => {
+    enabledMock.mockReturnValue(false);
+    render(<FeaturesSection />);
+    expect(screen.queryByText(/payouts land directly in your address/i)).toBeNull();
+  });
+
+  it('FeaturesSection shows the wallet-custody claim when enabled', () => {
+    enabledMock.mockReturnValue(true);
+    render(<FeaturesSection />);
+    expect(screen.getByText(/payouts land directly in your address/i)).toBeTruthy();
   });
 });

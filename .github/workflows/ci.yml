@@ -251,3 +251,36 @@ jobs:
           exit-code: '1'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+
+  web-e2e:
+    # Browser e2e for the web app (#142). Stands up the Playwright harness #42
+    # asked for; runs the on-chain copy-gating specs against the production build
+    # with `/vault/config` network-mocked (no API/DB needed → deterministic).
+    runs-on: ubuntu-latest
+    env:
+      # Inlined into the build so api-client requests resolve to a known origin
+      # the Playwright route mock matches (**/api/v1/vault/config*).
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build shared packages
+        run: pnpm --filter @scadium/shared --filter @scadium/fair build
+
+      - name: Build web
+        run: pnpm --filter @scadium/web build
+
+      - name: Install Playwright browser (chromium)
+        run: pnpm --filter @scadium/web exec playwright install --with-deps chromium
+
+      - name: Web e2e — on-chain copy gating
+        run: pnpm --filter @scadium/web test:e2e
