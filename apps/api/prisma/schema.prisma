@@ -704,3 +704,17 @@ model IdempotencyKey {
 
   @@unique([userId, scope, clientKey])
 }
+
+/// AML audit trail for geo/VPN access decisions (#43). Raw IPs are NEVER stored
+/// — only a salted hash, the resolved country and the VPN score.
+model GeoCheck {
+  id        String   @id @default(uuid()) @db.Uuid
+  ipHash    String
+  country   String?
+  vpnScore  Float?
+  allowed   Boolean
+  path      String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

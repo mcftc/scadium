@@ -35,6 +35,7 @@ import { PlatformModule } from './platform/platform.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { QueueModule } from './queue/queue.module';
 import { ComplianceModule } from './compliance/compliance.module';
+import { GeoGuard } from './compliance/geo.guard';
 
 @Module({
   imports: [
@@ -87,6 +88,8 @@ import { ComplianceModule } from './compliance/compliance.module';
   // Per-IP buckets require `trust proxy` (set in main.ts) so clients behind Caddy aren't
   // all collapsed onto the proxy's IP.
   providers: [
+    // Geo/VPN block first (451 before any work) — fail-open when no geo header (#43).
+    { provide: APP_GUARD, useClass: GeoGuard },
     { provide: APP_GUARD, useClass: HttpThrottlerGuard },
     // HTTP latency/throughput metrics + Sentry capture for unexpected errors (#38).
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
