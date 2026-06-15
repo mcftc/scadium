@@ -4,6 +4,10 @@ import { render, screen } from '@testing-library/react';
 // Drive the gate directly so the page components render against a known flag.
 const enabledMock = vi.fn();
 vi.mock('@/hooks/use-chain-enabled', () => ({ useChainEnabled: () => enabledMock() }));
+// Footer also renders <LicensingLine> (useLicensing) — stub it so Footer mounts.
+vi.mock('@/hooks/use-licensing', () => ({
+  useLicensing: () => ({ licensed: false, licenseNumber: null, regulator: null, jurisdiction: null }),
+}));
 
 import { ChainCopy } from './chain-copy';
 import { Footer } from '@/components/layout/footer';

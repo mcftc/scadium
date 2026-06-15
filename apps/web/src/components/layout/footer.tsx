@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
 import { ChainCopy } from '@/components/chain/chain-copy';
+import { LicensingLine } from '@/components/layout/licensing-line';
 
 const footerSections = [
   {
@@ -85,7 +86,7 @@ export function Footer() {
             © {new Date().getFullYear()} Scadium. For entertainment purposes. 18+. Play
             responsibly.
           </p>
-          <p>Licensed &amp; regulated. Not available in restricted jurisdictions.</p>
+          <LicensingLine />
         </div>
       </Container>
     </footer>
