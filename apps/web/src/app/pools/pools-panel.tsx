@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { ata, buildAddLiquidityTx, buildRemoveLiquidityTx, swapPdas } from '@/lib/swap';
+import { solscanTx } from '@/lib/explorer';
 
 interface PoolInfo {
   enabled: boolean;
@@ -131,8 +132,8 @@ export function PoolsPanel() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs text-foreground-muted">
-            Deposit both sides at the current ratio and earn the {p ? p.feeBps / 100 : 1}%
-            swap fee. Be aware of impermanent loss.
+            Deposit both sides at the current ratio and earn the {p ? p.feeBps / 100 : 1}% swap fee.
+            Be aware of impermanent loss.
           </p>
           <div className="grid grid-cols-2 gap-3">
             <LabeledInput label="$SCAD" value={scadAmt} onChange={setScadAmt} />
@@ -168,7 +169,7 @@ export function PoolsPanel() {
           {error && <p className="text-xs text-danger break-all">{error}</p>}
           {lastSig && (
             <a
-              href={`https://solscan.io/tx/${lastSig}?cluster=devnet`}
+              href={solscanTx(lastSig)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-xs text-primary-400 hover:underline break-all"

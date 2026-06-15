@@ -9,6 +9,7 @@ import { useSolBalance } from '@/hooks/use-sol-balance';
 import { formatSol } from '@/lib/format';
 import { Avatar } from '@/components/ui/avatar';
 import { env } from '@/config/env';
+import { solscanAccount } from '@/lib/explorer';
 import { StatsGrid } from '@/components/profile/stats-grid';
 import { BetHistory } from '@/components/profile/bet-history';
 import { UsernameForm } from '@/components/profile/username-form';
@@ -22,7 +23,7 @@ export function ProfileContent() {
 
   if (!walletAddress) return null;
 
-  const explorerUrl = `https://solscan.io/account/${walletAddress}?cluster=${env.solanaNetwork}`;
+  const explorerUrl = solscanAccount(walletAddress);
 
   async function copyAddress() {
     if (!walletAddress) return;
@@ -50,12 +51,7 @@ export function ProfileContent() {
                 <code className="flex-1 font-mono text-sm bg-surface-elevated px-4 py-3 rounded-xl border border-border overflow-x-auto">
                   {walletAddress}
                 </code>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  onClick={copyAddress}
-                  aria-label="Copy"
-                >
+                <Button variant="secondary" size="icon" onClick={copyAddress} aria-label="Copy">
                   <Copy className="h-4 w-4" />
                 </Button>
                 <a
@@ -98,9 +94,7 @@ export function ProfileContent() {
                 <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
                   Ref code
                 </div>
-                <div className="font-semibold font-mono text-primary-400">
-                  {me?.refCode ?? '—'}
-                </div>
+                <div className="font-semibold font-mono text-primary-400">{me?.refCode ?? '—'}</div>
               </div>
             </div>
 

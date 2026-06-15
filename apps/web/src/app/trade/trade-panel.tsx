@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { buildSwapTx, quoteSwap } from '@/lib/swap';
 import { cn } from '@/lib/cn';
+import { solscanTx } from '@/lib/explorer';
 
 interface PoolInfo {
   enabled: boolean;
@@ -202,9 +203,7 @@ export function TradePanel() {
                       </td>
                       <td className="px-4 py-2 text-right font-mono">{fmtScad(t.scadAmount)}</td>
                       <td className="px-4 py-2 text-right font-mono">{fmtSol(t.solAmount)}</td>
-                      <td className="px-4 py-2 text-right font-mono">
-                        ${t.priceUsd.toFixed(6)}
-                      </td>
+                      <td className="px-4 py-2 text-right font-mono">${t.priceUsd.toFixed(6)}</td>
                       <td className="px-4 py-2 text-right">
                         <TxLink sig={t.signature} />
                       </td>
@@ -336,8 +335,7 @@ export function TradePanel() {
             </div>
 
             <p className="text-[10px] text-foreground-muted">
-              Be aware: all buy and sell transactions are processed using your connected
-              wallet.
+              Be aware: all buy and sell transactions are processed using your connected wallet.
             </p>
 
             <Button
@@ -353,7 +351,7 @@ export function TradePanel() {
             {error && <p className="text-xs text-danger break-all">{error}</p>}
             {lastSig && (
               <a
-                href={`https://solscan.io/tx/${lastSig}?cluster=devnet`}
+                href={solscanTx(lastSig)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 text-xs text-primary-400 hover:underline break-all"
@@ -380,7 +378,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function TxLink({ sig }: { sig: string }) {
   return (
     <a
-      href={`https://solscan.io/tx/${sig}?cluster=devnet`}
+      href={solscanTx(sig)}
       target="_blank"
       rel="noreferrer"
       className="inline-flex items-center gap-1 text-primary-400 hover:underline font-mono"

@@ -31,7 +31,7 @@ export class VaultController {
     return {
       enabled: this.chain.enabled,
       programId: this.chain.programIdBase58,
-      cluster: 'devnet',
+      cluster: this.chain.cluster,
       kycEnabled: this.kyc.enabled,
     };
   }

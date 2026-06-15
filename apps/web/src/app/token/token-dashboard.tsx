@@ -6,6 +6,7 @@ import { Flame, Coins, TrendingUp, Droplets, ExternalLink, ArrowRight } from 'lu
 import { SCAD } from '@scadium/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api-client';
+import { solscanToken, solscanTx } from '@/lib/explorer';
 
 const TOTAL_SUPPLY = SCAD.TOTAL_SUPPLY;
 
@@ -75,7 +76,11 @@ export function TokenDashboard() {
   return (
     <>
       <div className="grid md:grid-cols-4 gap-4 max-w-4xl mx-auto mb-4">
-        <StatCard icon={Coins} label="Price" value={price != null ? `$${price.toFixed(6)}` : offDash} />
+        <StatCard
+          icon={Coins}
+          label="Price"
+          value={price != null ? `$${price.toFixed(6)}` : offDash}
+        />
         <StatCard
           icon={TrendingUp}
           label="Market cap"
@@ -131,7 +136,10 @@ export function TokenDashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-3 gap-2 text-center">
-              <MiniStat label="Total burned" value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'} />
+              <MiniStat
+                label="Total burned"
+                value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'}
+              />
               <MiniStat label="24h burned" value={fmtNum(burned24h, 0)} />
               <MiniStat label="Burn events" value={String(rows.length)} />
             </div>
@@ -181,7 +189,7 @@ export function TokenDashboard() {
                       <td className="px-6 py-3 text-right">
                         {b.burnSignature ? (
                           <a
-                            href={`https://solscan.io/tx/${b.burnSignature}?cluster=devnet`}
+                            href={solscanTx(b.burnSignature)}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 text-xs text-primary-400 hover:underline font-mono"
@@ -252,7 +260,7 @@ function SupplyCard({
           </div>
           {mint ? (
             <a
-              href={`https://solscan.io/token/${mint}?cluster=devnet`}
+              href={solscanToken(mint)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 font-mono text-xs text-primary-400 hover:underline break-all"

@@ -13,6 +13,7 @@ import { useAuthStore } from '@/store/auth-store';
 import { useMe } from '@/hooks/use-me';
 import { useStatus } from '@/hooks/use-status';
 import { buildDepositTx, buildWithdrawTx, userVaultPda } from '@/lib/vault';
+import { solscanTx } from '@/lib/explorer';
 
 interface VaultConfig {
   enabled: boolean;
@@ -194,7 +195,7 @@ export function TransferFunds() {
           {error && <p className="text-xs text-danger break-all">{error}</p>}
           {lastSig && (
             <a
-              href={`https://solscan.io/tx/${lastSig}?cluster=devnet`}
+              href={solscanTx(lastSig)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-xs text-primary-400 hover:underline break-all"

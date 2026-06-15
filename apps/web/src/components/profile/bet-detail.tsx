@@ -3,7 +3,7 @@
 import { ExternalLink, ShieldCheck } from 'lucide-react';
 import type { Card } from '@scadium/shared';
 import type { BetRow } from '@/hooks/use-me';
-import { env } from '@/config/env';
+import { solscanTx } from '@/lib/explorer';
 import { formatSol } from '@/lib/format';
 
 const SUIT: Record<string, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
@@ -47,9 +47,7 @@ function ResultDetail({ bet }: { bet: BetRow }) {
           <Row k="Dealer" v={fmtCards(r.dealerCards as Card[])} />
           <Row k="Outcome" v={String(r.result ?? '—')} />
           {r.doubled ? <Row k="Doubled" v="Yes" /> : null}
-          {r.side21p3 && r.side21p3 !== 'none' ? (
-            <Row k="21+3" v={String(r.side21p3)} />
-          ) : null}
+          {r.side21p3 && r.side21p3 !== 'none' ? <Row k="21+3" v={String(r.side21p3)} /> : null}
           {r.sidePerfectPairs && r.sidePerfectPairs !== 'none' ? (
             <Row k="Perfect pairs" v={String(r.sidePerfectPairs)} />
           ) : null}
@@ -66,19 +64,10 @@ function ResultDetail({ bet }: { bet: BetRow }) {
     case 'lottery':
       return (
         <>
-          <Row
-            k="Draw"
-            v={`${(r.drawDigits as number[] | undefined)?.join(' ') ?? '—'}`}
-          />
-          <Row
-            k="Your ticket"
-            v={`${(r.digits as number[] | undefined)?.join(' ') ?? '—'}`}
-          />
+          <Row k="Draw" v={`${(r.drawDigits as number[] | undefined)?.join(' ') ?? '—'}`} />
+          <Row k="Your ticket" v={`${(r.digits as number[] | undefined)?.join(' ') ?? '—'}`} />
           <Row k="Matched" v={`${r.matchLen ?? 0} digit(s)`} />
-          <Row
-            k="Bracket"
-            v={r.bracket != null ? `Match ${(r.bracket as number) + 1}` : 'none'}
-          />
+          <Row k="Bracket" v={r.bracket != null ? `Match ${(r.bracket as number) + 1}` : 'none'} />
           {r.payoutScad ? <Row k="Prize" v={`${r.payoutScad} SCAD`} /> : null}
         </>
       );
@@ -118,7 +107,7 @@ export function BetDetail({ bet }: { bet: BetRow }) {
         <VerifyLink bet={bet} />
         {bet.txSignature ? (
           <a
-            href={`https://solscan.io/tx/${bet.txSignature}?cluster=${env.solanaNetwork}`}
+            href={solscanTx(bet.txSignature)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-400 hover:underline"

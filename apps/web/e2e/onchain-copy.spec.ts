@@ -9,7 +9,7 @@ async function stubChain(page: Page, enabled: boolean) {
   // Match the api-client's `${NEXT_PUBLIC_API_URL}/api/v1/vault/config` URL
   // regardless of host (the CI job pins NEXT_PUBLIC_API_URL to localhost:3000).
   await page.route('**/api/v1/vault/config*', (route) =>
-    route.fulfill({ json: { enabled, programId: null, cluster: 'devnet' } }),
+    route.fulfill({ json: { enabled, programId: null } }),
   );
 }
 
