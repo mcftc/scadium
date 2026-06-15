@@ -80,6 +80,13 @@ export class AdminService {
     });
   }
 
+  /** Audit a cosigner key rotation (#36) — durable record of who/when/new key. */
+  async recordCosignerReload(actorUserId: string, cosigner: string | null) {
+    await this.prisma.auditLog.create({
+      data: { actorUserId, action: 'cosigner_reload', metadataJson: { cosigner } },
+    });
+  }
+
   /** Recent reconciliation drift flags, newest first. */
   async recentDrift(take = 100) {
     return this.prisma.reconciliationDrift.findMany({

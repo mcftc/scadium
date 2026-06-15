@@ -36,6 +36,17 @@ export class AdminController {
     return { ok: true, paused: false };
   }
 
+  @Post('cosigner/reload')
+  @ApiOperation({
+    summary: 'Rotate/reload the on-chain cosigner key without a redeploy (admin only) (#36)',
+  })
+  async reloadCosigner(@CurrentUser() user: AuthContextLike) {
+    await this.admin.assertAdmin(user.userId);
+    const cosigner = this.chain.reloadCosigner();
+    await this.admin.recordCosignerReload(user.userId, cosigner);
+    return { ok: true, cosigner };
+  }
+
   @Get('stats')
   @ApiOperation({ summary: 'Platform-wide KPIs (admin only)' })
   async stats(@CurrentUser() user: AuthContextLike) {
@@ -57,10 +68,7 @@ export class AdminController {
 
   @Post('users/:id/unban')
   @ApiOperation({ summary: 'Unban a user (admin only)' })
-  async unban(
-    @CurrentUser() user: AuthContextLike,
-    @Param('id', new ParseUUIDPipe()) id: string,
-  ) {
+  async unban(@CurrentUser() user: AuthContextLike, @Param('id', new ParseUUIDPipe()) id: string) {
     await this.admin.assertAdmin(user.userId);
     await this.admin.unbanUser(user.userId, id);
     return { ok: true };
