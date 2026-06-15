@@ -15,7 +15,8 @@ function makeService(tx: Record<string, unknown>) {
   const chain = { enabled: false } as never;
   const seeds = {} as never;
   const rg = { assertCanWager: vi.fn().mockResolvedValue(undefined) } as never;
-  return new CoinflipService(prisma, gateway, chain, seeds, rg);
+  const affiliates = { creditReferral: vi.fn().mockResolvedValue(undefined) } as never;
+  return new CoinflipService(prisma, gateway, chain, seeds, rg, affiliates);
 }
 
 describe('CoinflipService.join — status compare-and-swap (unit)', () => {

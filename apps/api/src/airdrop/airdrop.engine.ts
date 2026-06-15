@@ -117,6 +117,27 @@ export class AirdropEngine implements OnModuleInit {
    * `AuditLog` row is written in the SAME transaction as the payout. The hourly
    * auto-distribute (timer) is NOT a privileged action and writes no audit row.
    */
+  /**
+   * Sybil filter (#47): from the wager+chat candidates keep only age-confirmed
+   * users and drop any cluster of accounts sharing a signup IP-hash (a free-
+   * wallet farm). Users with no recorded IP are not penalised.
+   */
+  private async filterEligibleForSybil(candidates: string[]): Promise<string[]> {
+    if (candidates.length === 0) return [];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: candidates } },
+      select: { id: true, ageConfirmedAt: true, signupIpHash: true },
+    });
+    const ageOk = users.filter((u) => u.ageConfirmedAt != null);
+    const ipCount = new Map<string, number>();
+    for (const u of ageOk) {
+      if (u.signupIpHash) ipCount.set(u.signupIpHash, (ipCount.get(u.signupIpHash) ?? 0) + 1);
+    }
+    return ageOk
+      .filter((u) => !u.signupIpHash || (ipCount.get(u.signupIpHash) ?? 0) <= 1)
+      .map((u) => u.id);
+  }
+
   async distribute(
     forcedByUserId?: string,
   ): Promise<{ participantCount: number; totalLamports: string }> {
@@ -149,10 +170,13 @@ export class AirdropEngine implements OnModuleInit {
         }),
       ]);
       const chatted = new Set(chatters.map((c) => c.userId));
-      const eligible = wagers
+      const candidates = wagers
         .filter((w) => (w._sum.amountLamports ?? BigInt(0)) >= BigInt(1_000_000))
         .map((w) => w.userId)
         .filter((id) => chatted.has(id));
+      // Sybil resistance (#47): require age-confirmation and drop same-signup-IP
+      // clusters (free-wallet farms). KYC-approval joins this gate once KYC is on.
+      const eligible = await this.filterEligibleForSybil(candidates);
 
       if (eligible.length === 0) {
         // Nobody qualified — roll the pool into the next hour instead of burning it.

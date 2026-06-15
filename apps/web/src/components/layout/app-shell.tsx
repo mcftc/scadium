@@ -1,6 +1,8 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Activity } from 'lucide-react';
+import { captureRef } from '@/lib/ref-capture';
 import { Header } from '@/components/layout/header';
 import { Footer } from '@/components/layout/footer';
 import { ChatPanel } from '@/components/chat/chat-panel';
@@ -22,6 +24,11 @@ import { usePlatformLive } from '@/hooks/use-platform';
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: live } = usePlatformLive();
+
+  // Capture an affiliate ?ref code on first visit so sign-in can attribute it (#47).
+  useEffect(() => {
+    captureRef(window.location.search);
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col">

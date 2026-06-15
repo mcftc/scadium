@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SiwsService } from './siws.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { hashRefreshToken, newJti, newRefreshToken, parseTtlMs } from './session-tokens';
 
 /** Request metadata captured on the Session row for audit / logout UIs. */
@@ -44,13 +44,17 @@ export class AuthService {
       nonce: string;
       signature: string;
       message: string;
+      ref?: string;
     },
     ctx: SessionContext = {},
   ) {
     const ok = await this.siws.verifySignature(params);
     if (!ok) throw new UnauthorizedException('Invalid signature');
 
-    const user = await this.upsertUser(params.walletAddress);
+    const user = await this.upsertUser(params.walletAddress, {
+      ref: params.ref,
+      ipAddress: ctx.ipAddress,
+    });
     // Banned users must not mint tokens/sessions (#37) — a valid signature only
     // proves key ownership, not standing.
     if (user.banned) throw new ForbiddenException('Account banned');
@@ -192,7 +196,10 @@ export class AuthService {
    * where two concurrent first-sign-ins for the same wallet both try to
    * insert by catching the unique-constraint violation and re-reading.
    */
-  private async upsertUser(walletAddress: string) {
+  private async upsertUser(
+    walletAddress: string,
+    opts: { ref?: string; ipAddress?: string | null } = {},
+  ) {
     const existing = await this.prisma.user.findUnique({ where: { walletAddress } });
     if (existing) return existing;
 
@@ -203,11 +210,25 @@ export class AuthService {
     });
     if (linked) return linked.user;
 
+    // First-ever sign-in: capture a salted signup IP-hash and resolve an
+    // optional referral code, rejecting self-referral (#47).
+    const signupIpHash = this.hashIp(opts.ipAddress ?? null);
+    let referredById: string | null = null;
+    if (opts.ref) {
+      const referrer = await this.prisma.user.findUnique({
+        where: { refCode: opts.ref },
+        select: { id: true, walletAddress: true },
+      });
+      if (referrer && referrer.walletAddress !== walletAddress) referredById = referrer.id;
+    }
+
     try {
       return await this.prisma.user.create({
         data: {
           walletAddress,
           refCode: this.generateRefCode(),
+          signupIpHash,
+          referredById,
         },
       });
     } catch {
@@ -216,6 +237,13 @@ export class AuthService {
       if (retry) return retry;
       throw new Error('Failed to provision user');
     }
+  }
+
+  /** Salted SHA-256 of the signup IP (#47) — raw IPs are never stored. */
+  private hashIp(ip: string | null): string | null {
+    if (!ip) return null;
+    const salt = this.config.get<string>('GEO_IP_SALT') ?? 'scadium-dev-geo-salt-INSECURE';
+    return createHash('sha256').update(`${salt}:${ip}`).digest('hex');
   }
 
   private generateRefCode(): string {

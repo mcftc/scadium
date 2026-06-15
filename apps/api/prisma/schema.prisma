@@ -131,6 +131,9 @@ model User {
   dailyDepositLimitLamports BigInt?
   dailyLossLimitLamports BigInt?
   dailyWagerLimitLamports BigInt?
+  // Salted hash of the signup IP (#47) — same-IP referrer/referee pairs are
+  // flagged as sybil and accrue no commission. Raw IPs are never stored.
+  signupIpHash String?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)
@@ -665,6 +668,9 @@ model Referral {
   referee             User     @relation("referee", fields: [refereeId], references: [id])
   volumeLamports      BigInt   @default(0)
   commissionLamports  BigInt   @default(0)
+  // Sybil flag (#47): referrer & referee share a signup IP-hash → volume still
+  // tracked but NO commission accrues.
+  flagged             Boolean  @default(false)
   createdAt           DateTime @default(now())
 }
 

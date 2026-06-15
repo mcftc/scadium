@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CRASH } from '@scadium/shared';
 import { CrashEngine } from './crash.engine';
 import { RgService } from '../../responsible-gambling/rg.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { withSerializable } from '../../prisma/with-serializable';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
@@ -24,6 +25,7 @@ export class CrashService {
     private readonly prisma: PrismaService,
     private readonly engine: CrashEngine,
     private readonly rg: RgService,
+    private readonly affiliates: AffiliatesService,
   ) {}
 
   snapshot() {
@@ -131,6 +133,14 @@ export class CrashService {
       throw new BadRequestException(e instanceof Error ? e.message : 'Bet rejected');
     }
 
+    // Accrue the wagered stake to the referrer (#47) ONLY now that the engine
+    // accepted the bet — an engine rejection above is refunded and must NOT earn
+    // commission. Reached once per placed bet (a replay short-circuited at the
+    // idempotency claim).
+    await withSerializable(this.prisma, (tx) =>
+      this.affiliates.creditReferral(tx, params.userId, params.amountLamports),
+    );
+
     // Persist the response for replay (response is JSON-safe: roundId is a
     // string, ok is a boolean — no BigInt). A single update needs no tx.
     if (key) {
@@ -221,6 +231,11 @@ export class CrashService {
         amountLamports: params.amountLamports,
         autoCashout: params.autoCashout,
       });
+      // Accrue commission ONLY after the engine accepted the scheduled bet (#47),
+      // so a rejection (refunded below) never earns commission.
+      await withSerializable(this.prisma, (tx) =>
+        this.affiliates.creditReferral(tx, params.userId, params.amountLamports),
+      );
       return { ok: true as const, scheduled: true as const };
     } catch (e) {
       // In-memory placement rejected — refund AND drop the durable row together.

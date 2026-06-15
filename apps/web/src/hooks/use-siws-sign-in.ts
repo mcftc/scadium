@@ -5,6 +5,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import bs58 from 'bs58';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
+import { getRef, clearRef } from '@/lib/ref-capture';
 
 interface NonceResponse {
   nonce: string;
@@ -70,10 +71,12 @@ export function useSiwsSignIn() {
         nonce,
         signature: bs58.encode(signatureBytes),
         message,
+        ref: getRef(), // affiliate code captured from ?ref on first visit (#47)
       },
     });
 
-    // 4. Persist
+    // 4. Persist + consume the referral code (set on the server at signup).
+    clearRef();
     setAuth({ accessToken, refreshToken, walletAddress });
   }, [connected, publicKey, signMessage, setAuth]);
 
