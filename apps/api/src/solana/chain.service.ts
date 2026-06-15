@@ -39,6 +39,12 @@ export class ChainService implements OnModuleInit {
     return this.programId?.toBase58() ?? null;
   }
 
+  /** Configured Solana cluster (#53). Drives the web's explorer links + tx
+   *  building; defaults to devnet so the play-money/beta deploy is unchanged. */
+  get cluster(): string {
+    return this.config.get<string>('SOLANA_NETWORK')?.trim() || 'devnet';
+  }
+
   private scadMint: PublicKey | null = null;
 
   constructor(private readonly config: ConfigService) {}
@@ -268,7 +274,9 @@ export class ChainService implements OnModuleInit {
    */
   async setPaused(paused: boolean): Promise<void> {
     if (!this.enabled) {
-      this.logger.warn(`setPaused(${paused}) — chain disabled (play-money); on-chain pause is a no-op`);
+      this.logger.warn(
+        `setPaused(${paused}) — chain disabled (play-money); on-chain pause is a no-op`,
+      );
       return;
     }
     this.logger.warn(`setPaused(${paused}) — on-chain set_paused not yet wired (vault undeployed)`);
@@ -477,7 +485,11 @@ export class ChainService implements OnModuleInit {
           { pubkey: config, isSigner: false, isWritable: false },
           { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
           { pubkey: winner, isSigner: false, isWritable: false },
-          { pubkey: this.lotteryPayoutPda(params.drawIndex, winner), isSigner: false, isWritable: true },
+          {
+            pubkey: this.lotteryPayoutPda(params.drawIndex, winner),
+            isSigner: false,
+            isWritable: true,
+          },
           { pubkey: ata(this.scadMint!, config), isSigner: false, isWritable: true },
           { pubkey: ata(this.scadMint!, winner), isSigner: false, isWritable: true },
           { pubkey: this.scadMint!, isSigner: false, isWritable: false },
@@ -496,7 +508,10 @@ export class ChainService implements OnModuleInit {
   }
 
   /** Burn the round's treasury slice — a real $SCAD token burn (PancakeSwap treasuryFee). */
-  async lotteryBurnPool(params: { drawIndex: bigint; amountScadBase: bigint }): Promise<string | null> {
+  async lotteryBurnPool(params: {
+    drawIndex: bigint;
+    amountScadBase: bigint;
+  }): Promise<string | null> {
     if (!this.lotteryEnabled || !this.cosigner || params.amountScadBase <= BigInt(0)) return null;
     try {
       const config = this.lotteryConfigPda();
@@ -525,7 +540,10 @@ export class ChainService implements OnModuleInit {
   }
 
   /** Inject house $SCAD into a round's pool (PancakeSwap injection). */
-  async lotteryInject(params: { drawIndex: bigint; amountScadBase: bigint }): Promise<string | null> {
+  async lotteryInject(params: {
+    drawIndex: bigint;
+    amountScadBase: bigint;
+  }): Promise<string | null> {
     if (!this.lotteryEnabled || !this.cosigner || params.amountScadBase <= BigInt(0)) return null;
     try {
       const config = this.lotteryConfigPda();
@@ -539,7 +557,11 @@ export class ChainService implements OnModuleInit {
         keys: [
           { pubkey: config, isSigner: false, isWritable: false },
           { pubkey: this.lotteryDrawPda(params.drawIndex), isSigner: false, isWritable: false },
-          { pubkey: ata(this.scadMint!, this.cosigner.publicKey), isSigner: false, isWritable: true },
+          {
+            pubkey: ata(this.scadMint!, this.cosigner.publicKey),
+            isSigner: false,
+            isWritable: true,
+          },
           { pubkey: ata(this.scadMint!, config), isSigner: false, isWritable: true },
           { pubkey: this.scadMint!, isSigner: false, isWritable: false },
           { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
@@ -718,9 +740,7 @@ export class ChainService implements OnModuleInit {
 // ------------------------------------------------------------------ utils
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
-);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 
 /** Associated token account address for (mint, owner). */
 function ata(mint: PublicKey, owner: PublicKey): PublicKey {
