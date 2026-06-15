@@ -47,3 +47,22 @@ export const lowBankrollAlertsTotal = new Counter({
   help: 'Solvency monitor alerts — house vault under rent floor + buffer',
   registers: [metricsRegistry],
 });
+
+/** Payouts refused PRE-EMPTIVELY (#54) because paying would drop the house
+ *  vault below the documented reserve floor — refused before the program's
+ *  own InsufficientFunds check, so the bankroll never silently bottoms out. */
+export const treasuryPayoutBlockedTotal = new Counter({
+  name: 'scadium_treasury_payout_blocked_total',
+  help: 'On-chain payouts refused because they would breach the reserve floor',
+  labelNames: ['kind'] as const,
+  registers: [metricsRegistry],
+});
+
+/** On-chain payouts that returned null (failed / unverified) — the reconcile
+ *  backlog (#54). No silent loss: each increment is a payout to retry/sweep. */
+export const payoutFailedTotal = new Counter({
+  name: 'scadium_payout_failed_total',
+  help: 'On-chain payouts that failed or could not be verified (reconcile backlog)',
+  labelNames: ['kind'] as const,
+  registers: [metricsRegistry],
+});

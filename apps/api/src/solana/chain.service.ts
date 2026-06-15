@@ -11,9 +11,15 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
+import { HOUSE } from '@scadium/shared';
 import { settlementMoved } from './settlement-verify';
 import { parseVaultEvent, type VaultEvent } from './vault-events';
 import { COSIGNER_PROVIDER, type CosignerKeyProvider } from './cosigner-key.provider';
+import { coversReserve, reserveFloorLamports } from './treasury-guard';
+import { treasuryPayoutBlockedTotal, payoutFailedTotal } from '../observability/metrics.registry';
+
+/** Rent::minimum_balance(0) for the house_vault PDA (mirrors reconciliation). */
+const HOUSE_VAULT_RENT_FLOOR = 890_880n;
 
 /**
  * Thin Solana layer for the scadium_vault program (Phase A).
@@ -145,6 +151,31 @@ export class ChainService implements OnModuleInit {
     }
   }
 
+  /** Documented reserve floor (#54): rent floor + operational bankroll buffer. */
+  get reserveFloorLamports(): bigint {
+    return reserveFloorLamports(HOUSE_VAULT_RENT_FLOOR, BigInt(HOUSE.MIN_BANKROLL_BUFFER_LAMPORTS));
+  }
+
+  /**
+   * Solvency guard (#54): refuse a house SOL payout BEFORE building the tx when
+   * it would drop the house vault below the reserve floor — caught here instead
+   * of the program's on-chain `InsufficientFunds`. Fails OPEN when the balance
+   * is unreadable (the on-chain rent floor stays the hard stop). Returns true if
+   * the payout may proceed; bumps `treasury_payout_blocked_total` and returns
+   * false when it must be refused.
+   */
+  private async reserveCoversPayout(housePaysNet: bigint, kind: string): Promise<boolean> {
+    if (housePaysNet <= 0n) return true;
+    const balance = await this.houseVaultBalance();
+    if (balance === null) return true; // unreadable → fail open (rent floor is the hard stop)
+    if (coversReserve(balance, housePaysNet, this.reserveFloorLamports)) return true;
+    treasuryPayoutBlockedTotal.inc({ kind });
+    this.logger.error(
+      `${kind}: refusing payout of net ${housePaysNet} — house vault ${balance} would breach reserve floor ${this.reserveFloorLamports}. Top up the bankroll.`,
+    );
+    return false;
+  }
+
   /** Lamports sitting in a user's vault PDA (0 if the PDA doesn't exist). */
   async vaultBalance(walletAddress: string): Promise<bigint> {
     if (!this.enabled) return 0n;
@@ -239,6 +270,10 @@ export class ChainService implements OnModuleInit {
     multiplier: number | null;
   }): Promise<string | null> {
     if (!this.enabled || !this.cosigner) return null;
+    // Pre-payout solvency guard (#54): on a win the house pays net; refuse if
+    // that would breach the reserve floor (before the on-chain InsufficientFunds).
+    const houseNet = params.payoutLamports - params.stakeLamports;
+    if (!(await this.reserveCoversPayout(houseNet, 'settle'))) return null;
     try {
       const user = new PublicKey(params.walletAddress);
       const data = Buffer.concat([
@@ -285,11 +320,13 @@ export class ChainService implements OnModuleInit {
           `settle_bet ${params.betId}: confirmed tx did not move the expected ` +
             `${expectedHouseDelta} lamports through the house vault — NOT reporting success`,
         );
+        payoutFailedTotal.inc({ kind: 'settle' });
         return null;
       }
       return sig;
     } catch (e) {
       this.logger.error(`settle_bet failed for bet ${params.betId}: ${(e as Error).message}`);
+      payoutFailedTotal.inc({ kind: 'settle' });
       return null;
     }
   }
@@ -533,6 +570,7 @@ export class ChainService implements OnModuleInit {
       return await this.send(ix);
     } catch (e) {
       this.logger.error(`pay_prize ${params.drawIndex} failed: ${(e as Error).message}`);
+      payoutFailedTotal.inc({ kind: 'prize' });
       return null;
     }
   }
@@ -766,6 +804,7 @@ export class ChainService implements OnModuleInit {
       this.logger.error(
         `claim_reward failed for ${params.walletAddress} ${params.kind}/${params.period}: ${(e as Error).message}`,
       );
+      payoutFailedTotal.inc({ kind: 'claim' });
       return null;
     }
   }
