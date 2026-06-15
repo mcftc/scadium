@@ -6,6 +6,9 @@ import { AppModule } from './app.module';
 import { RedisIoAdapter } from './redis/redis-io.adapter';
 import { initSentry } from './observability/sentry';
 import { setupSwagger } from './observability/swagger';
+import { ComplianceService } from './compliance/compliance.service';
+import { KycService } from './kyc/kyc.service';
+import { assertRealMoneyReady } from './compliance/real-money-gate';
 
 async function bootstrap() {
   // Error tracking first so even bootstrap failures can be captured (#38).
@@ -20,6 +23,16 @@ async function bootstrap() {
   // correlation + secret redaction; see logging/pino.config.ts) (#38).
   const logger = app.get(Logger);
   app.useLogger(logger);
+
+  // Real-money boot gate (#49): refuse to start with REAL_MONEY_ENABLED unless a
+  // licence is held and KYC is on (geoblocking is always enforced). Fail-closed.
+  const compliance = app.get(ComplianceService);
+  const kyc = app.get(KycService);
+  assertRealMoneyReady({
+    realMoneyEnabled: compliance.realMoneyEnabled,
+    licensed: compliance.licensed,
+    kycEnabled: kyc.enabled,
+  });
 
   // Behind Caddy/any reverse proxy: honor X-Forwarded-For so rate-limiting and logging
   // see the real client IP instead of the proxy's. Required for per-IP throttling.

@@ -8,6 +8,7 @@ export interface LicensingConfig {
   licenseNumber: string | null;
   regulator: string | null;
   jurisdiction: string | null;
+  realMoneyEnabled: boolean;
 }
 
 const UNLICENSED: LicensingConfig = {
@@ -15,6 +16,7 @@ const UNLICENSED: LicensingConfig = {
   licenseNumber: null,
   regulator: null,
   jurisdiction: null,
+  realMoneyEnabled: false,
 };
 
 /**

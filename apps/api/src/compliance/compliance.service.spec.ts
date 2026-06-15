@@ -14,6 +14,7 @@ describe('ComplianceService — licensing gate (#41)', () => {
       licenseNumber: null,
       regulator: null,
       jurisdiction: null,
+      realMoneyEnabled: false,
     });
   });
 
@@ -41,6 +42,7 @@ describe('ComplianceService — licensing gate (#41)', () => {
       licenseNumber: 'GC-12345',
       regulator: 'Curacao eGaming',
       jurisdiction: 'Curacao',
+      realMoneyEnabled: false,
     });
   });
 });
