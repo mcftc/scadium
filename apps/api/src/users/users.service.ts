@@ -6,6 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import type { GameType } from '@prisma/client';
+import { LEGAL_VERSION } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SiwsService } from '../auth/siws.service';
 import type { StatsWindow } from './dto/stats-query.dto';
@@ -128,6 +129,19 @@ export class UsersService {
     await this.prisma.user.updateMany({
       where: { id, ageConfirmedAt: null },
       data: { ageConfirmedAt: new Date() },
+    });
+    return this.findById(id);
+  }
+
+  /**
+   * Record acceptance of the CURRENT legal version (#48). Overwrites any prior
+   * acceptance so a version bump is re-stamped when the user re-accepts. The
+   * web gate re-triggers whenever `acceptedLegalVersion !== LEGAL_VERSION`.
+   */
+  async acceptLegal(id: string) {
+    await this.prisma.user.update({
+      where: { id },
+      data: { acceptedLegalVersion: LEGAL_VERSION, acceptedLegalAt: new Date() },
     });
     return this.findById(id);
   }
@@ -296,6 +310,8 @@ export class UsersService {
     scadiumBalance: bigint;
     playBalanceLamports: bigint;
     ageConfirmedAt: Date | null;
+    acceptedLegalVersion: string | null;
+    acceptedLegalAt: Date | null;
     createdAt: Date;
   }) {
     return {
@@ -325,6 +341,8 @@ export class UsersService {
       scadiumBalance: user.scadiumBalance.toString(),
       playBalanceLamports: user.playBalanceLamports.toString(),
       ageConfirmedAt: user.ageConfirmedAt?.toISOString() ?? null,
+      acceptedLegalVersion: user.acceptedLegalVersion,
+      acceptedLegalAt: user.acceptedLegalAt?.toISOString() ?? null,
       ...xpInfo(user.totalWagered),
     };
   }

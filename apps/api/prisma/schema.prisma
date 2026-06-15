@@ -117,6 +117,11 @@ model User {
   // 18+ age-gate acknowledgement (#44). Set once on first confirm; null = not
   // yet acknowledged. Idempotent (keeps the earliest timestamp).
   ageConfirmedAt DateTime?
+  // Legal-acceptance record (#48): the LEGAL_VERSION the user last accepted and
+  // when. The acceptance gate re-triggers when this differs from the current
+  // LEGAL_VERSION. null = never accepted.
+  acceptedLegalVersion String?
+  acceptedLegalAt DateTime?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)

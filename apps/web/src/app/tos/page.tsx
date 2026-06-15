@@ -1,5 +1,6 @@
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { LegalMeta } from '@/components/legal/legal-meta';
 
 export const metadata = { title: 'Terms of Service' };
 
@@ -37,6 +38,7 @@ export default function TosPage() {
         <h1 className="text-2xl md:text-3xl font-bold">
           <span className="text-gradient">Terms of Service</span>
         </h1>
+        <LegalMeta doc="tos" />
         <Card className="p-6 space-y-5">
           {sections.map((s) => (
             <div key={s.h}>

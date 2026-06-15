@@ -1,5 +1,6 @@
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { LegalMeta } from '@/components/legal/legal-meta';
 
 export const metadata = { title: 'AML Policy' };
 
@@ -10,7 +11,7 @@ const sections = [
   },
   {
     h: 'Monitoring',
-    p: 'On-chain deposit and withdrawal flows are monitored for abnormal patterns such as rapid pass-through with minimal wagering.',
+    p: 'On-chain deposits and withdrawals are public and auditable by nature. Automated monitoring for abnormal patterns (e.g. rapid pass-through with minimal wagering) is being implemented as part of our move toward real-money play; until then the platform runs on play-money balances.',
   },
   {
     h: 'Restricted jurisdictions',
@@ -29,6 +30,7 @@ export default function AmlPage() {
         <h1 className="text-2xl md:text-3xl font-bold">
           <span className="text-gradient">AML Policy</span>
         </h1>
+        <LegalMeta doc="aml" />
         <Card className="p-6 space-y-5">
           {sections.map((s) => (
             <div key={s.h}>
