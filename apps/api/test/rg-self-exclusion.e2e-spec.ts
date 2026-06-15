@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma, makeUser } from './engine-harness';
 import { RgService } from '../src/responsible-gambling/rg.service';
 
-const rg = new RgService(prisma as never, { isPaused: async () => false } as never);
+const rg = new RgService(
+  prisma as never,
+  { isPaused: async () => false } as never,
+  { realMoneyEnabled: false } as never,
+);
 
 describe('rg self-exclusion (#46, integration, real Postgres)', () => {
   beforeAll(async () => {
@@ -20,9 +24,9 @@ describe('rg self-exclusion (#46, integration, real Postgres)', () => {
     await expect(rg.assertCanWager(u.id, 100n)).rejects.toThrow(/self-excluded/i);
 
     // Shortening (an earlier end date) is rejected.
-    await expect(
-      rg.setSelfExclusion(u.id, new Date(Date.now() + 86_400_000)),
-    ).rejects.toThrow(/shorten/i);
+    await expect(rg.setSelfExclusion(u.id, new Date(Date.now() + 86_400_000))).rejects.toThrow(
+      /shorten/i,
+    );
 
     // Extending (a later end date) is allowed.
     const longer = new Date(Date.now() + 30 * 86_400_000);

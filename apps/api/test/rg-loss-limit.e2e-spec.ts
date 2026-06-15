@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma, makeUser } from './engine-harness';
 import { RgService } from '../src/responsible-gambling/rg.service';
 
-const rg = new RgService(prisma as never, { isPaused: async () => false } as never);
+const rg = new RgService(
+  prisma as never,
+  { isPaused: async () => false } as never,
+  { realMoneyEnabled: false } as never,
+);
 
 describe('rg daily loss limit (#46, integration, real Postgres)', () => {
   beforeAll(async () => {
