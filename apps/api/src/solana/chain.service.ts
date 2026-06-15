@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Connection,
@@ -11,9 +11,9 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
 import { settlementMoved } from './settlement-verify';
 import { parseVaultEvent, type VaultEvent } from './vault-events';
+import { COSIGNER_PROVIDER, type CosignerKeyProvider } from './cosigner-key.provider';
 
 /**
  * Thin Solana layer for the scadium_vault program (Phase A).
@@ -31,9 +31,24 @@ export class ChainService implements OnModuleInit {
   private readonly logger = new Logger(ChainService.name);
   /** Exposed for reconciliation (#26) and integration tests. */
   connection!: Connection;
-  private cosigner: Keypair | null = null;
   private programId: PublicKey | null = null;
   enabled = false;
+
+  /**
+   * Cosigner signing key, sourced through the custody provider (#36) — the
+   * service never reads a plaintext key from disk itself. For the dev file
+   * provider this is the loaded Keypair; for a managed (KMS) provider it is
+   * null (signing happens via the provider). All privileged tx paths guard on
+   * `enabled` (which requires `cosignerProvider.available`) before using it.
+   */
+  private get cosigner(): Keypair | null {
+    return this.cosignerProvider.signer;
+  }
+
+  /** Cosigner public key for PDA / account-meta derivation, from the provider. */
+  get cosignerPublicKey(): PublicKey | null {
+    return this.cosignerProvider.publicKey;
+  }
 
   get programIdBase58(): string | null {
     return this.programId?.toBase58() ?? null;
@@ -47,35 +62,50 @@ export class ChainService implements OnModuleInit {
 
   private scadMint: PublicKey | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(COSIGNER_PROVIDER) private readonly cosignerProvider: CosignerKeyProvider,
+  ) {}
 
   onModuleInit() {
     const rpcUrl = this.config.get<string>('SOLANA_RPC_URL') ?? 'https://api.devnet.solana.com';
     this.connection = new Connection(rpcUrl, 'confirmed');
 
     const programId = this.config.get<string>('VAULT_PROGRAM_ID');
-    const cosignerPath = this.config.get<string>('COSIGNER_KEYPAIR_PATH');
-    if (!programId || !cosignerPath) {
+    // The cosigner key comes through the custody provider (#36): production
+    // fails closed (no plaintext key from disk), and a managed/KMS provider is
+    // required there. `available` is false in play-money mode.
+    if (!programId || !this.cosignerProvider.available) {
       this.logger.warn(
-        'VAULT_PROGRAM_ID / COSIGNER_KEYPAIR_PATH not set — on-chain settlement disabled (play-money mode)',
+        `On-chain settlement disabled (play-money mode) — programId=${!!programId}, cosigner=${this.cosignerProvider.kind}/${this.cosignerProvider.available}`,
       );
       return;
     }
     try {
       this.programId = new PublicKey(programId);
-      const raw = JSON.parse(readFileSync(cosignerPath, 'utf8')) as number[];
-      this.cosigner = Keypair.fromSecretKey(Uint8Array.from(raw));
       const scadMint = this.config.get<string>('SCAD_MINT');
       this.scadMint = scadMint ? new PublicKey(scadMint) : null;
       const lotteryProgramId = this.config.get<string>('LOTTERY_PROGRAM_ID');
       this.lotteryProgramId = lotteryProgramId ? new PublicKey(lotteryProgramId) : null;
       this.enabled = true;
       this.logger.log(
-        `On-chain settlement enabled — program ${programId}, cosigner ${this.cosigner.publicKey.toBase58()}`,
+        `On-chain settlement enabled — program ${programId}, cosigner ${this.cosignerProvider.publicKey?.toBase58()} (${this.cosignerProvider.kind})`,
       );
     } catch (e) {
       this.logger.error(`Failed to init chain service: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * Rotate the cosigner key without a redeploy (#36): re-load it through the
+   * provider and re-derive `enabled`. Returns the active cosigner public key.
+   */
+  reloadCosigner(): string | null {
+    this.cosignerProvider.reload();
+    this.enabled = !!this.programId && this.cosignerProvider.available;
+    const pk = this.cosignerProvider.publicKey?.toBase58() ?? null;
+    this.logger.warn(`Cosigner reloaded (rotation) — enabled=${this.enabled}, cosigner=${pk}`);
+    return pk;
   }
 
   // ---------------------------------------------------------------- PDAs
@@ -666,8 +696,12 @@ export class ChainService implements OnModuleInit {
   }
 
   private async send(ix: TransactionInstruction): Promise<string> {
+    // Capture once: `cosigner` is a live getter off the custody provider, so a
+    // rotation (reloadCosigner) could null it between a caller's guard and here.
+    const cosigner = this.cosigner;
+    if (!cosigner) throw new Error('send(): cosigner unavailable (rotation in progress?)');
     const tx = new Transaction().add(ix);
-    return sendAndConfirmTransaction(this.connection, tx, [this.cosigner!], {
+    return sendAndConfirmTransaction(this.connection, tx, [cosigner], {
       commitment: 'confirmed',
       maxRetries: 3,
     });
