@@ -252,6 +252,20 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
+  audit-status:
+    # Block real-money cutover while any open Critical/High security finding
+    # (auditor/pentester, #51) exists in Phase M. No-op until findings are filed.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: audit-status gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/audit-status-gate.sh
+
   helm-chart:
     # Validate the production Helm chart (#52): lint + render in the default and
     # external-managed-datastore configs. No cluster needed — catches template/
