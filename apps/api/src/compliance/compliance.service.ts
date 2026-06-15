@@ -6,6 +6,7 @@ export interface LicensingConfig {
   licenseNumber: string | null;
   regulator: string | null;
   jurisdiction: string | null;
+  realMoneyEnabled: boolean;
 }
 
 /**
@@ -40,6 +41,11 @@ export class ComplianceService {
     return !!(this.licenseNumber && this.regulator && this.jurisdiction);
   }
 
+  /** Master real-money switch (#49) — fail-closed (off unless explicitly true). */
+  get realMoneyEnabled(): boolean {
+    return this.config.get<string>('REAL_MONEY_ENABLED') === 'true';
+  }
+
   /** Public config for the web; licence details are echoed only when licensed. */
   publicConfig(): LicensingConfig {
     const licensed = this.licensed;
@@ -48,6 +54,7 @@ export class ComplianceService {
       licenseNumber: licensed ? this.licenseNumber : null,
       regulator: licensed ? this.regulator : null,
       jurisdiction: licensed ? this.jurisdiction : null,
+      realMoneyEnabled: this.realMoneyEnabled,
     };
   }
 }
