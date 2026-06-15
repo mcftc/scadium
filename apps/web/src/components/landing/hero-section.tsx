@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Shield, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/ui/container';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
 export function HeroSection() {
   return (
@@ -22,8 +23,11 @@ export function HeroSection() {
           </h1>
 
           <p className="mt-6 text-lg md:text-xl text-foreground-muted max-w-2xl">
-            Crash. Coinflip. Blackjack. Provably fair, instantly settled, never custodial. Connect
-            your wallet and play — your SOL stays in your control.
+            Crash. Coinflip. Blackjack. Provably fair.{' '}
+            <ChainCopy
+              onchain="Instantly settled, never custodial — connect your wallet and play, your SOL stays in your control."
+              playMoney="Connect your wallet to sign in and play with a play-money balance — on-chain settlement is coming."
+            />
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row gap-4">

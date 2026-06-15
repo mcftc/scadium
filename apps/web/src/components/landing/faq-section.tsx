@@ -1,9 +1,16 @@
+import type { ReactNode } from 'react';
 import { Container } from '@/components/ui/container';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
-const faqs = [
+const faqs: { q: string; a: ReactNode }[] = [
   {
     q: 'Do I need to deposit SOL?',
-    a: 'No. Scadium is fully non-custodial. Connect your Phantom, Backpack, Solflare, or Ledger wallet, and every bet is a transaction you sign. Your SOL never leaves your control except when you explicitly approve a wager.',
+    a: (
+      <ChainCopy
+        onchain="No. Scadium is fully non-custodial. Connect your Phantom, Backpack, Solflare, or Ledger wallet, and every bet is a transaction you sign — your SOL never leaves your control except when you explicitly approve a wager."
+        playMoney="This is a play-money beta: connect your wallet to sign in (SIWS) — no real SOL is wagered yet. Every account starts with a play-money balance you can use across all games."
+      />
+    ),
   },
   {
     q: 'How does provably fair work?',

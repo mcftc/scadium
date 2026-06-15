@@ -1,16 +1,23 @@
+import type { ReactNode } from 'react';
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
 export const metadata = { title: 'FAQ' };
 
-const faqs = [
+const faqs: { q: string; a: ReactNode }[] = [
   {
     q: 'What is Scadium?',
     a: 'A non-custodial, provably-fair Solana casino. You sign in with your wallet (SIWS) and every game result can be reproduced from committed seeds.',
   },
   {
     q: 'How do deposits work?',
-    a: 'You deposit SOL into your own on-chain vault PDA — Scadium never holds your keys. Withdraw any time with just your wallet signature.',
+    a: (
+      <ChainCopy
+        onchain="You deposit SOL into your own on-chain vault PDA — Scadium never holds your keys. Withdraw any time with just your wallet signature."
+        playMoney="This is a play-money beta — you don't deposit real SOL yet. Every account starts with a play-money balance; on-chain vault deposits and withdrawals arrive when on-chain settlement goes live."
+      />
+    ),
   },
   {
     q: 'What is provably fair?',

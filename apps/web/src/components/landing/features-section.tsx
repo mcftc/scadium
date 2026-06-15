@@ -1,12 +1,18 @@
+import type { ReactNode } from 'react';
 import { Shield, Zap, Lock, Users, Gift, BarChart3 } from 'lucide-react';
 import { Container } from '@/components/ui/container';
+import { ChainCopy } from '@/components/chain/chain-copy';
 
-const features = [
+const features: { icon: typeof Lock; title: string; description: ReactNode }[] = [
   {
     icon: Lock,
     title: 'Non-custodial',
-    description:
-      "Your wallet is your balance. No deposits, no withdrawals — you sign every bet and payouts land directly in your address.",
+    description: (
+      <ChainCopy
+        onchain="Your wallet is your balance. No deposits, no withdrawals — you sign every bet and payouts land directly in your address."
+        playMoney="Sign in with your wallet (SIWS) and play with a play-money balance — no real deposits yet. Wallet-custody settlement arrives with on-chain mode."
+      />
+    ),
   },
   {
     icon: Shield,
