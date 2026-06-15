@@ -17,7 +17,8 @@ describe('AirdropEngine.tip — non-positive guard (issue #3)', () => {
       user: { findUnique: vi.fn(), update: vi.fn() },
     };
     const gateway = { emitPool: vi.fn() };
-    const engine = new AirdropEngine(prisma as never, gateway as never);
+    const rg = { assertCanWager: vi.fn().mockResolvedValue(undefined) };
+    const engine = new AirdropEngine(prisma as never, gateway as never, rg as never);
     return { engine, prisma };
   };
 

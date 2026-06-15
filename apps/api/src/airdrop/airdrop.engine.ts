@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { periodForHour } from '../queue/queue.constants';
+import { RgService } from '../responsible-gambling/rg.service';
 import { AirdropGateway } from './airdrop.gateway';
 
 /**
@@ -24,6 +25,7 @@ export class AirdropEngine implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: AirdropGateway,
+    private readonly rg: RgService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -75,6 +77,8 @@ export class AirdropEngine implements OnModuleInit {
     // drive the pool negative (ANALYSIS.md §4 Critical #1). The controller DTO
     // and AirdropService also guard; the DB CHECK is the final backstop.
     if (amountLamports <= 0n) throw new BadRequestException('Tip must be positive');
+    // Self-excluded / cooling-off users cannot move money into the pool either.
+    await this.rg.assertCanWager(userId, 0n);
     const period = this.periodFor(Date.now());
     const pool = await this.ensureCurrentPool();
     // Guard against tipping into an already-settled pool (only reachable when

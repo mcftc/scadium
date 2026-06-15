@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { ChainService } from './chain.service';
+import { RgService } from '../responsible-gambling/rg.service';
 
 /**
  * Vault ↔ spendable-balance bridge (#27): converts VERIFIED on-chain custody
@@ -29,12 +30,15 @@ export class VaultBridgeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chain: ChainService,
+    private readonly rg: RgService,
   ) {}
 
   async confirmDeposit(userId: string, walletAddress: string, signature: string) {
     this.assertEnabled();
     const event = await this.chain.verifyVaultTransfer(signature, walletAddress, 'deposit');
     if (!event) throw new BadRequestException('Deposit not found, failed, or not yours');
+    // Responsible-gambling daily deposit limit (#46) — reject before crediting.
+    await this.rg.assertCanDeposit(userId, event.amount);
 
     try {
       await this.prisma.$transaction(async (tx) => {

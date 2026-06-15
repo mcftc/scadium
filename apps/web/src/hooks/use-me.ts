@@ -27,6 +27,14 @@ export interface MeResponse {
   /** Last accepted legal version + when; null = never accepted (#48). */
   acceptedLegalVersion: string | null;
   acceptedLegalAt: string | null;
+  /** Responsible-gambling controls (#46). */
+  responsibleGambling: {
+    selfExcludedUntil: string | null;
+    coolOffUntil: string | null;
+    dailyDepositLimitLamports: string | null;
+    dailyLossLimitLamports: string | null;
+    dailyWagerLimitLamports: string | null;
+  };
   stats: {
     totalWageredLamports: string;
     totalWonLamports: string;

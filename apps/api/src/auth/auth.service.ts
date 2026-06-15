@@ -54,6 +54,12 @@ export class AuthService {
     // Banned users must not mint tokens/sessions (#37) — a valid signature only
     // proves key ownership, not standing.
     if (user.banned) throw new ForbiddenException('Account banned');
+    // Self-exclusion (#46) hard-blocks login for its duration; cooling-off does
+    // NOT (the user may sign in to manage settings — wagering is gated at the
+    // bet endpoints via assertCanWager).
+    if (user.selfExcludedUntil && user.selfExcludedUntil > new Date()) {
+      throw new ForbiddenException('Account self-excluded');
+    }
     const { accessToken, refreshToken } = await this.issueSession(
       user.id,
       user.walletAddress,
@@ -126,6 +132,16 @@ export class AuthService {
       if (current.expiresAt.getTime() < Date.now()) {
         await this.prisma.session.delete({ where: { id: current.id } }).catch(() => undefined);
         throw new UnauthorizedException('Refresh token expired');
+      }
+      // Self-excluded users cannot mint new access tokens (#46) — kill the
+      // session so the exclusion can't be outlived by the refresh window.
+      const excl = await this.prisma.user.findUnique({
+        where: { id: current.userId },
+        select: { selfExcludedUntil: true },
+      });
+      if (excl?.selfExcludedUntil && excl.selfExcludedUntil > new Date()) {
+        await this.prisma.session.delete({ where: { id: current.id } }).catch(() => undefined);
+        throw new ForbiddenException('Account self-excluded');
       }
       const jti = newJti();
       const refreshToken = newRefreshToken();

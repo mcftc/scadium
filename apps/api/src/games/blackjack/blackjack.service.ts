@@ -7,6 +7,7 @@ import {
 import { BLACKJACK } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlackjackEngine } from './blackjack.engine';
+import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { withSerializable } from '../../prisma/with-serializable';
 
@@ -21,6 +22,7 @@ export class BlackjackService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: BlackjackEngine,
+    private readonly rg: RgService,
   ) {}
 
   listTables() {
@@ -101,6 +103,7 @@ export class BlackjackService {
 
     // loadUser enforces banned/exists; the conditional debit enforces funds.
     await this.loadUser(params.userId);
+    await this.rg.assertCanWager(params.userId, total);
     await this.debit(params.userId, total, params.tableId);
     try {
       const { previousTotalLamports } = this.engine.placeBet({
@@ -140,6 +143,9 @@ export class BlackjackService {
       if (!seat?.bet) throw new BadRequestException('No active bet');
       extra = BigInt(seat.bet.mainLamports);
       await this.loadUser(params.userId);
+      // The doubled stake is a fresh wager — gate it too (#46), else a player
+      // self-excluded mid-hand could still double during their turn window.
+      await this.rg.assertCanWager(params.userId, extra);
       // Conditional debit rejects with 'Insufficient balance' if underfunded.
       await this.debit(params.userId, extra, params.tableId);
     }

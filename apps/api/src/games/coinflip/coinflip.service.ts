@@ -11,6 +11,7 @@ import { COINFLIP, SCAD } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { SeedManagerService } from '../../fairness/seed-manager.service';
+import { RgService } from '../../responsible-gambling/rg.service';
 import { CoinflipGateway } from './coinflip.gateway';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
@@ -36,6 +37,7 @@ export class CoinflipService {
     private readonly gateway: CoinflipGateway,
     private readonly chain: ChainService,
     private readonly seeds: SeedManagerService,
+    private readonly rg: RgService,
   ) {}
 
   // ------------ Queries ------------
@@ -69,6 +71,7 @@ export class CoinflipService {
   // ------------ Commands ------------
   async create(params: { userId: string; side: Side; amountLamports: bigint }, key?: string) {
     this.assertBetRange(params.amountLamports);
+    await this.rg.assertCanWager(params.userId, params.amountLamports);
 
     const outcome = await this.prisma.$transaction(async (tx) => {
       const replay = await claimIdempotency(tx, params.userId, 'coinflip_create', key);
@@ -129,6 +132,9 @@ export class CoinflipService {
   }
 
   async join(params: { userId: string; gameId: string }, key?: string) {
+    // Self-exclusion / cooling-off block (0n: the SOL limit is keyed off the
+    // create stake; joins still hard-block excluded/cooling-off users).
+    await this.rg.assertCanWager(params.userId, 0n);
     const settled = await this.prisma.$transaction(async (tx) => {
       // Claim/replay happens INSIDE the ledger tx so a thrown settle rolls the
       // claim back too. A replay returns the stored dto and fires NO chain

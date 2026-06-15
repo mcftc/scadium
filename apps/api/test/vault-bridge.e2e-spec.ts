@@ -35,7 +35,9 @@ describe('vault↔balance bridge (integration, real Postgres)', () => {
       enabled,
       verifyVaultTransfer: async () => event,
       userVaultPdaBase58: (w: string) => `pda-${w}`,
-    } as unknown as ChainService);
+    } as unknown as ChainService,
+      { assertCanDeposit: async () => undefined } as never,
+    );
 
   beforeAll(async () => {
     await prisma.$connect();

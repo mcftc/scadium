@@ -13,7 +13,9 @@ function makeService(tx: Record<string, unknown>) {
   const prisma = { $transaction: (cb: (t: unknown) => unknown) => cb(tx) } as never;
   const gateway = { emitCreated: vi.fn(), emitResolved: vi.fn(), emitCancelled: vi.fn() } as never;
   const chain = { enabled: false } as never;
-  return new CoinflipService(prisma, gateway, chain);
+  const seeds = {} as never;
+  const rg = { assertCanWager: vi.fn().mockResolvedValue(undefined) } as never;
+  return new CoinflipService(prisma, gateway, chain, seeds, rg);
 }
 
 describe('CoinflipService.join — status compare-and-swap (unit)', () => {

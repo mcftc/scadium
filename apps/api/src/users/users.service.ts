@@ -312,6 +312,11 @@ export class UsersService {
     ageConfirmedAt: Date | null;
     acceptedLegalVersion: string | null;
     acceptedLegalAt: Date | null;
+    selfExcludedUntil: Date | null;
+    coolOffUntil: Date | null;
+    dailyDepositLimitLamports: bigint | null;
+    dailyLossLimitLamports: bigint | null;
+    dailyWagerLimitLamports: bigint | null;
     createdAt: Date;
   }) {
     return {
@@ -343,6 +348,13 @@ export class UsersService {
       ageConfirmedAt: user.ageConfirmedAt?.toISOString() ?? null,
       acceptedLegalVersion: user.acceptedLegalVersion,
       acceptedLegalAt: user.acceptedLegalAt?.toISOString() ?? null,
+      responsibleGambling: {
+        selfExcludedUntil: user.selfExcludedUntil?.toISOString() ?? null,
+        coolOffUntil: user.coolOffUntil?.toISOString() ?? null,
+        dailyDepositLimitLamports: user.dailyDepositLimitLamports?.toString() ?? null,
+        dailyLossLimitLamports: user.dailyLossLimitLamports?.toString() ?? null,
+        dailyWagerLimitLamports: user.dailyWagerLimitLamports?.toString() ?? null,
+      },
       ...xpInfo(user.totalWagered),
     };
   }
