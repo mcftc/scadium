@@ -22,6 +22,8 @@ export interface MeResponse {
   referredBy: string | null;
   banned: boolean;
   createdAt: string;
+  /** 18+ age-gate acknowledgement timestamp; null = not yet confirmed (#44). */
+  ageConfirmedAt: string | null;
   stats: {
     totalWageredLamports: string;
     totalWonLamports: string;
@@ -115,6 +117,16 @@ export function useResetStats() {
   return useMutation({
     mutationFn: () => api<{ ok: true }>('/me/stats/reset', { method: 'POST', token }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['me', 'stats'] }),
+  });
+}
+
+/** Stamp the 18+ acknowledgement server-side (idempotent) for an authed user. */
+export function useAckAge() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<MeResponse>('/me/age-ack', { method: 'POST', token }),
+    onSuccess: (me) => qc.setQueryData(['me'], me),
   });
 }
 

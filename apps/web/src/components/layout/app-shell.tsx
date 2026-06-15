@@ -5,6 +5,7 @@ import { Header } from '@/components/layout/header';
 import { Footer } from '@/components/layout/footer';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { AirdropWidget } from '@/components/airdrop/airdrop-widget';
+import { AgeGate } from '@/components/compliance/age-gate';
 import { usePlatformLive } from '@/hooks/use-platform';
 
 /**
@@ -22,6 +23,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
+      <AgeGate />
       <Header />
       <div className="flex flex-1 min-h-0">
         <aside className="w-0 lg:w-72 shrink-0 lg:border-r border-border/50 lg:bg-surface/30">

@@ -114,6 +114,9 @@ model User {
   // bets settled after this instant (computed from the Bet table). null =
   // show the denormalized User aggregate columns (fast path).
   statsResetAt   DateTime?
+  // 18+ age-gate acknowledgement (#44). Set once on first confirm; null = not
+  // yet acknowledged. Idempotent (keeps the earliest timestamp).
+  ageConfirmedAt DateTime?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)
