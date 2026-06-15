@@ -259,6 +259,22 @@ export class ChainService implements OnModuleInit {
   }
 
   /**
+   * Global on-chain kill-switch (#56): flips the vault `House.paused` flag so
+   * settle_bet/claim_reward revert with `Paused`. No-op while the chain layer is
+   * play-money/undeployed — the Redis global pause (MaintenanceService) is the
+   * active kill-switch until the vault is live.
+   * TODO(#56-followup): encode + cosigner-sign the `set_paused` instruction
+   * (mirror settleBet) once the vault is deployed.
+   */
+  async setPaused(paused: boolean): Promise<void> {
+    if (!this.enabled) {
+      this.logger.warn(`setPaused(${paused}) — chain disabled (play-money); on-chain pause is a no-op`);
+      return;
+    }
+    this.logger.warn(`setPaused(${paused}) — on-chain set_paused not yet wired (vault undeployed)`);
+  }
+
+  /**
    * PLAY-MONEY receipt (#26): records the bet outcome on chain WITHOUT moving
    * lamports (the program's `record_bet` — a separate instruction + event so a
    * value-bearing settlement can never be confused with a play-money record).

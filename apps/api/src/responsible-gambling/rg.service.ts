@@ -1,6 +1,12 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
 
 export interface RgState {
   selfExcludedUntil: string | null;
@@ -23,7 +29,10 @@ function startOfUtcDay(): Date {
  */
 @Injectable()
 export class RgService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly maintenance: MaintenanceService,
+  ) {}
 
   async state(userId: string): Promise<RgState> {
     const u = await this.prisma.user.findUniqueOrThrow({
@@ -55,6 +64,10 @@ export class RgService {
    * stays atomic; the no-double-spend invariant is unaffected).
    */
   async assertCanWager(userId: string, amount: bigint): Promise<void> {
+    // Global kill-switch (#56): no new wagers while paused for maintenance.
+    if (await this.maintenance.isPaused()) {
+      throw new ServiceUnavailableException('Wagering is paused for maintenance');
+    }
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: {
@@ -94,6 +107,9 @@ export class RgService {
 
   /** Deposit guard (#46): today's deposits + amount must not exceed the limit. */
   async assertCanDeposit(userId: string, amount: bigint): Promise<void> {
+    if (await this.maintenance.isPaused()) {
+      throw new ServiceUnavailableException('Deposits are paused for maintenance');
+    }
     const u = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: { dailyDepositLimitLamports: true },

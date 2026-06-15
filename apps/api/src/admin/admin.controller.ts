@@ -3,13 +3,38 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../auth/current-user.decorator';
 import { AdminService } from './admin.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
+import { ChainService } from '../solana/chain.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly maintenance: MaintenanceService,
+    private readonly chain: ChainService,
+  ) {}
+
+  @Post('pause')
+  @ApiOperation({ summary: 'Global kill-switch: pause all wagering/deposits (admin only)' })
+  async pause(@CurrentUser() user: AuthContextLike) {
+    await this.admin.assertAdmin(user.userId);
+    await this.maintenance.setPaused(true);
+    // Halt on-chain settlement too (no-op while the vault is play-money/undeployed).
+    await this.chain.setPaused(true).catch(() => undefined);
+    return { ok: true, paused: true };
+  }
+
+  @Post('resume')
+  @ApiOperation({ summary: 'Lift the global pause (admin only)' })
+  async resume(@CurrentUser() user: AuthContextLike) {
+    await this.admin.assertAdmin(user.userId);
+    await this.maintenance.setPaused(false);
+    await this.chain.setPaused(false).catch(() => undefined);
+    return { ok: true, paused: false };
+  }
 
   @Get('stats')
   @ApiOperation({ summary: 'Platform-wide KPIs (admin only)' })
