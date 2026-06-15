@@ -220,7 +220,7 @@ Take the real-value system from devnet to an audited, observable, recoverable ma
 - [ ] **Programs built, tested, audited** — `anchor build`/IDL/tests in CI exercise current programs; third-party audit complete + remediated; swap has min-liquidity lock + checked math. *(J/M)*
 - [ ] **Treasury solvency** — funded bankroll covers worst-case; lottery prizes bounded by reserves; failed payouts retry/reconcile with no silent loss. *(J)*
 - [ ] **Security hardened** — `JWT_SECRET` fails closed; rate limiting enforced; sessions revocable; cosigner key in KMS/HSM; SIWS domain/chainId-bound. *(K)*
-- [ ] **Compliance live** — valid license obtained; geo-block, age gate, KYC/AML, self-exclusion/limits enforced in code (✅ age gate server-enforced at the wager/deposit gate when `REAL_MONEY_ENABLED`, #146); all false marketing removed/made true. *(L)*
+- [ ] **Compliance live** — valid license obtained; geo-block, age gate, KYC/AML, self-exclusion/limits enforced in code (✅ age gate server-enforced at the wager/deposit gate when `REAL_MONEY_ENABLED`, #146; ✅ geo fails closed on unverifiable region + trusted-proxy header trust + live VPN provider + boot-required `GEO_IP_SALT`, #149); all false marketing removed/made true. *(L)*
 - [ ] **Production ops** — Helm/k8s HA; Postgres PITR + tested DR; observability live; mainnet config (no devnet links); global pause/kill-switch; staged closed-beta with deposit caps. *(M)*
 
 ---
