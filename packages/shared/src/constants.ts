@@ -299,3 +299,8 @@ export const CHAT = {
 
 // ---------- Geo blocklist ----------
 export const BLOCKED_COUNTRIES = ['US', 'GB', 'FR', 'DE', 'ES', 'NL'] as const;
+
+// ---------- Legal / compliance ----------
+// The composite version a user accepts (ToS/AML/Privacy/Cookie). Bump this to
+// re-trigger the blocking legal-acceptance gate for everyone (#48).
+export const LEGAL_VERSION = '2026-06-15';

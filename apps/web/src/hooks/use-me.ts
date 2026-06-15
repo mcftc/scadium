@@ -24,6 +24,9 @@ export interface MeResponse {
   createdAt: string;
   /** 18+ age-gate acknowledgement timestamp; null = not yet confirmed (#44). */
   ageConfirmedAt: string | null;
+  /** Last accepted legal version + when; null = never accepted (#48). */
+  acceptedLegalVersion: string | null;
+  acceptedLegalAt: string | null;
   stats: {
     totalWageredLamports: string;
     totalWonLamports: string;
@@ -126,6 +129,16 @@ export function useAckAge() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api<MeResponse>('/me/age-ack', { method: 'POST', token }),
+    onSuccess: (me) => qc.setQueryData(['me'], me),
+  });
+}
+
+/** Record acceptance of the current legal version server-side (#48). */
+export function useAcceptLegal() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<MeResponse>('/me/accept-legal', { method: 'POST', token }),
     onSuccess: (me) => qc.setQueryData(['me'], me),
   });
 }

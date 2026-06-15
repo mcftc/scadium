@@ -46,6 +46,12 @@ export class UsersController {
     return this.users.ackAge(ctx.userId);
   }
 
+  @Post('accept-legal')
+  @ApiOperation({ summary: 'Record acceptance of the current legal version (ToS/AML/Privacy/Cookie)' })
+  acceptLegal(@CurrentUser() ctx: AuthContext) {
+    return this.users.acceptLegal(ctx.userId);
+  }
+
   @Put('connection')
   @ApiOperation({ summary: 'Link or unlink a social account (google/telegram/discord)' })
   updateConnection(@CurrentUser() ctx: AuthContext, @Body() dto: ConnectionDto) {

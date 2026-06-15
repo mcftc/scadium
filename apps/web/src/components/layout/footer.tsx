@@ -42,6 +42,7 @@ const footerSections = [
       { href: '/about', label: 'About Us' },
       { href: '/aml', label: 'AML Policy' },
       { href: '/privacy', label: 'Privacy' },
+      { href: '/cookie', label: 'Cookie Policy' },
       { href: '/faq', label: 'FAQ' },
     ],
   },

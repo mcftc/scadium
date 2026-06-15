@@ -1,5 +1,6 @@
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
+import { LegalMeta } from '@/components/legal/legal-meta';
 
 export const metadata = { title: 'Privacy Policy' };
 
@@ -9,8 +10,8 @@ const sections = [
     p: 'Your wallet address, optional username, gameplay history and chat messages. We never hold private keys.',
   },
   {
-    h: 'What we do not collect',
-    p: 'No KYC documents, no email requirement, no tracking beyond what is needed to run the games.',
+    h: 'What we do not collect today',
+    p: 'In the current play-money beta we require no KYC documents and no email, and run no third-party tracking without your consent (see the Cookie Policy). Identity verification (KYC/AML) will be required before real-money deposits or withdrawals are enabled.',
   },
   {
     h: 'On-chain data',
@@ -29,6 +30,7 @@ export default function PrivacyPage() {
         <h1 className="text-2xl md:text-3xl font-bold">
           <span className="text-gradient">Privacy Policy</span>
         </h1>
+        <LegalMeta doc="privacy" />
         <Card className="p-6 space-y-5">
           {sections.map((s) => (
             <div key={s.h}>
