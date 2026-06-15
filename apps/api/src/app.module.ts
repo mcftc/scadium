@@ -36,6 +36,7 @@ import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { QueueModule } from './queue/queue.module';
 import { ComplianceModule } from './compliance/compliance.module';
 import { GeoGuard } from './compliance/geo.guard';
+import { ResponsibleGamblingModule } from './responsible-gambling/rg.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { GeoGuard } from './compliance/geo.guard';
     PlatformModule,
     ReconciliationModule,
     ComplianceModule,
+    ResponsibleGamblingModule,
   ],
   controllers: [HealthController, MetricsController],
   // Activate the configured rate limiter globally — ThrottlerModule alone is inert

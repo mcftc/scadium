@@ -8,6 +8,7 @@ import { LOTTERY, bulkDiscountTotal, scadBaseToLamports } from '@scadium/shared'
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
 import { LotteryEngine } from './lottery.engine';
+import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
@@ -25,6 +26,7 @@ export class LotteryService {
     private readonly prisma: PrismaService,
     private readonly engine: LotteryEngine,
     private readonly chain: ChainService,
+    private readonly rg: RgService,
   ) {}
 
   snapshot() {
@@ -193,6 +195,9 @@ export class LotteryService {
   }
 
   async buyTicket(params: { userId: string; digits: number[] }, key?: string) {
+    // Lottery tickets are $SCAD-denominated, so only the absolute blocks apply
+    // (self-exclusion / cooling-off); the lamports daily limit does not (0n).
+    await this.rg.assertCanWager(params.userId, 0n);
     // When the on-chain lottery is live, the play-money path is closed —
     // tickets must be real wallet-signed $SCAD purchases (POST /confirm).
     if (this.chain.lotteryEnabled) {

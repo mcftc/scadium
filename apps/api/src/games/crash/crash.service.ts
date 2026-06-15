@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRASH } from '@scadium/shared';
 import { CrashEngine } from './crash.engine';
+import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { withSerializable } from '../../prisma/with-serializable';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
@@ -22,6 +23,7 @@ export class CrashService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: CrashEngine,
+    private readonly rg: RgService,
   ) {}
 
   snapshot() {
@@ -53,6 +55,7 @@ export class CrashService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
+    await this.rg.assertCanWager(params.userId, params.amountLamports);
 
     // The waiting round exists before the bet — capture its id so we can persist
     // a durable CrashBet row in the SAME tx as the debit (#14: a restart can
@@ -177,6 +180,7 @@ export class CrashService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
+    await this.rg.assertCanWager(params.userId, params.amountLamports);
 
     // Atomic conditional debit + durable scheduled-bet record (#72): the
     // ScheduledCrashBet row is written in the SAME tx as the debit, so a crash

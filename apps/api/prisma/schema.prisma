@@ -122,6 +122,15 @@ model User {
   // LEGAL_VERSION. null = never accepted.
   acceptedLegalVersion String?
   acceptedLegalAt DateTime?
+  // Responsible-gambling controls (#46). Self-exclusion blocks login + play;
+  // cooling-off blocks play only. Both, once set, cannot be SHORTENED before
+  // they expire (server-enforced). Daily limits (lamports) gate wagering;
+  // null = no limit. Today's usage is computed from the Bet ledger.
+  selfExcludedUntil DateTime?
+  coolOffUntil DateTime?
+  dailyDepositLimitLamports BigInt?
+  dailyLossLimitLamports BigInt?
+  dailyWagerLimitLamports BigInt?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
   cashbackBaselineLost BigInt @default(0)

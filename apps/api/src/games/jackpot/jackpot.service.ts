@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { JACKPOT } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JackpotEngine } from './jackpot.engine';
+import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
@@ -21,6 +22,7 @@ export class JackpotService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: JackpotEngine,
+    private readonly rg: RgService,
   ) {}
 
   async snapshot() {
@@ -64,6 +66,7 @@ export class JackpotService {
     ) {
       throw new BadRequestException('Entry out of range');
     }
+    await this.rg.assertCanWager(params.userId, amount);
 
     const open = this.engine.getOpenRound();
     if (!open) throw new BadRequestException('No open round — the next one starts shortly');

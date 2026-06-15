@@ -43,6 +43,7 @@ const footerSections = [
       { href: '/aml', label: 'AML Policy' },
       { href: '/privacy', label: 'Privacy' },
       { href: '/cookie', label: 'Cookie Policy' },
+      { href: '/responsible-gambling', label: 'Responsible Gambling' },
       { href: '/faq', label: 'FAQ' },
     ],
   },
