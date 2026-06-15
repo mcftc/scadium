@@ -47,6 +47,10 @@ describe('airdrop distribute — enqueue twice, pay once (issue #11)', () => {
           walletAddress: `ad-${id}`,
           refCode: `ad-ref-${id}`,
           playBalanceLamports: startBal,
+          // #47 airdrop eligibility now requires age-confirmation + a unique
+          // signup IP (no same-IP cluster), so eligible test users set both.
+          ageConfirmedAt: new Date(),
+          signupIpHash: `ad-ip-${id}`,
         },
       });
       ids.push(u.id);

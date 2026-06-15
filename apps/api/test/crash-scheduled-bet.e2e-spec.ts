@@ -40,7 +40,8 @@ const recoverScheduled = (engine: unknown) =>
 function makeCrashService() {
   const engineStub = { cancelScheduled: () => ({ amountLamports: 0n }) } as never;
   const rg = { assertCanWager: async () => undefined } as never;
-  return new CrashService(prisma as never, engineStub, rg);
+  const affiliates = { creditReferral: async () => undefined } as never;
+  return new CrashService(prisma as never, engineStub, rg, affiliates);
 }
 
 describe('crash scheduled-bet durability (integration, real Postgres)', () => {

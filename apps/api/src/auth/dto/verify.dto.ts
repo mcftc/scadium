@@ -1,4 +1,4 @@
-import { IsString, Length, MinLength } from 'class-validator';
+import { IsOptional, IsString, Length, Matches, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class VerifyDto {
@@ -21,4 +21,10 @@ export class VerifyDto {
   @IsString()
   @MinLength(1)
   message!: string;
+
+  @ApiProperty({ required: false, description: 'Optional referral code captured from ?ref' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9]{4,16}$/)
+  ref?: string;
 }

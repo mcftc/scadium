@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { SeedManagerService } from '../../fairness/seed-manager.service';
 import { RgService } from '../../responsible-gambling/rg.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { CoinflipGateway } from './coinflip.gateway';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
@@ -38,6 +39,7 @@ export class CoinflipService {
     private readonly chain: ChainService,
     private readonly seeds: SeedManagerService,
     private readonly rg: RgService,
+    private readonly affiliates: AffiliatesService,
   ) {}
 
   // ------------ Queries ------------
@@ -296,6 +298,12 @@ export class CoinflipService {
         refType: 'Bet',
         refId: creatorWins ? creatorBetId : joinerBetId,
       });
+
+      // Accrue both wagering sides' stakes to their referrers (#47) — in this
+      // settle tx, so it's atomic + replay-safe (the idempotency claim above
+      // guards re-entry). No-op for users with no referrer.
+      await this.affiliates.creditReferral(tx, game.creatorId, game.amountLamports);
+      await this.affiliates.creditReferral(tx, params.userId, game.amountLamports);
 
       // Bind the joiner's player seed + nonce onto the flip's seed row and reveal
       // the per-flip server seed now that the round is settled.
