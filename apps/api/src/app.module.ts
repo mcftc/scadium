@@ -34,6 +34,7 @@ import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { QueueModule } from './queue/queue.module';
+import { ComplianceModule } from './compliance/compliance.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { QueueModule } from './queue/queue.module';
     AdminModule,
     PlatformModule,
     ReconciliationModule,
+    ComplianceModule,
   ],
   controllers: [HealthController, MetricsController],
   // Activate the configured rate limiter globally — ThrottlerModule alone is inert
