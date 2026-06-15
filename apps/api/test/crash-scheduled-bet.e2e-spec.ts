@@ -39,7 +39,8 @@ const recoverScheduled = (engine: unknown) =>
 // cancelScheduled is DB-authoritative; the engine call is best-effort, so a stub suffices.
 function makeCrashService() {
   const engineStub = { cancelScheduled: () => ({ amountLamports: 0n }) } as never;
-  return new CrashService(prisma as never, engineStub);
+  const rg = { assertCanWager: async () => undefined } as never;
+  return new CrashService(prisma as never, engineStub, rg);
 }
 
 describe('crash scheduled-bet durability (integration, real Postgres)', () => {

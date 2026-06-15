@@ -13,7 +13,9 @@ import { prisma, gw, offChain, makeUser } from './engine-harness';
  */
 describe('coinflip player-controlled seed (issue #92)', () => {
   const seeds = new SeedManagerService(prisma as never);
-  const svc = new CoinflipService(prisma as never, gw(), offChain, seeds);
+  const svc = new CoinflipService(prisma as never, gw(), offChain, seeds, {
+    assertCanWager: async () => undefined,
+  } as never);
 
   it("derives from the joiner's client seed + monotonic nonce and reproduces from the revealed seed", async () => {
     const creator = await makeUser(1_000_000_000n);
