@@ -4,6 +4,8 @@ import { IsString, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthContext } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { KycGuard } from '../kyc/kyc.guard';
+import { KycService } from '../kyc/kyc.service';
 import { ChainService } from './chain.service';
 import { VaultBridgeService } from './vault-bridge.service';
 
@@ -19,6 +21,7 @@ export class VaultController {
   constructor(
     private readonly chain: ChainService,
     private readonly bridge: VaultBridgeService,
+    private readonly kyc: KycService,
   ) {}
 
   /** Public chain config the web needs to build deposit/withdraw txs. */
@@ -29,6 +32,7 @@ export class VaultController {
       enabled: this.chain.enabled,
       programId: this.chain.programIdBase58,
       cluster: 'devnet',
+      kycEnabled: this.kyc.enabled,
     };
   }
 
@@ -42,7 +46,7 @@ export class VaultController {
   }
 
   @Post('deposit-confirm')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, KycGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Credit a VERIFIED on-chain deposit to the spendable balance (#27, idempotent)',
@@ -52,7 +56,7 @@ export class VaultController {
   }
 
   @Post('withdraw-confirm')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, KycGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Debit the mirror after a VERIFIED on-chain withdrawal (#27, idempotent)',

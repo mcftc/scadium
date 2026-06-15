@@ -317,6 +317,7 @@ export class UsersService {
     dailyDepositLimitLamports: bigint | null;
     dailyLossLimitLamports: bigint | null;
     dailyWagerLimitLamports: bigint | null;
+    kycStatus: 'none' | 'pending' | 'approved' | 'rejected';
     createdAt: Date;
   }) {
     return {
@@ -355,6 +356,7 @@ export class UsersService {
         dailyLossLimitLamports: user.dailyLossLimitLamports?.toString() ?? null,
         dailyWagerLimitLamports: user.dailyWagerLimitLamports?.toString() ?? null,
       },
+      kycStatus: user.kycStatus,
       ...xpInfo(user.totalWagered),
     };
   }
