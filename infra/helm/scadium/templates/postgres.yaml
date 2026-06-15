@@ -1,0 +1,59 @@
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "scadium.fullname" . }}-postgres
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "scadium.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - { name: pg, containerPort: 5432 }
+          env:
+            - { name: POSTGRES_DB, value: {{ .Values.postgres.database | quote }} }
+            - { name: POSTGRES_USER, value: {{ .Values.postgres.username | quote }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "scadium.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          readinessProbe:
+            exec: { command: ['pg_isready', '-U', {{ .Values.postgres.username | quote }}, '-d', {{ .Values.postgres.database | quote }}] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ['ReadWriteOnce']
+        {{- if .Values.postgres.storageClass }}
+        storageClassName: {{ .Values.postgres.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scadium.fullname" . }}-postgres
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 4 }}
+  ports:
+    - { name: pg, port: 5432, targetPort: pg }
+{{- end }}

@@ -1,0 +1,126 @@
+# Scadium Helm values (#52). Play-money-safe defaults; production overrides the
+# image tags, secrets (use a real secret store, not these placeholders), domain,
+# and ideally points `postgres.external`/`redis.external` at managed services.
+
+nameOverride: ''
+fullnameOverride: ''
+
+image:
+  registry: ghcr.io/mcftc
+  # Override per release (CI sets the immutable digest/tag).
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# ---- API (NestJS) — horizontally scaled; background loops are leader-elected ----
+api:
+  enabled: true
+  image: scadium-api
+  replicas: 2
+  port: 4000
+  env:
+    NODE_ENV: production
+    JWT_ACCESS_TTL: '900'
+    THROTTLE_TTL: '60'
+    THROTTLE_LIMIT: '120'
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: '1', memory: 512Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  # Keep ≥1 API pod during voluntary disruptions (node drains/upgrades).
+  pdb:
+    enabled: true
+    minAvailable: 1
+  livenessPath: /health/live
+  readinessPath: /health/ready
+
+# ---- Worker (BullMQ — airdrops/leaderboards/entropy fulfilment) ----
+worker:
+  enabled: true
+  image: scadium-worker
+  # Single replica: jobs are idempotent + leader-gated; scale only after sharding.
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+# ---- Web (Next.js) ----
+web:
+  enabled: true
+  image: scadium-web
+  replicas: 2
+  port: 3000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+
+# ---- Postgres ----
+# In-cluster StatefulSet for staging. PRODUCTION SHOULD use a managed Postgres
+# with PITR (set external.enabled and point DATABASE_URL at it) — see
+# docs/runbooks/disaster-recovery.md.
+postgres:
+  enabled: true
+  external:
+    enabled: false
+    # When true, supply the DSN via the chart secret (postgres.dsnSecretKey).
+  image: postgres:16-alpine
+  database: scadium
+  username: scadium
+  storage: 20Gi
+  storageClass: ''
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: '1', memory: 1Gi }
+
+# ---- Redis (Socket.io adapter + maintenance flag + queue) ----
+redis:
+  enabled: true
+  external:
+    enabled: false
+    # When external, point the app here (e.g. rediss://managed-redis:6380).
+    url: ''
+  image: redis:7-alpine
+  storage: 4Gi
+  storageClass: ''
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# ---- Ingress ----
+ingress:
+  enabled: true
+  className: nginx
+  host: scadium.example.com
+  tls:
+    enabled: true
+    secretName: scadium-tls
+  annotations: {}
+
+# ---- Secrets ----
+# PLACEHOLDERS ONLY. In production, do NOT commit real values — use a sealed
+# secret / external-secrets operator and set existingSecret to its name.
+secrets:
+  # When set, the chart renders NO Secret — your secret MUST carry every key the
+  # app needs: JWT_SECRET, DATABASE_URL, and (if in-cluster Postgres) POSTGRES_PASSWORD.
+  # The jwtSecret/postgresPassword/databaseUrl values below are then IGNORED.
+  existingSecret: ''
+  jwtSecret: 'change-me-at-least-32-bytes-long-secret!!'
+  postgresPassword: 'change-me-postgres'
+  # Managed DSN — used ONLY when existingSecret is empty AND postgres.external.enabled.
+  databaseUrl: ''
+
+# ---- Observability (Prometheus Operator) ----
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+  # PrometheusRule alerts (treasury/bankroll/payout/api-health). Closes the
+  # Alertmanager-rules item deferred from #54.
+  prometheusRule:
+    enabled: true
+    # Extra labels so your Prometheus Operator `ruleSelector` picks the rules up.
+    labels: {}

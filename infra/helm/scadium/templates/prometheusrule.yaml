@@ -1,0 +1,57 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "scadium.fullname" . }}
+  labels:
+    {{- include "scadium.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: scadium-treasury
+      rules:
+        # Treasury low — the house bankroll dipped under the reserve floor (#30/#54).
+        # See docs/runbooks/incident-response.md §1 and docs/bankroll-model.md.
+        - alert: ScadiumLowBankroll
+          expr: increase(scadium_low_bankroll_alerts_total[10m]) > 0
+          for: 0m
+          labels: { severity: critical }
+          annotations:
+            summary: 'House bankroll under the reserve floor'
+            runbook: 'docs/runbooks/incident-response.md#1-treasury-low-bankroll-under-floor'
+        # Payouts being refused pre-emptively — the bankroll can't cover wins (#54).
+        - alert: ScadiumTreasuryPayoutBlocked
+          expr: increase(scadium_treasury_payout_blocked_total[10m]) > 0
+          for: 0m
+          labels: { severity: critical }
+          annotations:
+            summary: 'Payouts refused — house vault would breach the reserve floor'
+            runbook: 'docs/runbooks/incident-response.md#1-treasury-low-bankroll-under-floor'
+        # Failed-payout backlog — on-chain payouts returning null (#54). No silent loss.
+        - alert: ScadiumPayoutFailing
+          expr: increase(scadium_payout_failed_total[10m]) > 0
+          for: 0m
+          labels: { severity: warning }
+          annotations:
+            summary: 'On-chain payouts failing/unverified — reconcile backlog growing'
+            runbook: 'docs/runbooks/incident-response.md#2-failed-payout-backlog-no-silent-loss'
+    - name: scadium-api-health
+      rules:
+        - alert: ScadiumApiDown
+          expr: up{job=~".*scadium.*api.*"} == 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: 'Scadium API target down'
+        - alert: ScadiumApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+              / sum(rate(http_requests_total[5m])) > 0.05
+            and sum(rate(http_requests_total[5m])) > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: 'API 5xx error rate above 5% for 10m'
+{{- end }}

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: scadium
+description: |
+  Scadium — non-custodial provably-fair Solana casino. HA deployment of the API
+  (horizontally scaled, leader-elected background loops), the BullMQ worker,
+  the Next.js web app, Redis, and Postgres, with Prometheus alerts. (#52)
+type: application
+# Chart version — bump on chart changes. appVersion tracks the app release.
+version: 0.1.0
+appVersion: '0.1.0'
+kubeVersion: '>=1.27.0-0'
+maintainers:
+  - name: scadium

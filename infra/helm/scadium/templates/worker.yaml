@@ -1,0 +1,29 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scadium.fullname" . }}-worker
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  # Background jobs are idempotent + leader-gated; recreate (not surge) avoids two
+  # leaders briefly racing during a rollout.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "scadium.image" (dict "ctx" . "image" .Values.worker.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: {{ include "scadium.fullname" . }}-config }
+            - secretRef: { name: {{ include "scadium.secretName" . }} }
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+{{- end }}

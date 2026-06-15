@@ -1,0 +1,14 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "scadium.fullname" . }}-api
+  labels: {{- include "scadium.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "scadium.selectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}

@@ -1,0 +1,27 @@
+Scadium {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in ns "{{ .Release.Namespace }}".
+
+Components:
+  - API      x{{ if .Values.api.autoscaling.enabled }}{{ .Values.api.autoscaling.minReplicas }}–{{ .Values.api.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.api.replicas }}{{ end }}
+  - Worker   x{{ .Values.worker.replicas }} (leader-gated background jobs)
+  - Web      x{{ .Values.web.replicas }}
+  - Postgres {{ if .Values.postgres.external.enabled }}EXTERNAL (managed){{ else }}in-cluster StatefulSet — PRODUCTION should use managed PG + PITR (docs/runbooks/disaster-recovery.md){{ end }}
+  - Redis    {{ if .Values.redis.external.enabled }}EXTERNAL{{ else }}in-cluster StatefulSet{{ end }}
+
+URL: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+⚠  Using CHART-MANAGED placeholder secrets. For production set secrets.existingSecret
+   to a sealed-secret / external-secrets name — never ship the values.yaml defaults.
+{{- end }}
+{{- if and .Values.secrets.existingSecret .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+
+⚠  existingSecret + in-cluster Postgres: your secret "{{ .Values.secrets.existingSecret }}" MUST
+   contain POSTGRES_PASSWORD (the Postgres pod reads it) AND a matching DATABASE_URL, or the
+   Postgres/API pods will crashloop. For production prefer postgres.external.enabled=true with a
+   managed Postgres (PITR) — see docs/runbooks/disaster-recovery.md.
+{{- end }}
+
+Verify:  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "scadium.fullname" . }}-api
+Metrics: GET /metrics on the API service (scraped by the ServiceMonitor).
+Alerts:  {{ if .Values.metrics.prometheusRule.enabled }}PrometheusRule installed (treasury/bankroll/payout/api-health).{{ else }}PrometheusRule DISABLED.{{ end }}
