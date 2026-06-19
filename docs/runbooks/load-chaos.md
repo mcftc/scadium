@@ -2,9 +2,10 @@
 
 Proves the §9 gating invariants — settlement atomicity, balance races, restart
 safety, horizontal scale — under realistic concurrency before real funds. This
-runbook covers the **chaos integration suite** and the **load harness** (#178).
-Multi-replica kill-9 (#179) and the multi-hour staging soak + nightly CI (#180)
-are tracked separately.
+runbook covers the **chaos integration suite** and the **load harness** (#178),
+plus the **multi-replica chaos** scenarios (#179 — kill-9 recovery +
+reveal-callback failure). The multi-hour staging soak + nightly CI (#180) is
+tracked separately.
 
 ## Prerequisites
 
@@ -49,6 +50,51 @@ TOKEN=<jwt> API_URL=http://localhost:4000 CONNECTIONS=50 DURATION=30 node crash-
 
 Without `TOKEN` it smoke-tests the public read paths only. Tune `CONNECTIONS` /
 `DURATION` to the expected target concurrency.
+
+## Multi-replica chaos (#179)
+
+Two scenarios that need real cross-pod leader election (Redis lock
+`lock:engine:*`, `apps/api/src/redis/leader-election.ts`) + boot reconciliation.
+They run in the same integration harness (`test/setup.ts`, real Postgres + Redis)
+as the #178 suite:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d   # Postgres + Redis (Redis is REQUIRED — engines run in election mode)
+export TEST_DATABASE_URL=postgresql://scadium:scadium@localhost:5432/scadium_test?schema=public
+pnpm --filter @scadium/api exec vitest run --config vitest.integration.config.ts \
+  test/chaos/kill9-recovery.e2e-spec.ts test/chaos/vrf-callback-failure.e2e-spec.ts
+```
+
+- `test/chaos/kill9-recovery.e2e-spec.ts` — replica A wins `lock:engine:crash`,
+  takes a real crash bet (debited, durable CrashBet, round non-terminal), then A's
+  Redis is force-disconnected (the exact effect of a SIGKILL: the lock can be
+  neither renewed nor released, so it TTLs out). Standby replica B acquires the
+  lapsed lock and runs `recoverStrandedRounds` (#14). Invariant: zero rounds left
+  `running`/`waiting`, the stake refunded in full, and `reconcileAll()` → zero drift.
+- `test/chaos/vrf-callback-failure.e2e-spec.ts` — `chain.lotteryRevealDraw`
+  returns `null` (failed VRF/reveal callback). The lottery draw must still settle
+  atomically via the documented synthetic-slot-hash fallback (`synthetic-not-fair`,
+  ADR 0002 / #19a): every ticket gets a terminal won/lost `Bet` row, no buyer is
+  left debited-without-resolution, and `reconcileAll()` → zero drift. A second
+  case drives the reveal-SUCCEEDS path (`onchain`) for the "then succeed" half.
+
+> **Premise note (#179):** the product mechanism is **boot reconciliation after a
+> Redis-lock leader takeover**, not in-process hot failover; and a null reveal
+> **falls back + reconciles**, it does not retry the reveal. The specs assert the
+> real guarantees (zero stranded bets / zero buyer left unresolved + zero drift).
+
+### Out-of-process variant — 2 real containers + an actual SIGKILL
+
+`apps/api/test/chaos/docker-compose.chaos.yml` boots **two real API replicas**
+(reusing `apps/api/Dockerfile`) + Postgres + Redis for a true kill-9:
+
+```bash
+docker compose -f apps/api/test/chaos/docker-compose.chaos.yml up -d --build
+# seed a JWT + place a crash bet against the leader (api-1 → :4001), then:
+docker compose -f apps/api/test/chaos/docker-compose.chaos.yml kill -s SIGKILL api-1
+# api-2 (:4002) acquires the lock after the ~10s TTL and reconciles on boot.
+docker compose -f apps/api/test/chaos/docker-compose.chaos.yml down -v
+```
 
 ## Soak (placeholder — #180)
 

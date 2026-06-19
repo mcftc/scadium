@@ -893,6 +893,29 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               where: { id: bet.id },
               data: { payoutLamports: payout, remainingLamports: BigInt(0), won },
             });
+            // Mirror the live-settle aggregate update (see settle path above): the
+            // recovered Bet row counts as a played wager, so the denormalized User
+            // columns must move with it or hourly reconciliation flags drift on
+            // every kill-9 recovery (totalWagered/gamesPlayed derive from Bet).
+            // Matched to reconcileAll's GREATEST(payout-amount,0) derivation, with
+            // `credit` (= locked-in payout + refunded stake) as the Bet payout.
+            // NB: unlike the live-settle path we intentionally do NOT call
+            // proofOfWager.accrue here — a recovered round under-credits wager
+            // mining (safe direction; not a reconciliation field). Tracked as a
+            // follow-up; do not read this omission as a bug.
+            await tx.user.update({
+              where: { id: bet.userId },
+              data: {
+                totalWagered: { increment: bet.amountLamports },
+                totalWon: {
+                  increment: credit > bet.amountLamports ? credit - bet.amountLamports : BigInt(0),
+                },
+                totalLost: {
+                  increment: bet.amountLamports > credit ? bet.amountLamports - credit : BigInt(0),
+                },
+                gamesPlayed: { increment: 1 },
+              },
+            });
             await tx.bet.create({
               data: {
                 userId: bet.userId,

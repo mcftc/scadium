@@ -1,0 +1,103 @@
+# Multi-replica chaos stack (#179, slice of #55).
+#
+# Stands up TWO real API replicas behind one Postgres + Redis so the kill-9
+# scenario can be run against genuine cross-pod leader election (Redis lock
+# `lock:engine:crash` etc., apps/api/src/redis/leader-election.ts) and the boot
+# reconciliation that follows a leader takeover.
+#
+# Build context is the repo ROOT (`../../../..`) because apps/api/Dockerfile
+# COPYs the whole pnpm workspace; this file reuses that real image — it invents
+# no bespoke build. Both api replicas share the SAME service definition (env +
+# image), exactly as a horizontally-scaled deployment would.
+#
+# Run (from the repo root):
+#   docker compose -f apps/api/test/chaos/docker-compose.chaos.yml up -d --build
+#   # …drive a crash bet against the leader, then:
+#   docker compose -f apps/api/test/chaos/docker-compose.chaos.yml kill -s SIGKILL api-1
+#   # api-2 acquires the lock after the ~10s TTL and runs boot reconciliation.
+# See docs/runbooks/load-chaos.md and kill9-recovery.e2e-spec.ts for the full
+# scenario + invariant. Play-money mode: on-chain vars intentionally omitted, so
+# settlement/recovery touch only Postgres.
+name: scadium-chaos
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scadium
+      POSTGRES_PASSWORD: scadium
+      POSTGRES_DB: scadium_chaos
+    ports:
+      - '5433:5432' # avoid clashing with the dev stack's 5432
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U scadium -d scadium_chaos']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6380:6379' # avoid clashing with the dev stack's 6379
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Replica 1. The build (Prisma generate + tsc) and the entrypoint
+  # `prisma migrate deploy` are the REAL apps/api/Dockerfile — no test-only image.
+  api-1:
+    build:
+      context: ../../../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &api-env
+      NODE_ENV: production
+      DATABASE_URL: postgresql://scadium:scadium@postgres:5432/scadium_chaos?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: chaos-suite-jwt-secret-at-least-32-bytes!!
+      JWT_ACCESS_TTL: 3600s
+      CORS_ORIGIN: '*'
+      THROTTLE_TTL: '60'
+      THROTTLE_LIMIT: '100000' # effectively off so the load driver isn't throttled
+      # Play-money mode: on-chain vars intentionally omitted.
+    ports:
+      - '4001:4000'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # Replica 2 — identical definition, distinct published port. Only ONE of the
+  # two ever holds each engine's Redis lock; the other mirrors as a follower
+  # until the leader dies.
+  api-2:
+    build:
+      context: ../../../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *api-env
+    ports:
+      - '4002:4000'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
