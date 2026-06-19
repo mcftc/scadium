@@ -25,6 +25,7 @@ import { LeaderElection } from '../../redis/leader-election';
 import { LotteryGateway } from './lottery.gateway';
 import { splitBracketPrizes } from './lottery.settlement';
 import { settlementsTotal } from '../../observability/metrics.registry';
+import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 
 const SCAD_BASE_NUM = 10 ** LOTTERY.SCAD_DECIMALS;
 
@@ -236,6 +237,11 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           await this.drawAndSettle();
           this.logger.log(`lottery recovery: draw ${d.id} settled`);
         } catch (e) {
+          // #212 — benign: live draw or a concurrent recovery pass already settled it.
+          if (isSettleClaimLost(e)) {
+            this.logger.warn(`lottery recovery skipped draw ${d.id}: already settled`);
+            continue;
+          }
           const message = e instanceof Error ? e.message : String(e);
           this.logger.error(`lottery recovery failed for draw ${d.id}: ${message}`);
           try {
@@ -568,6 +574,30 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     // ----- Phase 2: ledger + ticket updates + draw flip + reveal, atomically -----
     try {
       await withSerializable(this.prisma, async (tx) => {
+        // #212 — re-assert leadership AFTER the tx opens, then CLAIM the draw:
+        // the guarded 'open'→'drawn' flip (with the full draw result) is the
+        // concurrency gate. Only the winning settler proceeds; a resumed-stale
+        // leader OR a concurrent recovery pass matches 0 rows and throws, rolling
+        // back the whole tx so NO prize credits/Bet rows commit (no double payout).
+        assertStillLeader(() => this.isLeader(), 'lottery');
+        const { count } = await tx.lotteryDraw.updateMany({
+          where: { id: this.current.id, status: 'open' },
+          data: {
+            status: 'drawn',
+            winningDigits: digits,
+            slotHash: slotHashHex,
+            drawnAt: new Date(),
+            revealTxSignature,
+            fairness,
+            totalPoolScadBase: totalPool,
+            burnScadBase,
+            bracketWinnerCounts,
+            bracketAmountsScadBase: bracketSlices,
+            bracketRolloverScadBase: bracketRollover,
+          },
+        });
+        assertRoundClaimed(count, 'lottery', this.current.id);
+
         for (const r of ticketResults) {
           const t = r.ticket;
           // NET prize (#183 basis): GREATEST(payout - cost, 0). Reused for both
@@ -649,28 +679,22 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           });
         }
 
-        await tx.lotteryDraw.update({
-          where: { id: this.current.id },
-          data: {
-            status: 'drawn',
-            winningDigits: digits,
-            slotHash: slotHashHex,
-            drawnAt: new Date(),
-            revealTxSignature,
-            fairness,
-            totalPoolScadBase: totalPool,
-            burnScadBase,
-            bracketWinnerCounts,
-            bracketAmountsScadBase: bracketSlices,
-            bracketRolloverScadBase: bracketRollover,
-          },
-        });
+        // Draw terminal flip (+ result) happened at claim time above; only the
+        // seed reveal remains.
         await tx.seed.update({
           where: { id: this.current.seedId },
           data: { revealedAt: new Date() },
         });
       });
     } catch (e) {
+      // #212 — benign: another settler (live draw or a concurrent recovery pass)
+      // already claimed/settled this draw, or we were demoted mid-settle. The
+      // draw is already terminal and fully paid by the winner, so this is NOT a
+      // settlement failure: roll back silently (no dead-letter, no double payout).
+      if (isSettleClaimLost(e)) {
+        this.logger.warn(`lottery settle skipped: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       this.logger.error(`Lottery settle failed for ${this.current.id} after retries: ${message}`);
       try {
