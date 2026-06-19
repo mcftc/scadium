@@ -25,6 +25,7 @@ import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { ExposureGuard } from '../../common/exposure-guard';
+import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 
 type Phase = 'idle' | 'betting' | 'dealing' | 'player_turns' | 'dealer_turn' | 'settled';
 type HandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
@@ -199,6 +200,18 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       try {
         const refunds = this.parseSeatStakes(round.stateJson);
         await withSerializable(this.prisma, async (tx) => {
+          // #219 — CLAIM the round FIRST so live-settle and recovery can never
+          // both credit it. The round's terminal marker is `endedAt` (nullable),
+          // so the guarded flip from null is the concurrency gate: only the pass
+          // that transitions it out of null proceeds; a peer (a live settle OR a
+          // concurrent recovery) matches 0 rows and throws, rolling back the
+          // whole tx (no refunds). Idempotent regardless of how many settlers race.
+          const { count } = await tx.blackjackRound.updateMany({
+            where: { id: round.id, endedAt: null },
+            data: { endedAt: new Date() },
+          });
+          assertRoundClaimed(count, 'blackjack', round.id);
+
           for (const r of refunds) {
             if (r.stake > BigInt(0)) {
               await applyBalanceDelta(tx, r.userId, r.stake, {
@@ -208,10 +221,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
               });
             }
           }
-          await tx.blackjackRound.update({
-            where: { id: round.id },
-            data: { endedAt: new Date() },
-          });
+          // Terminal flip already done at claim time above.
           await tx.blackjackTable.update({
             where: { id: round.tableId },
             data: { status: 'waiting' },
@@ -221,6 +231,12 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
           `blackjack recovery: round ${round.id} refunded ${refunds.length} seat(s)`,
         );
       } catch (e) {
+        // #219 — another settler (a live settle or a concurrent recovery pass)
+        // already claimed this round: benign, not a recovery failure. No dead-letter.
+        if (isSettleClaimLost(e)) {
+          this.logger.warn(`blackjack recovery skipped round ${round.id}: already settled`);
+          continue;
+        }
         const message = e instanceof Error ? e.message : String(e);
         this.logger.error(`blackjack recovery failed for round ${round.id}: ${message}`);
         try {
@@ -940,6 +956,22 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     // the round state + the table 'waiting' flip in ONE serializable tx.
     try {
       await withSerializable(this.prisma, async (tx) => {
+        // #219 — re-assert leadership AFTER the tx opens: a leader demoted during
+        // the hand self-aborts before crediting anyone.
+        assertStillLeader(() => this.isLeader(), 'blackjack');
+        // #219 — CLAIM the round first: the round's terminal marker is `endedAt`
+        // (nullable), so the guarded flip from null is the concurrency gate. Only
+        // the settler that transitions `endedAt` out of null wins; any peer (a
+        // resumed-stale leader OR boot recovery) matches 0 rows and throws,
+        // rolling back the WHOLE tx so NO credits/Bet rows commit. Idempotent
+        // regardless of how many settlers race. This flip also performs the
+        // terminal stateJson/endedAt write the unconditional update used to do.
+        const { count } = await tx.blackjackRound.updateMany({
+          where: { id: t.roundDbId!, endedAt: null },
+          data: { stateJson: roundStateJson, endedAt: new Date() },
+        });
+        assertRoundClaimed(count, 'blackjack', t.roundDbId!);
+
         for (const d of seatData) {
           const s = d.seat;
           const netProfit = d.payout - d.stake;
@@ -1023,13 +1055,20 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
         }
 
         await tx.seed.update({ where: { id: t.seedId! }, data: { revealedAt: new Date() } });
-        await tx.blackjackRound.update({
-          where: { id: t.roundDbId! },
-          data: { stateJson: roundStateJson, endedAt: new Date() },
-        });
+        // Terminal stateJson/endedAt flip already done at claim time above.
         await tx.blackjackTable.update({ where: { id: t.id }, data: { status: 'waiting' } });
       });
     } catch (e) {
+      // #219 — another settler (a resumed-stale leader or a boot-recovery pass)
+      // already claimed and settled this round: benign, NOT a settlement failure.
+      // The round is already terminal and fully settled by the winner, so no
+      // credits were made here (the whole tx rolled back) and no dead-letter is
+      // written. Leave the in-memory phase 'settled' so this instance does not
+      // re-drive a round another settler owns.
+      if (isSettleClaimLost(e)) {
+        this.logger.warn(`blackjack settle skipped table ${t.id}: round already settled`);
+        return;
+      }
       // Roll the in-memory phase back so the table is not left terminal, and
       // dead-letter the failure. Do NOT start the settle-pause/idle timer —
       // the round stays non-terminal for the recovery worker.
