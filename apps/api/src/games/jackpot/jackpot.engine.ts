@@ -28,11 +28,31 @@ const JACKPOT_LOCK_TTL_MS = 10_000;
 // 3D wheel reveal fires). They enter through the same money-safe debit + entry
 // path as anyone else, so settlement and the ledger are untouched.
 const DEMO_BOTS = [
-  { id: 'd0d0d0d0-0000-4000-8000-000000000001', username: 'DegenBot', wallet: 'DemoBot1degenking1111111111111111111111111' },
-  { id: 'd0d0d0d0-0000-4000-8000-000000000002', username: 'MoonBot', wallet: 'DemoBot2moonshot2222222222222222222222222' },
-  { id: 'd0d0d0d0-0000-4000-8000-000000000003', username: 'LuckyBot', wallet: 'DemoBot3lucky33333333333333333333333333333' },
-  { id: 'd0d0d0d0-0000-4000-8000-000000000004', username: 'BonkBot', wallet: 'DemoBot4bonk44444444444444444444444444444' },
-  { id: 'd0d0d0d0-0000-4000-8000-000000000005', username: 'ApeBot', wallet: 'DemoBot5ape555555555555555555555555555555' },
+  {
+    id: 'd0d0d0d0-0000-4000-8000-000000000001',
+    username: 'DegenBot',
+    wallet: 'DemoBot1degenking1111111111111111111111111',
+  },
+  {
+    id: 'd0d0d0d0-0000-4000-8000-000000000002',
+    username: 'MoonBot',
+    wallet: 'DemoBot2moonshot2222222222222222222222222',
+  },
+  {
+    id: 'd0d0d0d0-0000-4000-8000-000000000003',
+    username: 'LuckyBot',
+    wallet: 'DemoBot3lucky33333333333333333333333333333',
+  },
+  {
+    id: 'd0d0d0d0-0000-4000-8000-000000000004',
+    username: 'BonkBot',
+    wallet: 'DemoBot4bonk44444444444444444444444444444',
+  },
+  {
+    id: 'd0d0d0d0-0000-4000-8000-000000000005',
+    username: 'ApeBot',
+    wallet: 'DemoBot5ape555555555555555555555555555555',
+  },
 ] as const;
 const DEMO_BOT_BALANCE = BigInt('100000000000000'); // 100k SOL of play money
 
@@ -385,27 +405,60 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     const roundId = this.current.id;
     const { serverSeed, clientSeed, nonce, seedId } = this.current;
 
-    const entries = await this.prisma.jackpotEntry.findMany({
-      where: { roundId },
-      orderBy: { createdAt: 'asc' },
-      include: { user: { select: { id: true, username: true, walletAddress: true } } },
-    });
+    // #215 — outcome computed INSIDE the serializable tx from an inside-the-tx
+    // entry read, so a late enter that commits before our claim is ALWAYS
+    // included and one after is ALWAYS rejected (see the closure below). These
+    // outer vars carry the in-tx result back out for the gateway/log/chain side
+    // effects, which must fire only AFTER the tx commits.
+    let total = BigInt(0);
+    let distinctCount = 0;
+    let didRefund = false;
+    let winnerUserId: string | null = null;
+    let winnerName: string | null = null;
+    let ticket: bigint | null = null as bigint | null;
+    let payout = BigInt(0);
+    // Pre-generate bet ids + collect on-chain settle jobs as DATA ONLY; the
+    // chain calls fire AFTER the tx commits.
+    const settleJobs: {
+      betId: string;
+      walletAddress: string;
+      stake: bigint;
+      payout: bigint;
+      multiplier: number;
+    }[] = [];
 
-    const distinctPlayers = new Set(entries.map((e) => e.userId));
-    const total = entries.reduce((s, e) => s + e.amountLamports, BigInt(0));
+    // Refund every entry / draw + settle every player + flip the round terminal
+    // + reveal the seed in ONE serializable transaction. #215: the entry read is
+    // performed INSIDE this tx so it shares the serializable snapshot with the
+    // #212 claim. A concurrent enter that commits its entry races our claim on
+    // the SAME round row (its guarded `status:'open'` no-op write vs our claim's
+    // `open`→terminal flip): if it commits first it is in our snapshot and gets
+    // settled; if it would commit after our claim, the conflicting round-row
+    // write forces a 40001 the retry re-snapshots, OR its guard sees the round
+    // already terminal and rolls the late entry (debit included) back. Either
+    // way no entry is ever left orphaned (debited, never settled/refunded).
+    try {
+      await withSerializable(this.prisma, async (tx) => {
+        // #212 — re-assert leadership AFTER the tx opens (a demoted leader aborts
+        // before crediting/refunding).
+        assertStillLeader(() => this.isLeader(), 'jackpot');
 
-    // Not enough distinct players → refund everyone, roll the round over.
-    if (distinctPlayers.size < JACKPOT.MIN_PLAYERS) {
-      // Refund every entry + flip the round 'refunded' + reveal the seed in ONE
-      // serializable transaction — no partial refunds, no terminal-without-money.
-      try {
-        await withSerializable(this.prisma, async (tx) => {
-          // #212 — re-assert leadership AFTER the tx opens (a demoted leader aborts
-          // before refunding), then CLAIM the round: the guarded flip is the
-          // concurrency gate. Only the settler that transitions 'open'→'refunded'
-          // wins; a resumed-stale leader OR a concurrent recovery pass matches 0
-          // rows and throws, rolling back the whole tx (no double refund).
-          assertStillLeader(() => this.isLeader(), 'jackpot');
+        const entries = await tx.jackpotEntry.findMany({
+          where: { roundId },
+          orderBy: { createdAt: 'asc' },
+          include: { user: { select: { id: true, username: true, walletAddress: true } } },
+        });
+        const distinctPlayers = new Set(entries.map((e) => e.userId));
+        distinctCount = distinctPlayers.size;
+        total = entries.reduce((s, e) => s + e.amountLamports, BigInt(0));
+
+        // Not enough distinct players → refund everyone, roll the round over.
+        if (distinctPlayers.size < JACKPOT.MIN_PLAYERS) {
+          didRefund = true;
+          // #212 — CLAIM the round: the guarded flip is the concurrency gate.
+          // Only the settler that transitions 'open'→'refunded' wins; a
+          // resumed-stale leader OR a concurrent recovery pass matches 0 rows and
+          // throws, rolling back the whole tx (no double refund).
           const { count } = await tx.jackpotRound.updateMany({
             where: { id: roundId, status: 'open' },
             data: { status: 'refunded', totalLamports: total, drawnAt: new Date() },
@@ -419,130 +472,75 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             });
           }
           await tx.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
-        });
-      } catch (e) {
-        // #212 — benign: peer already settled this round (no dead-letter, no new round).
-        if (isSettleClaimLost(e)) {
-          this.logger.warn(`jackpot refund skipped: ${e instanceof Error ? e.message : String(e)}`);
           return;
         }
-        await this.recordSettlementFailure(roundId, e, {
-          roundId,
-          path: 'refund',
-          total: total.toString(),
-          entries: entries.map((en) => ({
-            userId: en.userId,
-            amount: en.amountLamports.toString(),
-          })),
-        });
-        // Leave the round non-terminal (status stays 'open' in the DB) and do
-        // NOT open a new round — the recovery worker re-settles it.
-        return;
-      }
 
-      this.current.status = 'refunded';
-      this.setLastResult({ roundId, status: 'refunded', winnerName: null, payout: BigInt(0), total, ticket: null });
-      this.gateway.emitDrawResult({
-        roundId,
-        status: 'refunded',
-        winnerId: null,
-        winnerName: null,
-        payoutLamports: '0',
-        totalLamports: total.toString(),
-        winningTicket: null,
-        serverSeed,
-      });
-      this.logger.log(`Jackpot ${roundId} refunded (${distinctPlayers.size} players)`);
-      if (!this.recovering) await this.openNewRound();
-      return;
-    }
+        // Draw the winning ticket and walk cumulative ranges to find the winner.
+        // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
+        // number here would lose precision and bias the winner toward low tickets.
+        const drawnTicket = jackpotWinningTicket(serverSeed, clientSeed, nonce, total);
+        let cumulative = 0n;
+        let winner = entries[0]!;
+        for (const e of entries) {
+          cumulative += e.amountLamports;
+          if (drawnTicket < cumulative) {
+            winner = e;
+            break;
+          }
+        }
+        ticket = drawnTicket;
+        winnerUserId = winner.userId;
+        winnerName = winner.user.username;
+        payout = (total * BigInt(Math.round((1 - JACKPOT.HOUSE_EDGE) * 1000))) / BigInt(1000);
 
-    // Draw the winning ticket and walk cumulative ranges to find the winner.
-    // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
-    // number here would lose precision and bias the winner toward low tickets.
-    const ticket = jackpotWinningTicket(serverSeed, clientSeed, nonce, total);
-    let cumulative = 0n;
-    let winner = entries[0]!;
-    for (const e of entries) {
-      cumulative += e.amountLamports;
-      if (ticket < cumulative) {
-        winner = e;
-        break;
-      }
-    }
+        // Per-user contribution totals for ledger aggregates + Bet rows.
+        const byUser = new Map<
+          string,
+          { amount: bigint; username: string | null; walletAddress: string }
+        >();
+        for (const e of entries) {
+          const cur =
+            byUser.get(e.userId) ??
+            ({
+              amount: BigInt(0),
+              username: e.user.username,
+              walletAddress: e.user.walletAddress,
+            } as { amount: bigint; username: string | null; walletAddress: string });
+          cur.amount += e.amountLamports;
+          byUser.set(e.userId, cur);
+        }
 
-    const payout =
-      (total * BigInt(Math.round((1 - JACKPOT.HOUSE_EDGE) * 1000))) / BigInt(1000);
-
-    // Per-user contribution totals for ledger aggregates + Bet rows.
-    const byUser = new Map<
-      string,
-      { amount: bigint; username: string | null; walletAddress: string }
-    >();
-    for (const e of entries) {
-      const cur =
-        byUser.get(e.userId) ??
-        ({
-          amount: BigInt(0),
-          username: e.user.username,
-          walletAddress: e.user.walletAddress,
-        } as { amount: bigint; username: string | null; walletAddress: string });
-      cur.amount += e.amountLamports;
-      byUser.set(e.userId, cur);
-    }
-
-    // Pre-generate bet ids + collect on-chain settle jobs as DATA ONLY; the
-    // chain calls fire AFTER the tx commits.
-    const settleJobs: {
-      betId: string;
-      walletAddress: string;
-      stake: bigint;
-      payout: bigint;
-      multiplier: number;
-    }[] = [];
-    for (const [, info] of byUser) {
-      settleJobs.push({
-        betId: randomUUID(),
-        walletAddress: info.walletAddress,
-        stake: info.amount,
-        payout: BigInt(0), // filled below per winner/loser
-        multiplier: 0,
-      });
-    }
-
-    // Settle every player (ledger update + Bet row) + the round 'drawn' flip +
-    // the seed reveal in ONE serializable transaction.
-    try {
-      await withSerializable(this.prisma, async (tx) => {
-        // #212 — re-assert leadership AFTER the tx opens, then CLAIM the round:
-        // the guarded 'open'→'drawn' flip (with the draw result) is the
-        // concurrency gate. Only the winning settler proceeds; a resumed-stale
-        // leader OR a concurrent recovery pass matches 0 rows and throws, rolling
-        // back the whole tx so NO credits/Bet rows commit (no double payout).
-        assertStillLeader(() => this.isLeader(), 'jackpot');
+        // #212 — CLAIM the round: the guarded 'open'→'drawn' flip (with the draw
+        // result) is the concurrency gate. Only the winning settler proceeds; a
+        // resumed-stale leader OR a concurrent recovery pass matches 0 rows and
+        // throws, rolling back the whole tx so NO credits/Bet rows commit.
         const { count } = await tx.jackpotRound.updateMany({
           where: { id: roundId, status: 'open' },
           data: {
             status: 'drawn',
             totalLamports: total,
             winnerId: winner.userId,
-            winningTicket: ticket,
+            winningTicket: drawnTicket,
             payoutLamports: payout,
             drawnAt: new Date(),
           },
         });
         assertRoundClaimed(count, 'jackpot', roundId);
 
-        let i = 0;
+        settleJobs.length = 0;
         for (const [userId, info] of byUser) {
-          const job = settleJobs[i]!;
-          i += 1;
           const won = userId === winner.userId;
           const credited = won ? payout : BigInt(0);
           const profit = credited - info.amount;
           const multiplier = info.amount > BigInt(0) ? Number(credited) / Number(info.amount) : 0;
-          job.payout = credited;
-          job.multiplier = multiplier;
+          const betId = randomUUID();
+          settleJobs.push({
+            betId,
+            walletAddress: info.walletAddress,
+            stake: info.amount,
+            payout: credited,
+            multiplier,
+          });
 
           await tx.user.update({
             where: { id: userId },
@@ -572,12 +570,12 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             await applyBalanceDelta(tx, userId, credited, {
               reason: 'jackpot_settle',
               refType: 'Bet',
-              refId: job.betId,
+              refId: betId,
             });
           }
           await tx.bet.create({
             data: {
-              id: job.betId,
+              id: betId,
               userId,
               gameType: 'jackpot',
               amountLamports: info.amount,
@@ -588,7 +586,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               nonce,
               resultJson: {
                 totalLamports: total.toString(),
-                winningTicket: ticket.toString(),
+                winningTicket: drawnTicket.toString(),
                 won,
                 // Self-contained verification context (ADR 0001 / #93).
                 fair: {
@@ -608,22 +606,44 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     } catch (e) {
       // #212 — benign: peer already settled this round (no dead-letter, no new round).
       if (isSettleClaimLost(e)) {
-        this.logger.warn(`jackpot draw skipped: ${e instanceof Error ? e.message : String(e)}`);
+        this.logger.warn(`jackpot settle skipped: ${e instanceof Error ? e.message : String(e)}`);
         return;
       }
       await this.recordSettlementFailure(roundId, e, {
         roundId,
-        path: 'draw',
+        path: didRefund ? 'refund' : 'draw',
         total: total.toString(),
-        winnerId: winner.userId,
-        winningTicket: ticket.toString(),
+        winnerId: winnerUserId,
+        winningTicket: ticket?.toString() ?? null,
         payout: payout.toString(),
-        players: [...byUser.entries()].map(([userId, info]) => ({
-          userId,
-          amount: info.amount.toString(),
-        })),
       });
-      // Leave the round non-terminal and do NOT open a new round.
+      // Leave the round non-terminal (status stays 'open' in the DB) and do NOT
+      // open a new round — the recovery worker re-settles it.
+      return;
+    }
+
+    if (didRefund) {
+      this.current.status = 'refunded';
+      this.setLastResult({
+        roundId,
+        status: 'refunded',
+        winnerName: null,
+        payout: BigInt(0),
+        total,
+        ticket: null,
+      });
+      this.gateway.emitDrawResult({
+        roundId,
+        status: 'refunded',
+        winnerId: null,
+        winnerName: null,
+        payoutLamports: '0',
+        totalLamports: total.toString(),
+        winningTicket: null,
+        serverSeed,
+      });
+      this.logger.log(`Jackpot ${roundId} refunded (${distinctCount} players)`);
+      if (!this.recovering) await this.openNewRound();
       return;
     }
 
@@ -656,20 +676,19 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const winnerName = winner.user.username;
     this.setLastResult({ roundId, status: 'drawn', winnerName, payout, total, ticket });
     this.gateway.emitDrawResult({
       roundId,
       status: 'drawn',
-      winnerId: winner.userId,
+      winnerId: winnerUserId,
       winnerName,
       payoutLamports: payout.toString(),
       totalLamports: total.toString(),
-      winningTicket: String(ticket),
+      winningTicket: ticket === null ? null : String(ticket),
       serverSeed,
     });
     this.logger.log(
-      `Jackpot ${roundId} → winner ${winnerName ?? winner.userId} takes ${payout} of ${total}`,
+      `Jackpot ${roundId} → winner ${winnerName ?? winnerUserId} takes ${payout} of ${total}`,
     );
     if (!this.recovering) await this.openNewRound();
   }

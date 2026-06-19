@@ -39,9 +39,11 @@ export class JackpotService {
       { username: string | null; walletAddress: string; amount: bigint }
     >();
     for (const e of entries) {
-      const cur =
-        byUser.get(e.userId) ??
-        { username: e.user.username, walletAddress: e.user.walletAddress, amount: BigInt(0) };
+      const cur = byUser.get(e.userId) ?? {
+        username: e.user.username,
+        walletAddress: e.user.walletAddress,
+        amount: BigInt(0),
+      };
       cur.amount += e.amountLamports;
       byUser.set(e.userId, cur);
     }
@@ -77,7 +79,8 @@ export class JackpotService {
 
     const outcome = await this.prisma.$transaction(async (tx) => {
       const replay = await claimIdempotency(tx, params.userId, 'jackpot_enter', key);
-      if (replay) return { response: replay as ReturnType<typeof this.serializeEnter>, replayed: true };
+      if (replay)
+        return { response: replay as ReturnType<typeof this.serializeEnter>, replayed: true };
 
       // Atomic conditional debit inside the tx — closes the double-spend race.
       await applyBalanceDelta(tx, params.userId, -amount, {
@@ -95,6 +98,25 @@ export class JackpotService {
           throw new BadRequestException('Already entered this round');
         }
         throw e;
+      }
+
+      // #215 — close the late-entry orphan window. The in-memory getOpenRound()
+      // check above is pre-tx and races the settle: a draw can claim the round
+      // terminal between that check and this commit, leaving the debit + entry
+      // with no Bet/settlement/refund (orphaned stake + reconcile drift). A
+      // guarded no-op write on the round row makes the whole tx CONDITIONAL on
+      // the round still being 'open' at commit. It takes a row lock on the same
+      // round row the settle's claim updateMany writes (open→terminal), so the
+      // two serialize even under Read Committed: if the settle already claimed
+      // the round, count === 0 here and the WHOLE tx (debit + entry) rolls back
+      // — nothing is taken. If this commits first, the settle reads the entry
+      // INSIDE its serializable tx after the claim and includes it.
+      const { count: stillOpen } = await tx.jackpotRound.updateMany({
+        where: { id: open.id, status: 'open' },
+        data: { status: 'open' },
+      });
+      if (stillOpen === 0) {
+        throw new BadRequestException('Round just closed — your bet was not placed');
       }
 
       const response = this.serializeEnter(open.id, amount);
