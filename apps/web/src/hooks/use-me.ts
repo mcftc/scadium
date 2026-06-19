@@ -52,7 +52,16 @@ export interface MeResponse {
   xpNextLevelAt: number;
 }
 
-export type BetGameType = 'crash' | 'coinflip' | 'blackjack' | 'lottery' | 'jackpot';
+export type BetGameType =
+  | 'crash'
+  | 'coinflip'
+  | 'blackjack'
+  | 'lottery'
+  | 'jackpot'
+  | 'dice'
+  | 'limbo'
+  | 'plinko'
+  | 'wheel';
 
 export interface BetSeed {
   clientSeed: string;

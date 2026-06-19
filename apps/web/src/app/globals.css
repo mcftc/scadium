@@ -45,3 +45,14 @@
     @apply bg-surface/60 backdrop-blur-xl border border-border/50;
   }
 }
+
+/* Instant-game animations short-circuit when the user prefers reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-balance-glow,
+  .animate-instant-shimmer,
+  .animate-screen-shake,
+  .animate-bin-pulse,
+  .animate-seg-flash {
+    animation: none !important;
+  }
+}
