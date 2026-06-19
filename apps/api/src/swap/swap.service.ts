@@ -11,7 +11,7 @@ import {
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { USD_PER_SOL } from '@scadium/shared';
-import { SWAP, buybackBudgetLamports } from '@scadium/shared';
+import { SWAP, buybackBudgetLamports, resolveNetworkConfig } from '@scadium/shared';
 import { expectedSwapOut, minOutWithSlippage } from './swap-math';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -70,7 +70,14 @@ export class SwapService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    const rpc = this.config.get<string>('SOLANA_RPC_URL') ?? 'https://api.devnet.solana.com';
+    // RPC derived from SOLANA_NETWORK via the shared resolver (#185) — never a
+    // fixed devnet URL independent of the cluster; fails closed in production for
+    // an unset network or mainnet without an explicit RPC.
+    const { rpcUrl: rpc } = resolveNetworkConfig(
+      this.config.get<string>('SOLANA_NETWORK'),
+      this.config.get<string>('SOLANA_RPC_URL'),
+      process.env.NODE_ENV === 'production',
+    );
     this.connection = new Connection(rpc, 'confirmed');
     const programId = this.config.get<string>('SWAP_PROGRAM_ID');
     const scadMint = this.config.get<string>('SCAD_MINT');

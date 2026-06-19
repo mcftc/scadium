@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
 import { randomBytes } from 'node:crypto';
+import { resolveNetworkConfig } from '@scadium/shared';
 import { RedisService } from '../redis/redis.service';
 
 /**
@@ -39,12 +40,20 @@ export class SiwsService {
     return { nonce, message: this.buildMessage(walletAddress, nonce, issuedAt) };
   }
 
-  /** Environment binding (#37): a signature is only valid for THIS deployment. */
+  /** Environment binding (#37): a signature is only valid for THIS deployment.
+   * The chainId is derived from the SAME network resolver as the RPC (#185), so a
+   * signature is bound to the cluster the app actually talks to — fail-closed in
+   * production for an unset/invalid network rather than silently `solana:devnet`. */
   static binding(env = process.env): { domain: string; uri: string; chainId: string } {
+    const { network } = resolveNetworkConfig(
+      env.SOLANA_NETWORK,
+      env.SOLANA_RPC_URL,
+      env.NODE_ENV === 'production',
+    );
     return {
       domain: env.SIWS_DOMAIN ?? 'localhost:3000',
       uri: env.SIWS_URI ?? 'http://localhost:3000',
-      chainId: `solana:${env.SOLANA_NETWORK ?? 'devnet'}`,
+      chainId: `solana:${network}`,
     };
   }
 
