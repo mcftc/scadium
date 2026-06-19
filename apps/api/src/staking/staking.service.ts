@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ENGINE } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChainService } from '../solana/chain.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 
 /**
@@ -20,7 +21,10 @@ import { applyBalanceDelta } from '../prisma/apply-balance-delta';
  */
 @Injectable()
 export class StakingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chain: ChainService,
+  ) {}
 
   /** Move `amount` $SCAD base units from spendable balance into the staked, locked balance. */
   async stake(userId: string, amount: bigint) {
@@ -227,6 +231,10 @@ export class StakingService {
       lockPeriodMs: ENGINE.LOCK_PERIOD_MS,
       autoStakeEnabled: user.autoStakeEnabled,
       minStakeScad: ENGINE.MIN_STAKE_SCAD_BASE.toString(),
+      // #208: the on-chain USDS claim (withdraw) leg only works when the chain is
+      // live; the UI uses this to flag the claim as devnet/decorative when off,
+      // instead of letting the button throw. Dividend accrual itself is off-chain.
+      chainEnabled: this.chain.enabled,
     };
   }
 }

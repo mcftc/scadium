@@ -14,8 +14,8 @@ import { prisma } from './engine-harness';
  * unstake, and leaves `stakeLedgerDrift()` at ZERO. Toggle OFF = no sweep.
  */
 describe('SCAD Engine — auto-stake on earn (#206)', () => {
-  const staking = new StakingService(prisma as never);
-  // stakeLedgerDrift() only touches prisma; the chain dep is unused here.
+  const staking = new StakingService(prisma as never, { enabled: false } as never);
+  // stakeLedgerDrift() only touches prisma; the chain dep (summary's chainEnabled) is stubbed.
   const reconcile = new ReconciliationService(prisma as never, {} as never);
 
   const userIds: string[] = [];

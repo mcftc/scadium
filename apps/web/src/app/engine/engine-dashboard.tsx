@@ -47,6 +47,7 @@ interface StakingSummary {
   lockPeriodMs: number;
   autoStakeEnabled: boolean;
   minStakeScad: string;
+  chainEnabled: boolean;
 }
 
 interface EarnRate {
@@ -342,12 +343,27 @@ function StakePanel({
           </Button>
           <Button
             variant="outline"
-            disabled={claimUsds.isPending || !summary || BigInt(summary.usdsBalance) <= 0n}
+            // #208: the on-chain claim (withdraw) only works when the chain is live.
+            // Off-chain, disable it instead of letting /rewards/claim throw — the
+            // accrued USDS is still real and shown; only the withdraw leg is pending.
+            disabled={
+              claimUsds.isPending ||
+              !summary ||
+              !summary.chainEnabled ||
+              BigInt(summary.usdsBalance) <= 0n
+            }
             onClick={() => claimUsds.mutate()}
           >
             Claim {summary ? usds(summary.usdsBalance) : '$0.00'} USDS
           </Button>
         </div>
+
+        {summary && !summary.chainEnabled && BigInt(summary.usdsBalance) > 0n && (
+          <p className="text-xs text-foreground-muted">
+            Your {usds(summary.usdsBalance)} USDS dividend is accrued and safe — on-chain withdrawal
+            arrives with custody (devnet / decorative for now).
+          </p>
+        )}
 
         {err && <p className="text-xs text-danger">{err}</p>}
       </CardContent>
