@@ -279,6 +279,223 @@ export const SCAD = {
   ],
 } as const;
 
+// ---------- Jeton (bought, NON-redeemable wagering currency) ----------
+// Jeton shares the lamport unit of `User.playBalanceLamports`. It is a CLOSED
+// virtual currency, so we peg it to USD with a FIXED internal rate (independent
+// of the live SOL price) — this keeps purchase pricing and the holding cap
+// consistent. Tune `LAMPORTS_PER_USD` to set how much Jeton a dollar buys.
+export const JETON = {
+  /** Jeton lamports credited per USD paid. Default: $1 = 0.01 SOL-equivalent. */
+  LAMPORTS_PER_USD: 10_000_000,
+  /**
+   * Max Jeton a user may HOLD at once (= $100). Enforced at credit time via the
+   * `maxBalance` guard in applyBalanceDelta; wagering only ever reduces Jeton.
+   * App-store / card rails may sell Jeton up to this cap; Jeton is never
+   * redeemable for value (only $SCAD is).
+   */
+  MAX_HOLDING_LAMPORTS: 100 * 10_000_000, // $100 → 1 SOL-equivalent
+  /** Default purchasable Jeton packages, priced in USD cents. */
+  PACKAGES: [
+    { id: 'starter', usdCents: 500, label: '$5' },
+    { id: 'plus', usdCents: 2000, label: '$20' },
+    { id: 'pro', usdCents: 5000, label: '$50' },
+    { id: 'max', usdCents: 10000, label: '$100' },
+  ],
+} as const;
+
+// ---------- Proof-of-Wager ($SCAD accrual + campaigns) ----------
+// $SCAD earned per lamport wagered uses SCAD.WAGER_REWARD_PER_LAMPORT (128).
+// Campaigns layer a MULTIPLIER on top of that base accrual; lifetime-wager tiers
+// give loyal players a permanent boost. Both are applied by ProofOfWagerService.
+export const WAGER = {
+  /** Lifetime-wager (lamports) → permanent accrual multiplier. Ascending. */
+  TIER_THRESHOLDS_LAMPORTS: [
+    0, // tier 0 — base
+    10 * LAMPORTS_PER_SOL,
+    100 * LAMPORTS_PER_SOL,
+    1_000 * LAMPORTS_PER_SOL,
+  ],
+  TIER_MULTIPLIER: [1.0, 1.1, 1.25, 1.5] as const,
+  /** Hard ceiling on the combined (tier × campaign) multiplier — anti-abuse. */
+  MAX_MULTIPLIER: 5.0,
+} as const;
+
+// ---------- USDS (USD-pegged dividend stablecoin) ----------
+// USDS is the SCAD Engine's PAYOUT currency — the analog of bc.game's BCD. It is
+// distributed to $SCAD stakers from casino profit (see ENGINE below) and is the
+// only USD-denominated unit in the system. SPL on Solana (6 decimals, USDC
+// convention). All USDS amounts in code are BASE UNITS (6 decimals) unless noted.
+export const USDS = {
+  DECIMALS: 6,
+  /** USDS base units per whole USD (1 USDS = $1). */
+  BASE_PER_USD: 1_000_000,
+} as const;
+
+// ---------- SCAD Engine (staking + GGR dividends) ----------
+// bc.game's "engine" adapted: earned $SCAD is staked, and a share of casino Net
+// Gaming Revenue (NGR = wagered − paid out) is paid HOURLY to stakers, pro-rata
+// to their staked balance, in USDS. Staking auto-engages on reward claim and is
+// time-locked. Buy-and-burn keeps a parallel (smaller) NGR slice.
+export const ENGINE = {
+  /** Share of NGR routed to the staker dividend pool, in bps (= 10%). */
+  DIVIDEND_NGR_BPS: 1000,
+  /** Share of NGR routed to buy-and-burn, in bps (= 10%, was 20%). */
+  BUYBACK_NGR_BPS: 1000,
+  /** Distribution round cadence — one round per hour. */
+  DISTRIBUTION_INTERVAL_MS: 60 * 60 * 1000,
+  /** Lock applied to staked $SCAD; unstake is rejected until it elapses. */
+  LOCK_PERIOD_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+  /** Minimum $SCAD base units that may be staked in one call (anti-dust). */
+  MIN_STAKE_SCAD_BASE: 1_000_000_000, // 1 SCAD
+  /** Skip a distribution round whose USDS pool is below this (anti-dust). */
+  MIN_DIVIDEND_POOL_USDS_BASE: 1_000, // $0.001
+  /** Auto-stake earned $SCAD on reward claim by default (bc.game parity). */
+  AUTO_STAKE_DEFAULT: true,
+} as const;
+
+/**
+ * Convert a lamport-denominated NGR figure to USDS base units at the fixed
+ * internal Jeton rate (games are wagered in Jeton, so NGR is in Jeton lamports).
+ * USD = lamports / JETON.LAMPORTS_PER_USD; USDS base = USD × USDS.BASE_PER_USD.
+ * Integer math throughout (BigInt-safe) — no float drift on money.
+ */
+export function lamportsToUsdsBase(lamports: bigint): bigint {
+  if (lamports <= 0n) return 0n;
+  return (lamports * BigInt(USDS.BASE_PER_USD)) / BigInt(JETON.LAMPORTS_PER_USD);
+}
+
+/** NGR (lamports) → USDS dividend pool (base units), applying DIVIDEND_NGR_BPS. */
+export function dividendPoolUsdsBase(ngrLamports: bigint): bigint {
+  if (ngrLamports <= 0n) return 0n;
+  const slice = (ngrLamports * BigInt(ENGINE.DIVIDEND_NGR_BPS)) / 10_000n;
+  return lamportsToUsdsBase(slice);
+}
+
+/** NGR (lamports) → buy-and-burn budget (lamports), applying BUYBACK_NGR_BPS. */
+export function buybackBudgetLamports(ngrLamports: bigint): bigint {
+  if (ngrLamports <= 0n) return 0n;
+  return (ngrLamports * BigInt(ENGINE.BUYBACK_NGR_BPS)) / 10_000n;
+}
+
+// ---------- Instant provably-fair games (dual-currency expansion) ----------
+// Stake-style single-player, house-banked games. Min/max bets share the casino
+// defaults. Payout helpers below bake the house edge into the multiplier so EV
+// is correct regardless of player choices.
+
+export const DICE = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE: 0.01,
+  MIN_TARGET: 2, // roll-under target, in [MIN_TARGET, MAX_TARGET]
+  MAX_TARGET: 98,
+} as const;
+
+/** Roll-under dice payout: (1-edge) / winChance, winChance = target/100. */
+export function diceMultiplier(target: number, edge = DICE.HOUSE_EDGE): number {
+  return Math.floor(((100 * (1 - edge)) / target) * 100) / 100;
+}
+
+export const LIMBO = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE: 0.01,
+  MIN_TARGET: 1.01,
+  MAX_TARGET: 1_000_000,
+} as const;
+
+export const WHEEL = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  // Weighted buckets (medium risk). segmentCount = sum of weights; the spin
+  // index maps to a bucket by cumulative weight. EV ≈ 0.965 (tunable).
+  BUCKETS: [
+    { multiplier: 0, weight: 32 },
+    { multiplier: 1.2, weight: 30 },
+    { multiplier: 1.5, weight: 14 },
+    { multiplier: 2, weight: 6 },
+    { multiplier: 3, weight: 3 },
+    { multiplier: 5, weight: 1 },
+  ],
+} as const;
+
+/** Total weight = wheel segment count. */
+export const WHEEL_SEGMENTS = WHEEL.BUCKETS.reduce((a, b) => a + b.weight, 0);
+
+/** Map a spin index in [0, WHEEL_SEGMENTS) to its bucket multiplier. */
+export function wheelMultiplier(index: number): number {
+  let acc = 0;
+  for (const b of WHEEL.BUCKETS) {
+    acc += b.weight;
+    if (index < acc) return b.multiplier;
+  }
+  return 0;
+}
+
+export const PLINKO = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  ROWS: [8, 12, 16] as const,
+  // bin → multiplier (length rows+1), medium risk (Stake-style, edge-tuned).
+  PAYOUTS: {
+    8: [13, 3, 1.3, 0.7, 0.4, 0.7, 1.3, 3, 13],
+    12: [33, 11, 4, 2, 1.1, 0.6, 0.3, 0.6, 1.1, 2, 4, 11, 33],
+    16: [110, 41, 10, 5, 3, 1.5, 1, 0.5, 1, 0.5, 1, 1.5, 3, 5, 10, 41, 110],
+  } as Record<number, number[]>,
+} as const;
+
+export const MINES = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE: 0.01,
+  CELLS: 25,
+  MIN_MINES: 1,
+  MAX_MINES: 24,
+} as const;
+
+/**
+ * Mines multiplier after `picks` successful (safe) reveals: the inverse of the
+ * probability of surviving that many picks, with the edge applied once.
+ */
+export function minesMultiplier(
+  mines: number,
+  picks: number,
+  cells = MINES.CELLS,
+  edge = MINES.HOUSE_EDGE,
+): number {
+  let p = 1;
+  for (let i = 0; i < picks; i += 1) {
+    p *= (cells - mines - i) / (cells - i); // P(i-th pick safe)
+  }
+  if (p <= 0) return 0;
+  return Math.floor(((1 - edge) / p) * 100) / 100;
+}
+
+export const HILO = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE: 0.02,
+} as const;
+
+export const TOWER = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE: 0.01,
+  ROWS: 8,
+  COLUMNS: 3,
+  SAFE_PER_ROW: 2,
+} as const;
+
+/** Tower multiplier after climbing `rows` rows successfully. */
+export function towerMultiplier(
+  rows: number,
+  columns = TOWER.COLUMNS,
+  safePerRow = TOWER.SAFE_PER_ROW,
+  edge = TOWER.HOUSE_EDGE,
+): number {
+  const perRow = columns / safePerRow; // inverse survival prob per row
+  return Math.floor((1 - edge) * perRow ** rows * 100) / 100;
+}
+
 // ---------- Affiliate ----------
 export const AFFILIATE = {
   TIER_THRESHOLDS_LAMPORTS: [

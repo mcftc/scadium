@@ -14,6 +14,262 @@ export type ScadiumVault = {
   },
   "instructions": [
     {
+      "name": "claimDividend",
+      "docs": [
+        "Cosigner-signed: pay a staker's USDS dividend for a distribution round.",
+        "Mirrors `claim_reward` but moves the USDS mint instead of $SCAD. The",
+        "ClaimRecord PDA seed includes `RewardKind::Dividend` + `period`, so a",
+        "given (user, round) is paid at most once on chain — the same double-pay",
+        "guard the off-chain DistributionClaim @@unique enforces."
+      ],
+      "discriminator": [
+        15,
+        29,
+        207,
+        120,
+        153,
+        178,
+        164,
+        91
+      ],
+      "accounts": [
+        {
+          "name": "house",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  117,
+                  115,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "claimRecord",
+          "writable": true
+        },
+        {
+          "name": "user"
+        },
+        {
+          "name": "usdsTreasuryAta",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "house"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "usdsMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "userAta",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "usdsMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "usdsMint"
+        },
+        {
+          "name": "cosigner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "claimReward",
       "docs": [
         "Cosigner-signed $SCAD reward claim from the rewards treasury.",
@@ -391,6 +647,12 @@ export type ScadiumVault = {
         },
         {
           "name": "scadMint"
+        },
+        {
+          "name": "usdsMint",
+          "docs": [
+            "SCAD Engine: the USD-pegged dividend mint stakers are paid in."
+          ]
         },
         {
           "name": "authority",
@@ -1031,6 +1293,10 @@ export type ScadiumVault = {
             "type": "pubkey"
           },
           {
+            "name": "usdsMint",
+            "type": "pubkey"
+          },
+          {
             "name": "paused",
             "type": "bool"
           },
@@ -1089,6 +1355,9 @@ export type ScadiumVault = {
           },
           {
             "name": "airdrop"
+          },
+          {
+            "name": "dividend"
           }
         ]
       }

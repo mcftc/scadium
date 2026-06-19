@@ -3,7 +3,7 @@ import IORedis from 'ioredis';
 import { JackpotEngine } from '../src/games/jackpot/jackpot.engine';
 import { LotteryEngine } from '../src/games/lottery/lottery.engine';
 import { BlackjackEngine } from '../src/games/blackjack/blackjack.engine';
-import { prisma, gw, offChain } from './engine-harness';
+import { prisma, gw, offChain, pow } from './engine-harness';
 
 /**
  * Issue #86 — two instances of each engine sharing one Redis must elect a single
@@ -36,8 +36,8 @@ describe('game engines single-writer leader election (issue #86)', () => {
   it('jackpot: only the leader opens a round', async () => {
     await r1.del('lock:engine:jackpot');
     const since = new Date();
-    const a = new JackpotEngine(prisma as never, gw(), offChain, redis(r1));
-    const b = new JackpotEngine(prisma as never, gw(), offChain, redis(r2));
+    const a = new JackpotEngine(prisma as never, gw(), offChain, pow(), redis(r1));
+    const b = new JackpotEngine(prisma as never, gw(), offChain, pow(), redis(r2));
     destroyers.push(() => a.onModuleDestroy(), () => b.onModuleDestroy());
     await Promise.all([a.onModuleInit(), b.onModuleInit()]);
     await waitForLeader(a, b);
@@ -53,8 +53,8 @@ describe('game engines single-writer leader election (issue #86)', () => {
   it('lottery: only the leader opens a draw', async () => {
     await r1.del('lock:engine:lottery');
     const since = new Date();
-    const a = new LotteryEngine(prisma as never, gw(), offChain, redis(r1));
-    const b = new LotteryEngine(prisma as never, gw(), offChain, redis(r2));
+    const a = new LotteryEngine(prisma as never, gw(), offChain, pow(), redis(r1));
+    const b = new LotteryEngine(prisma as never, gw(), offChain, pow(), redis(r2));
     destroyers.push(() => a.onModuleDestroy(), () => b.onModuleDestroy());
     await Promise.all([a.onModuleInit(), b.onModuleInit()]);
     await waitForLeader(a, b);
@@ -69,8 +69,8 @@ describe('game engines single-writer leader election (issue #86)', () => {
   it('blackjack: only the leader creates the Main Table', async () => {
     await r1.del('lock:engine:blackjack');
     const since = new Date();
-    const a = new BlackjackEngine(prisma as never, gw(), offChain, redis(r1));
-    const b = new BlackjackEngine(prisma as never, gw(), offChain, redis(r2));
+    const a = new BlackjackEngine(prisma as never, gw(), offChain, pow(), redis(r1));
+    const b = new BlackjackEngine(prisma as never, gw(), offChain, pow(), redis(r2));
     destroyers.push(() => a.onModuleDestroy(), () => b.onModuleDestroy());
     await Promise.all([a.onModuleInit(), b.onModuleInit()]);
     await waitForLeader(a, b);

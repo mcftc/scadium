@@ -23,6 +23,10 @@ import { CrashModule } from './games/crash/crash.module';
 import { LotteryModule } from './games/lottery/lottery.module';
 import { JackpotModule } from './games/jackpot/jackpot.module';
 import { BlackjackModule } from './games/blackjack/blackjack.module';
+import { DiceModule } from './games/dice/dice.module';
+import { LimboModule } from './games/limbo/limbo.module';
+import { WheelModule } from './games/wheel/wheel.module';
+import { PlinkoModule } from './games/plinko/plinko.module';
 import { ChatModule } from './chat/chat.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AirdropModule } from './airdrop/airdrop.module';
@@ -30,6 +34,8 @@ import { AffiliatesModule } from './affiliates/affiliates.module';
 import { AdminModule } from './admin/admin.module';
 import { SolanaModule } from './solana/solana.module';
 import { RewardsModule } from './rewards/rewards.module';
+import { StakingModule } from './staking/staking.module';
+import { EngineModule } from './engine/engine.module';
 import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
@@ -74,10 +80,16 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     LotteryModule,
     JackpotModule,
     BlackjackModule,
+    DiceModule,
+    LimboModule,
+    WheelModule,
+    PlinkoModule,
     ChatModule,
     LeaderboardModule,
     AirdropModule,
     RewardsModule,
+    StakingModule,
+    EngineModule,
     SwapModule,
     AffiliatesModule,
     AdminModule,

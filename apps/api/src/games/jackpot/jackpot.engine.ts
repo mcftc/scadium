@@ -5,9 +5,10 @@ import {
   generateServerSeed,
   jackpotWinningTicket,
 } from '@scadium/fair';
-import { JACKPOT, SCAD } from '@scadium/shared';
+import { JACKPOT } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
@@ -86,6 +87,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly gateway: JackpotGateway,
     private readonly chain: ChainService,
+    private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
   ) {
     if (this.redis) {
@@ -508,14 +510,16 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           await tx.user.update({
             where: { id: userId },
             data: {
-              scadiumBalance: {
-                increment: info.amount * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-              },
               totalWagered: { increment: info.amount },
               totalWon: { increment: profit > BigInt(0) ? profit : BigInt(0) },
               totalLost: { increment: profit < BigInt(0) ? -profit : BigInt(0) },
               gamesPlayed: { increment: 1 },
             },
+          });
+          await this.proofOfWager.accrue(tx, {
+            userId,
+            gameType: 'jackpot',
+            stakeLamports: info.amount,
           });
           // Credit the play balance through the single mutation point (ledger
           // row in this tx). Only the winner is credited; losers move nothing.

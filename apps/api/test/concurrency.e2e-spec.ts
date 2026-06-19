@@ -188,7 +188,8 @@ describe('concurrency / money-safety (integration, real Postgres)', () => {
 function makeCrashEngine(): CrashEngine {
   const gateway = { emitTick() {}, emitBust() {}, emitCreated() {}, emitRunning() {} } as never;
   const chain = { enabled: false } as never;
-  return new CrashEngine(getPrisma() as never, gateway, chain);
+  const proofOfWager = { accrue: async () => 0n } as never;
+  return new CrashEngine(getPrisma() as never, gateway, chain, proofOfWager);
 }
 
 function liveBet(userId: string, walletAddress: string, stake: bigint, payout: bigint) {

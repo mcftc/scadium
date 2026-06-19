@@ -25,6 +25,8 @@ pub mod scadium_vault {
         house.authority = ctx.accounts.authority.key();
         house.cosigner = cosigner;
         house.scad_mint = ctx.accounts.scad_mint.key();
+        // SCAD Engine: USDS is the USD-pegged dividend mint paid to stakers.
+        house.usds_mint = ctx.accounts.usds_mint.key();
         house.paused = false;
         house.bump = ctx.bumps.house;
         house.vault_bump = ctx.bumps.house_vault;
@@ -234,6 +236,54 @@ pub mod scadium_vault {
         Ok(())
     }
 
+    /// Cosigner-signed: pay a staker's USDS dividend for a distribution round.
+    /// Mirrors `claim_reward` but moves the USDS mint instead of $SCAD. The
+    /// ClaimRecord PDA seed includes `RewardKind::Dividend` + `period`, so a
+    /// given (user, round) is paid at most once on chain — the same double-pay
+    /// guard the off-chain DistributionClaim @@unique enforces.
+    pub fn claim_dividend(
+        ctx: Context<ClaimDividend>,
+        period: u64,
+        amount: u64,
+    ) -> Result<()> {
+        let house = &ctx.accounts.house;
+        require!(!house.paused, VaultError::Paused);
+        require_keys_eq!(
+            ctx.accounts.cosigner.key(),
+            house.cosigner,
+            VaultError::NotCosigner
+        );
+        require!(amount > 0, VaultError::ZeroAmount);
+
+        let record = &mut ctx.accounts.claim_record;
+        record.user = ctx.accounts.user.key();
+        record.kind = RewardKind::Dividend;
+        record.period = period;
+        record.amount = amount;
+
+        let seeds: &[&[u8]] = &[b"house", &[house.bump]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                SplTransfer {
+                    from: ctx.accounts.usds_treasury_ata.to_account_info(),
+                    to: ctx.accounts.user_ata.to_account_info(),
+                    authority: house.to_account_info(),
+                },
+                &[seeds],
+            ),
+            amount,
+        )?;
+
+        emit!(RewardClaimed {
+            user: record.user,
+            kind: RewardKind::Dividend,
+            period,
+            amount,
+        });
+        Ok(())
+    }
+
     pub fn set_paused(ctx: Context<AdminOnly>, paused: bool) -> Result<()> {
         ctx.accounts.house.paused = paused;
         Ok(())
@@ -247,12 +297,13 @@ pub struct House {
     pub authority: Pubkey,
     pub cosigner: Pubkey,
     pub scad_mint: Pubkey,
+    pub usds_mint: Pubkey,
     pub paused: bool,
     pub bump: u8,
     pub vault_bump: u8,
 }
 impl House {
-    pub const SIZE: usize = 8 + 32 * 3 + 1 + 1 + 1;
+    pub const SIZE: usize = 8 + 32 * 4 + 1 + 1 + 1;
 }
 
 #[account]
@@ -290,6 +341,8 @@ pub enum RewardKind {
     Cashback,
     DailyCase,
     Airdrop,
+    // SCAD Engine staker dividend, paid in USDS (see claim_dividend).
+    Dividend,
 }
 
 // ---------------------------------------------------------------- contexts
@@ -315,6 +368,8 @@ pub struct InitHouse<'info> {
     )]
     pub house_vault: UncheckedAccount<'info>,
     pub scad_mint: Account<'info, Mint>,
+    /// SCAD Engine: the USD-pegged dividend mint stakers are paid in.
+    pub usds_mint: Account<'info, Mint>,
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -408,6 +463,43 @@ pub struct ClaimReward<'info> {
     pub user_ata: Account<'info, TokenAccount>,
     #[account(address = house.scad_mint)]
     pub scad_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub cosigner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(period: u64)]
+pub struct ClaimDividend<'info> {
+    #[account(seeds = [b"house"], bump = house.bump)]
+    pub house: Account<'info, House>,
+    #[account(
+        init,
+        payer = cosigner,
+        space = ClaimRecord::SIZE,
+        seeds = [b"claim", user.key().as_ref(), &[RewardKind::Dividend as u8], &period.to_le_bytes()],
+        bump
+    )]
+    pub claim_record: Account<'info, ClaimRecord>,
+    /// CHECK: recipient — only used as ATA owner + event field.
+    pub user: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        associated_token::mint = usds_mint,
+        associated_token::authority = house
+    )]
+    pub usds_treasury_ata: Account<'info, TokenAccount>,
+    #[account(
+        init_if_needed,
+        payer = cosigner,
+        associated_token::mint = usds_mint,
+        associated_token::authority = user
+    )]
+    pub user_ata: Account<'info, TokenAccount>,
+    #[account(address = house.usds_mint)]
+    pub usds_mint: Account<'info, Mint>,
     #[account(mut)]
     pub cosigner: Signer<'info>,
     pub token_program: Program<'info, Token>,

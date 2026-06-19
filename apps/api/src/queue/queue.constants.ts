@@ -18,6 +18,8 @@ export const QUEUE_NAMES = {
   rewardClaims: 'reward-claims',
   /** #29: unpaid lottery prize sweep. */
   lotteryPayouts: 'lottery-payouts',
+  /** SCAD Engine: hourly GGR→USDS staker dividend distribution round. */
+  distribution: 'distribution',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -43,3 +45,4 @@ export const burnJobId = (bucket: number): string => `burn:${bucket}`;
 export const leaderboardJobId = (period: string, bucketTs: number): string =>
   `leaderboard:${period}:${bucketTs}`;
 export const reconcileJobId = (bucketTs: number): string => `reconcile:${bucketTs}`;
+export const distributionRoundJobId = (period: string): string => `distribution:${period}`;

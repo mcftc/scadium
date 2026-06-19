@@ -11,13 +11,13 @@ import {
 } from '@scadium/fair';
 import {
   LOTTERY,
-  SCAD,
   lotteryPoolSplit,
   ticketPriceScadBase,
   scadBaseToLamports,
   nextLotteryDrawAt,
 } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
@@ -104,6 +104,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly gateway: LotteryGateway,
     private readonly chain: ChainService,
+    private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
   ) {
     if (this.redis) {
@@ -569,16 +570,18 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           await tx.user.update({
             where: { id: t.userId },
             data: {
-              // Loyalty $SCAD reward kept (per product decision): wagering the
-              // lottery still accrues the standard wager reward.
-              scadiumBalance: {
-                increment: t.costLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-              },
               totalWagered: { increment: t.costLamports },
               totalWon: { increment: r.won ? r.payoutLamports : BigInt(0) },
               totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
               gamesPlayed: { increment: 1 },
             },
+          });
+          // Loyalty $SCAD reward kept (per product decision): wagering the
+          // lottery still accrues the standard Proof-of-Wager reward.
+          await this.proofOfWager.accrue(tx, {
+            userId: t.userId,
+            gameType: 'lottery',
+            stakeLamports: t.costLamports,
           });
           await tx.lotteryTicket.update({
             where: { id: t.id },

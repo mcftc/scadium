@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { generateServerSeed, commitServerSeed, coinflipResult } from '@scadium/fair';
-import { COINFLIP, SCAD } from '@scadium/shared';
+import { COINFLIP } from '@scadium/shared';
+import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { randomUUID } from 'node:crypto';
 import { ChainService } from '../../solana/chain.service';
 import { SeedManagerService } from '../../fairness/seed-manager.service';
@@ -40,6 +41,7 @@ export class CoinflipService {
     private readonly seeds: SeedManagerService,
     private readonly rg: RgService,
     private readonly affiliates: AffiliatesService,
+    private readonly proofOfWager: ProofOfWagerService,
   ) {}
 
   // ------------ Queries ------------
@@ -213,13 +215,15 @@ export class CoinflipService {
       await tx.user.update({
         where: { id: winnerId },
         data: {
-          scadiumBalance: {
-            increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-          },
           totalWon: { increment: profit },
           totalWagered: { increment: game.amountLamports },
           gamesPlayed: { increment: 1 },
         },
+      });
+      await this.proofOfWager.accrue(tx, {
+        userId: winnerId,
+        gameType: 'coinflip',
+        stakeLamports: game.amountLamports,
       });
       // biggestWin = max(current, profit) as a SINGLE atomic SQL update.
       // GREATEST runs under the row's write lock, so concurrent winning flips
@@ -232,13 +236,15 @@ export class CoinflipService {
       await tx.user.update({
         where: { id: loserId },
         data: {
-          scadiumBalance: {
-            increment: game.amountLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT),
-          },
           totalLost: { increment: game.amountLamports },
           totalWagered: { increment: game.amountLamports },
           gamesPlayed: { increment: 1 },
         },
+      });
+      await this.proofOfWager.accrue(tx, {
+        userId: loserId,
+        gameType: 'coinflip',
+        stakeLamports: game.amountLamports,
       });
 
       // Record two Bet rows so bet history shows both sides. Ids are

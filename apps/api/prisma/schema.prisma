@@ -25,6 +25,50 @@ enum GameType {
   blackjack
   lottery
   jackpot
+  // Phase: dual-currency expansion — provably-fair game catalog.
+  dice
+  limbo
+  wheel
+  plinko
+  mines
+  hilo
+  tower
+}
+
+// Dual-currency model (sweepstakes): `jeton` is the bought, NON-redeemable
+// wagering balance (User.playBalanceLamports); `scad` is the earned, REDEEMABLE
+// reward balance (User.scadiumBalance). The ledger tags every movement so the
+// two are never conflated and an audit can prove bought money never cashed out.
+enum Currency {
+  jeton
+  scad
+  // SCAD Engine: `scad_staked` is the locked, dividend-earning staked balance
+  // (User.scadiumStaked); `usds` is the USD-pegged dividend payout balance
+  // (User.usdsBalance). Like scad, both are tagged so audits never conflate them
+  // with bought Jeton.
+  scad_staked
+  usds
+}
+
+// Where money entered to buy Jeton. App-store rails (google_play/apple_iap) and
+// card rails (stripe) may ONLY sell non-redeemable Jeton — redemption of `scad`
+// is web-only (enforced by the channel guard), keeping us inside store policy.
+enum PaymentProvider {
+  stripe
+  moonpay
+  transak
+  solana_pay
+  google_play
+  apple_iap
+}
+
+enum PurchaseStatus {
+  pending
+  paid
+  fulfilled
+  refunded
+  failed
+  chargeback
 }
 
 enum LotteryDrawStatus {
@@ -78,108 +122,129 @@ enum KycStatus {
 // ==================== USERS & AUTH ====================
 
 model User {
-  id             String   @id @default(uuid()) @db.Uuid
-  walletAddress  String   @unique
-  username       String?  @unique
-  avatarUrl      String?
+  id                        String        @id @default(uuid()) @db.Uuid
+  walletAddress             String        @unique
+  // How this account authenticates. 'siws' = external Solana wallet (default,
+  // unchanged). 'privy' = email/social login with a Privy-managed embedded
+  // Solana wallet, whose address is stored in walletAddress. Both share the same
+  // Session/JWT layer and the same downstream compliance gates.
+  authProvider              String        @default("siws")
+  privyUserId               String?       @unique
+  custodial                 Boolean       @default(false)
+  username                  String?       @unique
+  avatarUrl                 String?
   // Optional contact + linked socials (Settings). Social fields hold the
   // linked handle/email per provider; null = not connected.
-  email          String?
-  googleAccount  String?
-  telegramAccount String?
-  discordAccount String?
+  email                     String?
+  googleAccount             String?
+  telegramAccount           String?
+  discordAccount            String?
   // Notification preferences.
-  notifyEmailWins Boolean @default(false)
-  notifyMarketing Boolean @default(false)
-  role           Role     @default(user)
-  refCode        String   @unique
-  referredById   String?  @db.Uuid
-  referredBy     User?    @relation("Referrals", fields: [referredById], references: [id])
-  referrals      User[]   @relation("Referrals")
-  banned         Boolean  @default(false)
-  banReason      String?
-  totalWagered   BigInt   @default(0)
-  totalWon       BigInt   @default(0)
-  totalLost      BigInt   @default(0)
-  biggestWin     BigInt   @default(0)
-  gamesPlayed    Int      @default(0)
-  scadiumBalance BigInt   @default(0)
+  notifyEmailWins           Boolean       @default(false)
+  notifyMarketing           Boolean       @default(false)
+  role                      Role          @default(user)
+  refCode                   String        @unique
+  referredById              String?       @db.Uuid
+  referredBy                User?         @relation("Referrals", fields: [referredById], references: [id])
+  referrals                 User[]        @relation("Referrals")
+  banned                    Boolean       @default(false)
+  banReason                 String?
+  totalWagered              BigInt        @default(0)
+  totalWon                  BigInt        @default(0)
+  totalLost                 BigInt        @default(0)
+  biggestWin                BigInt        @default(0)
+  gamesPlayed               Int           @default(0)
+  scadiumBalance            BigInt        @default(0)
   // SCAD locked by a PENDING on-chain reward claim (#28) - moved out of
   // scadiumBalance at claim time, finalized on confirm or RESTORED to
   // scadiumBalance on permanent failure. Never spendable.
-  scadiumReserved BigInt  @default(0)
+  scadiumReserved           BigInt        @default(0)
+  // SCAD Engine (bc.game parity): $SCAD that has been staked. Locked until
+  // `stakeLockedUntil`; earns a pro-rata USDS dividend each distribution round.
+  // Moved out of scadiumBalance on stake, back on unstake (after the lock).
+  scadiumStaked             BigInt        @default(0)
+  stakeLockedUntil          DateTime?
+  // USDS (USD-pegged dividend stablecoin, 6 decimals) earned from staking.
+  // `usdsReserved` mirrors scadiumReserved: USDS locked by a PENDING on-chain
+  // dividend claim, finalized on confirm or restored on permanent failure.
+  usdsBalance               BigInt        @default(0)
+  usdsReserved              BigInt        @default(0)
   // Play-money balance used by the off-chain game loop until on-chain
   // programs land. New users get 10 SOL equivalent (10_000_000_000 lamports).
   // Once the vault is live this becomes a CACHE of the on-chain UserVault
   // balance (reconciled periodically) — fast validation stays in Postgres.
-  playBalanceLamports BigInt @default(10000000000)
+  playBalanceLamports       BigInt        @default(10000000000)
   // On-chain custody (Phase A): UserVault PDA address once the user has
   // deposited at least once; null = never deposited (still play-money).
-  vaultAddress   String?  @unique
-  lastDailyCaseAt DateTime?
+  vaultAddress              String?       @unique
+  lastDailyCaseAt           DateTime?
   // "Reset Stats" timestamp — when set, the lifetime stats grid counts only
   // bets settled after this instant (computed from the Bet table). null =
   // show the denormalized User aggregate columns (fast path).
-  statsResetAt   DateTime?
+  statsResetAt              DateTime?
   // 18+ age-gate acknowledgement (#44). Set once on first confirm; null = not
   // yet acknowledged. Idempotent (keeps the earliest timestamp).
-  ageConfirmedAt DateTime?
+  ageConfirmedAt            DateTime?
   // Legal-acceptance record (#48): the LEGAL_VERSION the user last accepted and
   // when. The acceptance gate re-triggers when this differs from the current
   // LEGAL_VERSION. null = never accepted.
-  acceptedLegalVersion String?
-  acceptedLegalAt DateTime?
+  acceptedLegalVersion      String?
+  acceptedLegalAt           DateTime?
   // Responsible-gambling controls (#46). Self-exclusion blocks login + play;
   // cooling-off blocks play only. Both, once set, cannot be SHORTENED before
   // they expire (server-enforced). Daily limits (lamports) gate wagering;
   // null = no limit. Today's usage is computed from the Bet ledger.
-  selfExcludedUntil DateTime?
-  coolOffUntil DateTime?
+  selfExcludedUntil         DateTime?
+  coolOffUntil              DateTime?
   dailyDepositLimitLamports BigInt?
-  dailyLossLimitLamports BigInt?
-  dailyWagerLimitLamports BigInt?
+  dailyLossLimitLamports    BigInt?
+  dailyWagerLimitLamports   BigInt?
   // Salted hash of the signup IP (#47) — same-IP referrer/referee pairs are
   // flagged as sybil and accrue no commission. Raw IPs are never stored.
-  signupIpHash String?
+  signupIpHash              String?
   // KYC / identity verification (#45). Hard-gates deposits/withdrawals when KYC
   // is enabled. We store only the provider reference + status — never raw
   // identity documents.
-  kycStatus        KycStatus @default(none)
-  kycProviderRef   String?
-  sanctionsCleared Boolean   @default(false)
-  kycReviewedAt    DateTime?
+  kycStatus                 KycStatus     @default(none)
+  kycProviderRef            String?
+  sanctionsCleared          Boolean       @default(false)
+  kycReviewedAt             DateTime?
   // totalLost watermark at the last cashback claim — cashback accrues on
   // the delta since this baseline (Phase C).
-  cashbackBaselineLost BigInt @default(0)
+  cashbackBaselineLost      BigInt        @default(0)
   // totalWagered watermark for free lottery tickets — every 1 SOL wagered
   // above this earns one; consuming a ticket advances it by 1 SOL.
-  freeTicketBaselineWagered BigInt @default(0)
-  rewardClaims   RewardClaim[]
+  freeTicketBaselineWagered BigInt        @default(0)
+  rewardClaims              RewardClaim[]
   // Per-user provably-fair seed state (Phase I #18): player-controlled client
   // seed + monotonic nonce + the active/pre-committed server-seed pair.
-  clientSeedState ClientSeed?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  clientSeedState           ClientSeed?
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
 
-  sessions       Session[]
-  vaultTransfers VaultTransfer[]
-  bets           Bet[]
-  chatMessages   ChatMessage[]
-  crashBets      CrashBet[]
-  scheduledCrashBets ScheduledCrashBet[]
-  coinflipsMade  CoinflipGame[] @relation("creator")
-  coinflipsJoined CoinflipGame[] @relation("joiner")
-  airdropClaims  AirdropClaim[]
-  referralsAsReferrer Referral[] @relation("referrer")
-  referralsAsReferee  Referral[] @relation("referee")
-  lotteryTickets LotteryTicket[]
-  jackpotEntries JackpotEntry[]
-  jackpotWins    JackpotRound[] @relation("jackpotWinner")
-  linkedWallets  LinkedWallet[]
-  balanceLedger  BalanceLedger[]
+  sessions             Session[]
+  vaultTransfers       VaultTransfer[]
+  bets                 Bet[]
+  chatMessages         ChatMessage[]
+  crashBets            CrashBet[]
+  scheduledCrashBets   ScheduledCrashBet[]
+  coinflipsMade        CoinflipGame[]        @relation("creator")
+  coinflipsJoined      CoinflipGame[]        @relation("joiner")
+  airdropClaims        AirdropClaim[]
+  referralsAsReferrer  Referral[]            @relation("referrer")
+  referralsAsReferee   Referral[]            @relation("referee")
+  lotteryTickets       LotteryTicket[]
+  jackpotEntries       JackpotEntry[]
+  jackpotWins          JackpotRound[]        @relation("jackpotWinner")
+  linkedWallets        LinkedWallet[]
+  balanceLedger        BalanceLedger[]
+  stakeEvents          StakeEvent[]
+  distributionClaims   DistributionClaim[]
+  purchases            Purchase[]
+  wagerLeaderboards    WagerLeaderboard[]
   reconciliationDrifts ReconciliationDrift[]
-  auditLogsAsActor  AuditLog[] @relation("auditActor")
-  auditLogsAsTarget AuditLog[] @relation("auditTarget")
+  auditLogsAsActor     AuditLog[]            @relation("auditActor")
+  auditLogsAsTarget    AuditLog[]            @relation("auditTarget")
 
   @@index([walletAddress])
   @@index([refCode])
@@ -199,22 +264,22 @@ model LinkedWallet {
 }
 
 model Session {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   // jti of the CURRENT access token bound to this session. The guard rejects any
   // access token whose jti != this (so rotation/logout invalidate old tokens).
-  jwtId        String   @unique
+  jwtId            String   @unique
   // SHA-256 of the current refresh token (never the raw token). @unique so a
   // presented token resolves to exactly one session.
-  refreshToken String   @unique
+  refreshToken     String   @unique
   // SHA-256 of the PREVIOUS (rotated-out) refresh token (#35). Replaying it is a
   // reuse signal → the whole session is revoked.
   prevRefreshToken String?
-  userAgent    String?
-  ipAddress    String?
-  expiresAt    DateTime
-  createdAt    DateTime @default(now())
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
 
   @@index([userId])
 }
@@ -243,6 +308,9 @@ model BalanceLedger {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid
   user         User     @relation(fields: [userId], references: [id])
+  // Which balance moved. Defaults to `jeton` so every pre-existing row (all of
+  // which were playBalance movements) keeps its meaning with no backfill.
+  currency     Currency @default(jeton)
   delta        BigInt
   reason       String
   refType      String
@@ -250,6 +318,30 @@ model BalanceLedger {
   balanceAfter BigInt
   createdAt    DateTime @default(now())
 
+  @@index([userId, createdAt])
+}
+
+// Jeton purchase / fulfillment record — the idempotency + audit backbone of the
+// payments module. One row per payment attempt; `@@unique([provider, providerRef])`
+// makes webhook fulfillment idempotent (a replayed event inserts nothing and
+// credits nothing — same discipline as VaultTransfer.txSignature). `channel`
+// records whether the money came in via web or the mobile shell, so an audit can
+// prove app-store/IAP money only ever bought non-redeemable Jeton.
+model Purchase {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      PaymentProvider
+  providerRef   String // Stripe session/PI id, IAP transaction id, or tx signature
+  jetonLamports BigInt          @default(0) // Jeton credited; 0 until fulfilled
+  priceCurrency String // 'usd' | 'usdc' | 'sol'
+  priceMinor    BigInt // cents / token base units paid
+  status        PurchaseStatus  @default(pending)
+  channel       String          @default("web") // 'web' | 'mobile'
+  createdAt     DateTime        @default(now())
+  fulfilledAt   DateTime?
+
+  @@unique([provider, providerRef])
   @@index([userId, createdAt])
 }
 
@@ -310,37 +402,37 @@ model ClientSeed {
 }
 
 model Seed {
-  id              String    @id @default(uuid()) @db.Uuid
-  serverSeedHash  String    @unique
-  serverSeed      String?   @unique
-  clientSeed      String
-  nonce           Int       @default(0)
-  revealedAt      DateTime?
-  createdAt       DateTime  @default(now())
+  id             String    @id @default(uuid()) @db.Uuid
+  serverSeedHash String    @unique
+  serverSeed     String?   @unique
+  clientSeed     String
+  nonce          Int       @default(0)
+  revealedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
-  crashRounds   CrashRound[]
-  coinflips     CoinflipGame[]
+  crashRounds     CrashRound[]
+  coinflips       CoinflipGame[]
   blackjackRounds BlackjackRound[]
-  lotteryDraws  LotteryDraw[]
-  jackpotRounds JackpotRound[]
+  lotteryDraws    LotteryDraw[]
+  jackpotRounds   JackpotRound[]
 }
 
 // ==================== BETS (unified history) ====================
 
 model Bet {
-  id              String    @id @default(uuid()) @db.Uuid
-  userId          String    @db.Uuid
-  user            User      @relation(fields: [userId], references: [id])
-  gameType        GameType
-  amountLamports  BigInt
-  payoutLamports  BigInt    @default(0)
-  multiplier      Float?
-  status          BetStatus @default(pending)
-  txSignature     String?
-  seedId          String?   @db.Uuid
-  nonce           Int?
-  resultJson      Json?
-  createdAt       DateTime  @default(now())
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  user           User      @relation(fields: [userId], references: [id])
+  gameType       GameType
+  amountLamports BigInt
+  payoutLamports BigInt    @default(0)
+  multiplier     Float?
+  status         BetStatus @default(pending)
+  txSignature    String?
+  seedId         String?   @db.Uuid
+  nonce          Int?
+  resultJson     Json?
+  createdAt      DateTime  @default(now())
 
   @@index([userId, createdAt])
   @@index([gameType, createdAt])
@@ -349,22 +441,22 @@ model Bet {
 // ==================== CRASH ====================
 
 model CrashRound {
-  id              String            @id @default(uuid()) @db.Uuid
-  seedId          String            @db.Uuid
-  seed            Seed              @relation(fields: [seedId], references: [id])
-  nonce           Int
-  status          CrashRoundStatus  @default(waiting)
-  bustMultiplier  Float?
-  startedAt       DateTime?
-  endedAt         DateTime?
-  createdAt       DateTime          @default(now())
+  id             String           @id @default(uuid()) @db.Uuid
+  seedId         String           @db.Uuid
+  seed           Seed             @relation(fields: [seedId], references: [id])
+  nonce          Int
+  status         CrashRoundStatus @default(waiting)
+  bustMultiplier Float?
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime         @default(now())
   // On-chain entropy (ADR 0002 / #101), only populated when CRASH_ONCHAIN_ENTROPY
   // is on: the round pins a future `targetSlot` at open and derives the bust from
   // that slot's hash once it passes (unknown/unchooseable at commit). null on the
   // play-money default path.
-  entropyStatus   String?
-  targetSlot      BigInt?
-  slotHash        String?
+  entropyStatus  String?
+  targetSlot     BigInt?
+  slotHash       String?
 
   bets CrashBet[]
 
@@ -372,21 +464,21 @@ model CrashRound {
 }
 
 model CrashBet {
-  id                    String   @id @default(uuid()) @db.Uuid
-  roundId               String   @db.Uuid
+  id                    String     @id @default(uuid()) @db.Uuid
+  roundId               String     @db.Uuid
   round                 CrashRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
-  userId                String   @db.Uuid
-  user                  User     @relation(fields: [userId], references: [id])
+  userId                String     @db.Uuid
+  user                  User       @relation(fields: [userId], references: [id])
   amountLamports        BigInt
   // Stake still riding (RAM-only until persisted at bet/cashout time). Shrinks
   // to 0 on a full cashout and on settle/recovery; recovery refunds whatever
   // remains so a crashed mid-round bet is never stranded.
-  remainingLamports     BigInt   @default(0)
+  remainingLamports     BigInt     @default(0)
   autoCashoutMultiplier Float?
   cashoutMultiplier     Float?
-  payoutLamports        BigInt   @default(0)
-  won                   Boolean  @default(false)
-  createdAt             DateTime @default(now())
+  payoutLamports        BigInt     @default(0)
+  won                   Boolean    @default(false)
+  createdAt             DateTime   @default(now())
 
   @@unique([roundId, userId])
   @@index([roundId])
@@ -401,7 +493,7 @@ model CrashBet {
 // recovery. One scheduled bet per user (mirrors the engine's in-memory Map).
 model ScheduledCrashBet {
   id                    String   @id @default(uuid()) @db.Uuid
-  userId                String   @db.Uuid @unique
+  userId                String   @unique @db.Uuid
   user                  User     @relation(fields: [userId], references: [id])
   amountLamports        BigInt
   autoCashoutMultiplier Float?
@@ -414,11 +506,11 @@ model CoinflipGame {
   id             String         @id @default(uuid()) @db.Uuid
   creatorId      String         @db.Uuid
   creator        User           @relation("creator", fields: [creatorId], references: [id])
-  creatorSide    String         // 'heads' | 'tails'
+  creatorSide    String // 'heads' | 'tails'
   joinerId       String?        @db.Uuid
   joiner         User?          @relation("joiner", fields: [joinerId], references: [id])
   amountLamports BigInt
-  result         String?        // 'heads' | 'tails'
+  result         String? // 'heads' | 'tails'
   winnerId       String?        @db.Uuid
   status         CoinflipStatus @default(open)
   seedId         String?        @db.Uuid
@@ -435,46 +527,46 @@ model CoinflipGame {
 // ==================== LOTTERY ====================
 
 model LotteryDraw {
-  id           String            @id @default(uuid()) @db.Uuid
+  id                      String            @id @default(uuid()) @db.Uuid
   // Monotonic on-chain draw index (PDA seed). Null for legacy off-chain draws.
-  drawIndex    BigInt?           @unique
-  commitTxSignature String?
-  revealTxSignature String?
-  seedId       String            @db.Uuid
-  seed         Seed              @relation(fields: [seedId], references: [id])
-  nonce        Int               @default(0)
-  status       LotteryDrawStatus @default(open)
+  drawIndex               BigInt?           @unique
+  commitTxSignature       String?
+  revealTxSignature       String?
+  seedId                  String            @db.Uuid
+  seed                    Seed              @relation(fields: [seedId], references: [id])
+  nonce                   Int               @default(0)
+  status                  LotteryDrawStatus @default(open)
   // Result (empty until drawn): the 6 winning digits (each 0..9), index 0 =
   // leftmost. Tickets win the highest bracket whose leading digits all match.
-  winningDigits Int[]
+  winningDigits           Int[]
   // Hex of the 32-byte slot hash mixed into the draw entropy (null until
   // drawn; synthetic sha256(seed:clientSeed) when the chain is disabled).
-  slotHash     String?
+  slotHash                String?
   // Slot PINNED at commit time (#19b): reveal must derive from THIS slot's hash,
   // not the newest, so the cosigner can't grind the reveal. Null for off-chain /
   // synthetic draws. Surfaced in the snapshot so the verifier can show it.
-  targetSlot   BigInt?
+  targetSlot              BigInt?
   // Entropy provenance (#19a): 'onchain' = derived from a real on-chain
   // SlotHashes reveal (provably fair); 'synthetic-not-fair' = settled via the
   // operator-deterministic synthetic fallback (NOT provably fair — surfaced as
   // such). null until drawn.
-  fairness     String?
+  fairness                String?
   // PancakeSwap-style $SCAD economy (all base units, 9 decimals):
-  ticketPriceScadBase     BigInt   @default(0) // price per ticket this round
-  injectionScadBase       BigInt   @default(0) // house injection added to the pool
-  rolloverScadBase        BigInt   @default(0) // unwon slices carried in from prior round
-  totalPoolScadBase       BigInt   @default(0) // sales(discounted) + injection + rollover
-  burnScadBase            BigInt   @default(0) // 20% treasury slice burned at settle
-  bracketWinnerCounts     Int[]                // [6] winners per bracket
-  bracketAmountsScadBase  BigInt[]             // [6] slice per bracket
-  bracketRolloverScadBase BigInt[]             // [6] unwon slice rolled forward
+  ticketPriceScadBase     BigInt            @default(0) // price per ticket this round
+  injectionScadBase       BigInt            @default(0) // house injection added to the pool
+  rolloverScadBase        BigInt            @default(0) // unwon slices carried in from prior round
+  totalPoolScadBase       BigInt            @default(0) // sales(discounted) + injection + rollover
+  burnScadBase            BigInt            @default(0) // 20% treasury slice burned at settle
+  bracketWinnerCounts     Int[] // [6] winners per bracket
+  bracketAmountsScadBase  BigInt[] // [6] slice per bracket
+  bracketRolloverScadBase BigInt[] // [6] unwon slice rolled forward
   // SOL-equivalent of the round's ticket sales — kept ONLY for the unified Bet
   // ledger / aggregates (real value moves in $SCAD).
-  potLamports  BigInt            @default(0)
-  ticketCount  Int               @default(0)
-  drawAt       DateTime // when this draw is scheduled to resolve
-  drawnAt      DateTime?
-  createdAt    DateTime          @default(now())
+  potLamports             BigInt            @default(0)
+  ticketCount             Int               @default(0)
+  drawAt                  DateTime // when this draw is scheduled to resolve
+  drawnAt                 DateTime?
+  createdAt               DateTime          @default(now())
 
   tickets LotteryTicket[]
 
@@ -482,29 +574,29 @@ model LotteryDraw {
 }
 
 model LotteryTicket {
-  id             String      @id @default(uuid()) @db.Uuid
-  drawId         String      @db.Uuid
-  draw           LotteryDraw @relation(fields: [drawId], references: [id])
-  userId         String      @db.Uuid
-  user           User        @relation(fields: [userId], references: [id])
-  digits         Int[] // the 6 picked digits (each 0..9), index 0 = leftmost
+  id               String      @id @default(uuid()) @db.Uuid
+  drawId           String      @db.Uuid
+  draw             LotteryDraw @relation(fields: [drawId], references: [id])
+  userId           String      @db.Uuid
+  user             User        @relation(fields: [userId], references: [id])
+  digits           Int[] // the 6 picked digits (each 0..9), index 0 = leftmost
   // SOL-equiv mirrors for the unified Bet ledger; real value is the *ScadBase.
-  costLamports   BigInt
-  payoutLamports BigInt      @default(0)
-  costScadBase   BigInt      @default(0) // $SCAD actually paid (after bulk-discount share)
-  payoutScadBase BigInt      @default(0) // $SCAD prize from its bracket's equal split
-  matchLen       Int         @default(0) // leading digits matched (0..6)
-  bracket        Int? // highest bracket won (0..5), null if no win
-  won            Boolean     @default(false)
+  costLamports     BigInt
+  payoutLamports   BigInt      @default(0)
+  costScadBase     BigInt      @default(0) // $SCAD actually paid (after bulk-discount share)
+  payoutScadBase   BigInt      @default(0) // $SCAD prize from its bracket's equal split
+  matchLen         Int         @default(0) // leading digits matched (0..6)
+  bracket          Int? // highest bracket won (0..5), null if no win
+  won              Boolean     @default(false)
   // On-chain era: purchase tx (user-signed $SCAD transfer), prize payout tx,
   // and the free-ticket flag (loyalty entry on the house).
   // A bulk buy_tickets tx records N tickets under one signature — txIndex is
   // the ticket's position in the batch; (txSignature, txIndex) blocks replays.
-  txSignature    String?
-  txIndex        Int         @default(0)
+  txSignature      String?
+  txIndex          Int         @default(0)
   prizeTxSignature String?
-  free           Boolean     @default(false)
-  createdAt      DateTime    @default(now())
+  free             Boolean     @default(false)
+  createdAt        DateTime    @default(now())
 
   @@unique([txSignature, txIndex])
   @@index([drawId])
@@ -550,27 +642,27 @@ model JackpotEntry {
 // ==================== BLACKJACK ====================
 
 model BlackjackTable {
-  id                String                @id @default(uuid()) @db.Uuid
-  name              String
-  status            BlackjackTableStatus  @default(waiting)
-  minBetLamports    BigInt
-  maxBetLamports    BigInt
-  maxSeats          Int                   @default(5)
-  createdAt         DateTime              @default(now())
+  id             String               @id @default(uuid()) @db.Uuid
+  name           String
+  status         BlackjackTableStatus @default(waiting)
+  minBetLamports BigInt
+  maxBetLamports BigInt
+  maxSeats       Int                  @default(5)
+  createdAt      DateTime             @default(now())
 
   rounds BlackjackRound[]
 }
 
 model BlackjackRound {
-  id         String         @id @default(uuid()) @db.Uuid
-  tableId    String         @db.Uuid
-  table      BlackjackTable @relation(fields: [tableId], references: [id])
-  seedId     String         @db.Uuid
-  seed       Seed           @relation(fields: [seedId], references: [id])
-  nonce      Int
-  stateJson  Json
-  endedAt    DateTime?
-  createdAt  DateTime       @default(now())
+  id        String         @id @default(uuid()) @db.Uuid
+  tableId   String         @db.Uuid
+  table     BlackjackTable @relation(fields: [tableId], references: [id])
+  seedId    String         @db.Uuid
+  seed      Seed           @relation(fields: [seedId], references: [id])
+  nonce     Int
+  stateJson Json
+  endedAt   DateTime?
+  createdAt DateTime       @default(now())
 
   @@index([tableId, createdAt])
 }
@@ -578,12 +670,12 @@ model BlackjackRound {
 // ==================== CHAT ====================
 
 model ChatMessage {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @db.Uuid
-  user       User     @relation(fields: [userId], references: [id])
-  body       String
-  deletedAt  DateTime?
-  createdAt  DateTime @default(now())
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id])
+  body      String
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([createdAt])
 }
@@ -591,9 +683,9 @@ model ChatMessage {
 // ==================== AIRDROPS / REWARDS ====================
 
 model AirdropEvent {
-  id              String   @id @default(uuid()) @db.Uuid
-  distributedAt   DateTime @default(now())
-  totalLamports   BigInt
+  id               String   @id @default(uuid()) @db.Uuid
+  distributedAt    DateTime @default(now())
+  totalLamports    BigInt
   participantCount Int
 
   claims AirdropClaim[]
@@ -613,14 +705,14 @@ model AirdropPool {
 }
 
 model AirdropClaim {
-  id             String       @id @default(uuid()) @db.Uuid
-  eventId        String       @db.Uuid
-  event          AirdropEvent @relation(fields: [eventId], references: [id])
-  userId         String       @db.Uuid
-  user           User         @relation(fields: [userId], references: [id])
-  lamports       BigInt
-  txSignature    String?
-  claimedAt      DateTime     @default(now())
+  id          String       @id @default(uuid()) @db.Uuid
+  eventId     String       @db.Uuid
+  event       AirdropEvent @relation(fields: [eventId], references: [id])
+  userId      String       @db.Uuid
+  user        User         @relation(fields: [userId], references: [id])
+  lamports    BigInt
+  txSignature String?
+  claimedAt   DateTime     @default(now())
 
   @@unique([eventId, userId])
 }
@@ -658,41 +750,147 @@ enum RewardKind {
   cashback
   dailyCase
   airdrop
+  // Wager-tournament prize payout and free-$SCAD promo grants — both flow
+  // through the proven on-chain reward-claim lifecycle.
+  tournament
+  promo
+  // SCAD Engine staker dividend payout, denominated in USDS (not SCAD). Flows
+  // through the same reservation-based on-chain claim lifecycle.
+  dividend
 }
 
-// Buy-and-burn ledger (Phase D): 20% of NGR swapped SOL→SCAD then burned.
+// Buy-and-burn ledger (Phase D): 10% of NGR swapped SOL→SCAD then burned
+// (was 20%; the other 10% now funds the staker dividend — see DistributionRound).
 model TokenBurn {
-  id           String   @id @default(uuid()) @db.Uuid
-  scadBurned   BigInt // SCAD base units
-  solSpent     BigInt // lamports swapped in
+  id            String   @id @default(uuid()) @db.Uuid
+  scadBurned    BigInt // SCAD base units
+  solSpent      BigInt // lamports swapped in
   swapSignature String?
   burnSignature String?
-  createdAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ==================== SCAD ENGINE (staking + GGR dividends) ====================
+
+// Append-only audit of stake/unstake/auto-stake movements of $SCAD into/out of
+// the staked balance. Mirrors the BalanceLedger discipline (the matching
+// scad/scad_staked ledger rows are written in the same tx by the staking
+// service); this table is the engine-specific, queryable history.
+model StakeEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id])
+  // 'stake' | 'unstake' | 'auto_stake' (reward-claim auto-stake).
+  kind        String
+  // SCAD base units moved (always positive; `kind` carries direction).
+  amountScad  BigInt
+  // Staked balance immediately after this movement (re-derivable).
+  stakedAfter BigInt
+  // Lock applied (stake/auto_stake) — for the audit trail.
+  lockedUntil DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// One hourly distribution round. NGR over the window since the previous round is
+// converted to a USDS pool (ENGINE.DIVIDEND_NGR_BPS) and split pro-rata across
+// the staked balances snapshotted at distribution time. `distributed` + `period`
+// (unique) make a round idempotent under duplicate worker enqueues.
+model DistributionRound {
+  id                  String    @id @default(uuid()) @db.Uuid
+  // UTC hour key 'YYYYMMDDHH' — one round per hour, unique.
+  period              String    @unique
+  // NGR (lamports) measured over this round's window.
+  ngrLamports         BigInt    @default(0)
+  // USDS base units paid out this round (DIVIDEND_NGR_BPS of NGR, in USDS).
+  poolUsds            BigInt    @default(0)
+  // Sum of staked $SCAD across eligible stakers at distribution time.
+  totalStakedSnapshot BigInt    @default(0)
+  participantCount    Int       @default(0)
+  distributed         Boolean   @default(false)
+  distributedAt       DateTime?
+  createdAt           DateTime  @default(now())
+
+  claims DistributionClaim[]
+
+  @@index([createdAt])
+}
+
+// One staker's share of one distribution round. `@@unique([roundId, userId])`
+// guarantees a user is paid at most once per round.
+model DistributionClaim {
+  id           String            @id @default(uuid()) @db.Uuid
+  roundId      String            @db.Uuid
+  round        DistributionRound @relation(fields: [roundId], references: [id])
+  userId       String            @db.Uuid
+  user         User              @relation(fields: [userId], references: [id])
+  // Staked $SCAD that earned this share (the weight numerator).
+  stakedAmount BigInt
+  // USDS base units credited to the user for this round.
+  shareUsds    BigInt
+  createdAt    DateTime          @default(now())
+
+  @@unique([roundId, userId])
+  @@index([userId, createdAt])
+}
+
+// ==================== PROOF-OF-WAGER ====================
+
+// Time-boxed campaign that layers a MULTIPLIER on top of the base $SCAD wager
+// accrual (SCAD.WAGER_REWARD_PER_LAMPORT). `gameType` null = applies to all
+// games. ProofOfWagerService caches the active set and combines campaign ×
+// lifetime-tier multipliers, capped at WAGER.MAX_MULTIPLIER.
+model WagerCampaign {
+  id         String    @id @default(uuid()) @db.Uuid
+  name       String
+  multiplier Float
+  gameType   GameType?
+  startsAt   DateTime
+  endsAt     DateTime
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  @@index([active, startsAt, endsAt])
+}
+
+// Rolling per-period wager totals (lamports) used for daily/weekly leaderboards
+// and as the score source for tournaments. `period` is 'daily:YYYYMMDD' or
+// 'weekly:YYYYWW' (UTC). Upserted in the settlement transaction by accrue().
+model WagerLeaderboard {
+  id              String @id @default(uuid()) @db.Uuid
+  period          String
+  userId          String @db.Uuid
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wageredLamports BigInt @default(0)
+
+  @@unique([period, userId])
+  @@index([period, wageredLamports])
 }
 
 // ==================== AFFILIATE ====================
 
 model Referral {
-  id                  String   @id @default(uuid()) @db.Uuid
-  referrerId          String   @db.Uuid
-  referrer            User     @relation("referrer", fields: [referrerId], references: [id])
-  refereeId           String   @unique @db.Uuid
-  referee             User     @relation("referee", fields: [refereeId], references: [id])
-  volumeLamports      BigInt   @default(0)
-  commissionLamports  BigInt   @default(0)
+  id                 String   @id @default(uuid()) @db.Uuid
+  referrerId         String   @db.Uuid
+  referrer           User     @relation("referrer", fields: [referrerId], references: [id])
+  refereeId          String   @unique @db.Uuid
+  referee            User     @relation("referee", fields: [refereeId], references: [id])
+  volumeLamports     BigInt   @default(0)
+  commissionLamports BigInt   @default(0)
   // Sybil flag (#47): referrer & referee share a signup IP-hash → volume still
   // tracked but NO commission accrues.
-  flagged             Boolean  @default(false)
-  createdAt           DateTime @default(now())
+  flagged            Boolean  @default(false)
+  createdAt          DateTime @default(now())
 }
 
 // ==================== LEADERBOARD ====================
 
 model LeaderboardSnapshot {
   id             String   @id @default(uuid()) @db.Uuid
-  period         String   // 'hourly' | 'daily' | 'weekly' | 'all_time'
+  period         String // 'hourly' | 'daily' | 'weekly' | 'all_time'
   userId         String   @db.Uuid
   volumeLamports BigInt
   rank           Int

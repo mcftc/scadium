@@ -88,6 +88,17 @@ export function Header() {
             >
               Leaderboard
             </Link>
+            <Link
+              href="/engine"
+              className={cn(
+                'hidden xl:block px-2.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors',
+                pathname === '/engine'
+                  ? 'text-foreground bg-surface-elevated'
+                  : 'text-foreground-muted hover:text-foreground',
+              )}
+            >
+              SCAD Engine
+            </Link>
           </div>
 
           {/* Right: $SCAD chip + Rewards + balance + avatar */}

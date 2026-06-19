@@ -26,6 +26,9 @@ export const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL }
 export const gw = () => new Proxy({}, { get: () => () => undefined }) as never;
 /** Disabled chain stub: every `chain.enabled`/`lotteryEnabled` branch is skipped. */
 export const offChain = { enabled: false, lotteryEnabled: false } as never;
+/** No-op proof-of-wager stub: settlement specs don't assert $SCAD accrual, so the
+ *  engines' `proofOfWager.accrue()` call is a harmless no-op here. */
+export const pow = () => ({ accrue: async () => 0n }) as never;
 
 /** A user with a known play balance + globally-unique wallet/refCode (no resetDb). */
 export async function makeUser(balance: bigint) {
@@ -47,8 +50,10 @@ export async function makeSeed() {
   });
 }
 
-// Engine factories — all pass `offChain` as the 3rd ctor arg (the chain).
-export const makeCrashEngine = () => new CrashEngine(prisma as never, gw(), offChain);
-export const makeJackpotEngine = () => new JackpotEngine(prisma as never, gw(), offChain);
-export const makeLotteryEngine = () => new LotteryEngine(prisma as never, gw(), offChain);
-export const makeBlackjackEngine = () => new BlackjackEngine(prisma as never, gw(), offChain);
+// Engine factories — `offChain` is the 3rd ctor arg (chain), `pow()` the 4th
+// (proof-of-wager); the optional Redis arg is omitted (single-writer specs pass
+// their own).
+export const makeCrashEngine = () => new CrashEngine(prisma as never, gw(), offChain, pow());
+export const makeJackpotEngine = () => new JackpotEngine(prisma as never, gw(), offChain, pow());
+export const makeLotteryEngine = () => new LotteryEngine(prisma as never, gw(), offChain, pow());
+export const makeBlackjackEngine = () => new BlackjackEngine(prisma as never, gw(), offChain, pow());

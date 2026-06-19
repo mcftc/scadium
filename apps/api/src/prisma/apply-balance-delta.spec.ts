@@ -37,6 +37,7 @@ describe('applyBalanceDelta (unit)', () => {
     expect(create).toHaveBeenCalledWith({
       data: {
         userId: 'u1',
+        currency: 'jeton',
         delta: 500n,
         reason: 'crash_settle',
         refType: 'Bet',
@@ -58,6 +59,7 @@ describe('applyBalanceDelta (unit)', () => {
     expect(create).toHaveBeenCalledWith({
       data: {
         userId: 'u1',
+        currency: 'jeton',
         delta: -1_000n,
         reason: 'crash_bet',
         refType: 'CrashRound',

@@ -233,6 +233,86 @@ export class ReconciliationService {
     return drift;
   }
 
+  /**
+   * SCAD Engine staked-balance drift: `User.scadiumStaked` must equal the latest
+   * `BalanceLedger` `balanceAfter` for currency `scad_staked` (every stake/
+   * unstake moves through `applyBalanceDelta`, which ledgers it). Unlike the play
+   * balance, staked SCAD has NO un-ledgered opening balance, so a user with no
+   * scad_staked ledger row must have `scadiumStaked = 0` — a non-zero value there
+   * is a direct write and is flagged. Flag-only; appends `ReconciliationDrift`.
+   */
+  async stakeLedgerDrift(): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const ledgerAgg = await tx.$queryRaw<Array<{ userId: string; latest: bigint | string }>>(
+        Prisma.sql`
+          SELECT "userId", "balanceAfter" AS latest
+          FROM (
+            SELECT "userId", "balanceAfter",
+                   ROW_NUMBER() OVER (
+                     PARTITION BY "userId" ORDER BY "createdAt" DESC, "id" DESC
+                   ) AS rn
+            FROM "BalanceLedger"
+            WHERE "currency" = 'scad_staked'
+          ) t
+          WHERE rn = 1
+        `,
+      );
+      const latestByUser = new Map(ledgerAgg.map((r) => [r.userId, BigInt(r.latest.toString())]));
+
+      // Only users who either hold a staked balance or have a scad_staked ledger
+      // row are relevant — bounded for this phase.
+      const users = await tx.user.findMany({
+        where: { OR: [{ scadiumStaked: { gt: 0n } }, { id: { in: [...latestByUser.keys()] } }] },
+        select: { id: true, scadiumStaked: true },
+      });
+
+      const drifts: Prisma.ReconciliationDriftCreateManyInput[] = [];
+      for (const u of users) {
+        const derived = latestByUser.get(u.id) ?? 0n;
+        if (u.scadiumStaked !== derived) {
+          drifts.push({
+            userId: u.id,
+            field: 'scadiumStaked',
+            storedValue: u.scadiumStaked.toString(),
+            derivedValue: derived.toString(),
+          });
+        }
+      }
+      if (drifts.length > 0) await tx.reconciliationDrift.createMany({ data: drifts });
+      if (drifts.length > 0) {
+        this.logger.error(`stake drift: flagged ${drifts.length} scadiumStaked mismatch(es)`);
+      }
+      return drifts.length;
+    });
+  }
+
+  /**
+   * USDS dividend solvency: the total outstanding USDS liability
+   * (Σ `usdsBalance` + Σ `usdsReserved`) must be backed by the on-chain USDS
+   * treasury. Flag-only early warning (the on-chain transfer is the hard stop);
+   * returns null when the chain is disabled or the treasury is unreadable.
+   */
+  async usdsSolvency(): Promise<{ liability: bigint; treasury: bigint; ok: boolean } | null> {
+    const agg = await this.prisma.user.aggregate({
+      _sum: { usdsBalance: true, usdsReserved: true },
+    });
+    const liability = (agg._sum.usdsBalance ?? 0n) + (agg._sum.usdsReserved ?? 0n);
+    const treasury = await this.chain.usdsTreasuryBalance();
+    if (treasury === null) {
+      this.logger.warn(
+        `usds solvency: treasury unreadable (chain off?) — outstanding liability ${liability} USDS base`,
+      );
+      return null;
+    }
+    const ok = treasury >= liability;
+    if (!ok) {
+      this.logger.error(
+        `USDS UNDER-RESERVED: liability=${liability} > treasury=${treasury} — top up the dividend treasury`,
+      );
+    }
+    return { liability, treasury, ok };
+  }
+
   async chainDrift(limit = 50): Promise<number> {
     if (!this.chain.enabled) return 0;
     const bets = await this.prisma.bet.findMany({
