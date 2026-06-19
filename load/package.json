@@ -1,0 +1,12 @@
+{
+  "name": "@scadium/load",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Load & soak harness for Scadium (#55 chaos/load). Not part of the pnpm workspace build.",
+  "scripts": {
+    "load": "node crash-mixed.js"
+  },
+  "dependencies": {
+    "autocannon": "^7.15.0"
+  }
+}
