@@ -952,6 +952,14 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
               gamesPlayed: { increment: 1 },
             },
           });
+          // biggestWin = max(current, netProfit) atomically under the row lock
+          // (no stale read-then-write). Matches reconcileAll's GREATEST(payout -
+          // amount, 0) (Bet amount = d.stake); a loss/push passes net ≤ 0 → no
+          // change.
+          await tx.$executeRaw`
+            UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${netProfit})
+            WHERE "id" = ${s.userId}::uuid
+          `;
           await this.proofOfWager.accrue(tx, {
             userId: s.userId,
             gameType: 'blackjack',

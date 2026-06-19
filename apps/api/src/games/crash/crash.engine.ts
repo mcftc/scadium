@@ -177,7 +177,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private async mirror(): Promise<void> {
     if (!this.redis) return;
     this.mirrored = this.buildSnapshot();
-    await this.redis.client.set(CRASH_MIRROR_KEY, JSON.stringify(this.mirrored)).catch(() => undefined);
+    await this.redis.client
+      .set(CRASH_MIRROR_KEY, JSON.stringify(this.mirrored))
+      .catch(() => undefined);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -545,7 +547,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     let slotHashHex = targetSlot !== null ? await this.chain.readSlotHash(targetSlot) : null;
     if (!slotHashHex) {
       if (this.chain.enabled) {
-        this.logger.warn(`crash ${this.current.id}: slot ${targetSlot} hash unavailable — synthetic fallback`);
+        this.logger.warn(
+          `crash ${this.current.id}: slot ${targetSlot} hash unavailable — synthetic fallback`,
+        );
       }
       slotHashHex = syntheticSlotHash(serverSeed, clientSeed).toString('hex');
     }
@@ -721,6 +725,16 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               gamesPlayed: { increment: 1 },
             },
           });
+          // biggestWin = max(current, netProfit) as a SINGLE atomic SQL update.
+          // GREATEST runs under the row's write lock, so concurrent winning
+          // settles for the same user can't clobber each other via a stale
+          // read-then-write. Matches reconcileAll's GREATEST(payout-amount,0)
+          // derivation (Bet amount = stake); a losing bet passes net ≤ 0 → no
+          // change.
+          await tx.$executeRaw`
+            UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${netProfit})
+            WHERE "id" = ${bet.userId}::uuid
+          `;
           // Wager mining: central Proof-of-Wager accrual (base 128 SCAD/SOL ×
           // lifetime-tier × campaign multipliers) + leaderboard, in this tx.
           await this.proofOfWager.accrue(tx, {
@@ -774,7 +788,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               multiplier:
                 stake > BigInt(0) && payout > BigInt(0)
                   ? Number(payout) / Number(stake)
-                  : bet.cashedOutAt ?? bustM,
+                  : (bet.cashedOutAt ?? bustM),
               status: won ? 'won' : 'lost',
               seedId: this.current.seedId,
               nonce: this.current.nonce,
@@ -867,7 +881,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         orderBy: { createdAt: 'asc' },
       });
     } catch (e) {
-      this.logger.error(`crash recovery scan failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.logger.error(
+        `crash recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return;
     }
     if (stranded.length === 0) return;
@@ -916,6 +932,14 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
                 gamesPlayed: { increment: 1 },
               },
             });
+            // biggestWin = max(current, net) atomically under the row lock (no
+            // stale read-then-write). net = credit - amount, matching
+            // reconcileAll's GREATEST(payout-amount,0) where the recovered Bet's
+            // payout = credit. A never-cashed full-refund nets 0 → no change.
+            await tx.$executeRaw`
+              UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${credit - bet.amountLamports})
+              WHERE "id" = ${bet.userId}::uuid
+            `;
             await tx.bet.create({
               data: {
                 userId: bet.userId,
