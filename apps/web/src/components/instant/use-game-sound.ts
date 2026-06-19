@@ -35,12 +35,25 @@ export function useGameSound() {
     });
   }, []);
 
+  // Browsers cap AudioContexts per origin (~6); close ours on unmount so
+  // hopping between the four game pages doesn't leak one context each.
+  useEffect(
+    () => () => {
+      ctxRef.current?.close();
+      ctxRef.current = null;
+    },
+    [],
+  );
+
   const ctx = useCallback((): AudioContext | null => {
     if (!enabled) return null;
     if (typeof window === 'undefined') return null;
+    // A closed context can't be reused — drop it so we lazily make a fresh one.
+    if (ctxRef.current?.state === 'closed') ctxRef.current = null;
     if (!ctxRef.current) {
       const Ctor =
-        window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        window.AudioContext ??
+        (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctor) return null;
       ctxRef.current = new Ctor();
     }

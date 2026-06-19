@@ -5,7 +5,11 @@ import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { DICE, diceMultiplier } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
-import { BetAmountInput, solToLamportsClamped } from '@/components/instant/bet-amount-input';
+import {
+  BetAmountInput,
+  isValidBetSol,
+  solToLamportsClamped,
+} from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
@@ -28,6 +32,7 @@ export function DiceGame() {
 
   const winChance = target / 100;
   const multiplier = diceMultiplier(target);
+  const validBet = isValidBetSol(sol, DICE.MIN_BET_LAMPORTS);
 
   async function onPlace() {
     if (!isAuthenticated) {
@@ -100,7 +105,7 @@ export function DiceGame() {
           <button
             type="button"
             onClick={() => void onPlace()}
-            disabled={play.isPending}
+            disabled={play.isPending || !validBet}
             className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
           >
             {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
@@ -173,7 +178,10 @@ function DiceTrack({
       <div className="relative h-24">
         {/* Track */}
         <div className="absolute top-1/2 left-0 right-0 h-3 -translate-y-1/2 rounded-full overflow-hidden bg-surface-elevated">
-          <div className="absolute inset-y-0 left-0 bg-success/70" style={{ width: `${target}%` }} />
+          <div
+            className="absolute inset-y-0 left-0 bg-success/70"
+            style={{ width: `${target}%` }}
+          />
           <div
             className="absolute inset-y-0 right-0 bg-danger/40"
             style={{ width: `${100 - target}%` }}

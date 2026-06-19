@@ -5,7 +5,11 @@ import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { WHEEL, WHEEL_SEGMENTS } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
-import { BetAmountInput, solToLamportsClamped } from '@/components/instant/bet-amount-input';
+import {
+  BetAmountInput,
+  isValidBetSol,
+  solToLamportsClamped,
+} from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
@@ -35,6 +39,8 @@ export function WheelGame() {
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
 
+  const validBet = isValidBetSol(sol, WHEEL.MIN_BET_LAMPORTS);
+
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
@@ -63,7 +69,10 @@ export function WheelGame() {
               className="rounded-lg border border-border p-2 text-center"
               style={{ borderColor: `${tierColor(b.multiplier)}55` }}
             >
-              <div className="font-mono text-sm font-bold" style={{ color: tierColor(b.multiplier) }}>
+              <div
+                className="font-mono text-sm font-bold"
+                style={{ color: tierColor(b.multiplier) }}
+              >
                 {b.multiplier}×
               </div>
               <div className="text-[9px] text-foreground-muted">
@@ -88,7 +97,7 @@ export function WheelGame() {
           <button
             type="button"
             onClick={() => void onPlace()}
-            disabled={play.isPending}
+            disabled={play.isPending || !validBet}
             className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
           >
             {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
@@ -165,7 +174,7 @@ function Wheel({
       const a = from + (target - from) * eased;
       setAngle(a);
       // Ratchet tick each time a new segment passes the pointer.
-      const seg = Math.floor(((a % 360) + 360) % 360 / segAngle);
+      const seg = Math.floor((((a % 360) + 360) % 360) / segAngle);
       if (seg !== lastTickSeg) {
         lastTickSeg = seg;
         sound.tick(520, 18, 0.03);

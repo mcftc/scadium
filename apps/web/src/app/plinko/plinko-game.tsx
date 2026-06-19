@@ -5,7 +5,11 @@ import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { PLINKO } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
-import { BetAmountInput, solToLamportsClamped } from '@/components/instant/bet-amount-input';
+import {
+  BetAmountInput,
+  isValidBetSol,
+  solToLamportsClamped,
+} from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
@@ -37,6 +41,7 @@ export function PlinkoGame() {
   const [last, setLast] = useState<InstantSettleResult | null>(null);
 
   const payouts = PLINKO.PAYOUTS[rows] ?? [];
+  const validBet = isValidBetSol(sol, PLINKO.MIN_BET_LAMPORTS);
 
   async function onPlace() {
     if (!isAuthenticated) {
@@ -46,11 +51,7 @@ export function PlinkoGame() {
     setError(null);
     try {
       const res = await play.mutateAsync({
-        amountLamports: solToLamportsClamped(
-          sol,
-          PLINKO.MIN_BET_LAMPORTS,
-          PLINKO.MAX_BET_LAMPORTS,
-        ),
+        amountLamports: solToLamportsClamped(sol, PLINKO.MIN_BET_LAMPORTS, PLINKO.MAX_BET_LAMPORTS),
         rows,
       });
       setLast(res);
@@ -62,7 +63,13 @@ export function PlinkoGame() {
   return (
     <div className="flex flex-col lg:flex-row gap-4">
       <div className="flex-1 min-w-0 space-y-3">
-        <PlinkoBoard rows={rows} result={last} payouts={payouts} binColor={binColor} sound={sound} />
+        <PlinkoBoard
+          rows={rows}
+          result={last}
+          payouts={payouts}
+          binColor={binColor}
+          sound={sound}
+        />
         <WinEffect last={last} sound={sound} />
       </div>
 
@@ -101,7 +108,7 @@ export function PlinkoGame() {
           <button
             type="button"
             onClick={() => void onPlace()}
-            disabled={play.isPending}
+            disabled={play.isPending || !validBet}
             className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
           >
             {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
@@ -220,7 +227,7 @@ function PlinkoBoard({
             const yPct = ((r + 0.5) / (rows + 1)) * 100;
             return Array.from({ length: pegs }).map((__, c) => {
               // center the row of pegs across the board width.
-              const xPct = (((c + 1) - (pegs + 1) / 2) / binCount) * 100 + 50;
+              const xPct = ((c + 1 - (pegs + 1) / 2) / binCount) * 100 + 50;
               return (
                 <div
                   key={`${r}-${c}`}

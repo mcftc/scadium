@@ -25,7 +25,10 @@ export function BetAmountInput({
 }) {
   const minSol = minLamports / LAMPORTS_PER_SOL;
   const maxSol = maxLamports / LAMPORTS_PER_SOL;
-  const clamp = (n: number) => Math.min(maxSol, Math.max(minSol, n));
+  // Clamp into [min, max]; a non-finite/empty input falls back to the game min
+  // rather than emitting 'NaN' into the field.
+  const clamp = (n: number) =>
+    Number.isFinite(n) ? Math.min(maxSol, Math.max(minSol, n)) : minSol;
 
   return (
     <div>
@@ -91,9 +94,26 @@ export function BetAmountInput({
   );
 }
 
+/**
+ * Is the SOL string a real, positive bet that meets the game minimum? Empty,
+ * zero, negative, and non-numeric inputs are all invalid (callers disable submit
+ * so a cleared field can't silently place the minimum bet).
+ */
+export function isValidBetSol(sol: string, minLamports: number): boolean {
+  const n = Number(sol);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  return Math.floor(n * LAMPORTS_PER_SOL) >= minLamports;
+}
+
 /** SOL string → lamports string, clamped to the game's MIN/MAX. */
-export function solToLamportsClamped(sol: string, minLamports: number, maxLamports: number): string {
+export function solToLamportsClamped(
+  sol: string,
+  minLamports: number,
+  maxLamports: number,
+): string {
   const raw = Math.floor(Number(sol) * LAMPORTS_PER_SOL);
-  if (!Number.isFinite(raw)) return String(minLamports);
+  // Empty/zero/negative/NaN are not valid bets — fall back to the min so the API
+  // still receives a well-formed value, but submit is gated by `isValidBetSol`.
+  if (!Number.isFinite(raw) || raw <= 0) return String(minLamports);
   return String(Math.min(maxLamports, Math.max(minLamports, raw)));
 }

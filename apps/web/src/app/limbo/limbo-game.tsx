@@ -5,7 +5,11 @@ import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { LIMBO } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
-import { BetAmountInput, solToLamportsClamped } from '@/components/instant/bet-amount-input';
+import {
+  BetAmountInput,
+  isValidBetSol,
+  solToLamportsClamped,
+} from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
@@ -28,6 +32,7 @@ export function LimboGame() {
 
   const targetNum = Number(target) || LIMBO.MIN_TARGET;
   const winChance = Math.min(100, (1 / targetNum) * (1 - LIMBO.HOUSE_EDGE) * 100);
+  const validBet = isValidBetSol(sol, LIMBO.MIN_BET_LAMPORTS);
 
   async function onPlace() {
     if (!isAuthenticated) {
@@ -115,7 +120,7 @@ export function LimboGame() {
           <button
             type="button"
             onClick={() => void onPlace()}
-            disabled={play.isPending}
+            disabled={play.isPending || !validBet}
             className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
           >
             {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
@@ -161,7 +166,8 @@ function LimboReadout({
     if (reduce) {
       setDisplay(result);
       setLocked(true);
-      sound.win(result);
+      if (won) sound.win(result);
+      else sound.tick(220, 120, 0.04);
       return;
     }
     setLocked(false);
@@ -214,9 +220,7 @@ function LimboReadout({
       {target != null && (
         <div className="relative mt-3 text-xs uppercase tracking-wider text-foreground-muted">
           Target {target.toFixed(2)}×
-          {locked && won === false && (
-            <span className="ml-2 text-danger">· below target</span>
-          )}
+          {locked && won === false && <span className="ml-2 text-danger">· below target</span>}
         </div>
       )}
     </Card>
