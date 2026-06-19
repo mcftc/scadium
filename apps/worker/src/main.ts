@@ -9,6 +9,7 @@ import {
   LeaderboardService,
   ReconciliationService,
   RewardsService,
+  DistributionService,
   RedisService,
   queueConnection,
   withRedisLock,
@@ -36,6 +37,7 @@ async function bootstrap(): Promise<void> {
   const leaderboard = app.get(LeaderboardService, { strict: false });
   const reconciliation = app.get(ReconciliationService, { strict: false });
   const rewards = app.get(RewardsService, { strict: false });
+  const distribution = app.get(DistributionService, { strict: false });
   const redis = app.get(RedisService, { strict: false });
 
   // Plain options object — each Queue/Worker spins its own BullMQ connection.
@@ -67,6 +69,9 @@ async function bootstrap(): Promise<void> {
       async () => {
         await reconciliation.reconcileAll();
         await reconciliation.houseSolvency();
+        // SCAD Engine: staked-balance drift + USDS dividend solvency.
+        await reconciliation.stakeLedgerDrift();
+        await reconciliation.usdsSolvency();
       },
       { connection },
     ),
@@ -84,6 +89,19 @@ async function bootstrap(): Promise<void> {
       async () => rewards.reconcilePendingClaims(),
       { connection },
     ),
+    new Worker(
+      QUEUE_NAMES.distribution,
+      // SCAD Engine: hourly GGR→USDS staker dividend. Idempotent per hour
+      // (DistributionRound.period unique + distributed flag + DistributionClaim
+      // @@unique), but a Redis lock still serializes the staker-credit loop so
+      // two replicas don't both walk it.
+      async () => {
+        await withRedisLock(redis.client, 'lock:distribution', 9 * 60_000, () =>
+          distribution.distribute(),
+        );
+      },
+      { connection },
+    ),
   ];
   for (const c of consumers) {
     c.on('failed', (job, err) => logger.error(`${c.name} job ${job?.id ?? '?'} failed: ${err.message}`));
@@ -99,6 +117,7 @@ async function bootstrap(): Promise<void> {
   const reconcileQueue = new Queue(QUEUE_NAMES.reconcile, { connection });
   const rewardClaimsQueue = new Queue(QUEUE_NAMES.rewardClaims, { connection });
   const lotteryPayoutsQueue = new Queue(QUEUE_NAMES.lotteryPayouts, { connection });
+  const distributionQueue = new Queue(QUEUE_NAMES.distribution, { connection });
 
   await airdropQueue.upsertJobScheduler('airdrop-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
   await burnQueue.upsertJobScheduler('burn-10min', { every: 10 * 60_000 }, { name: 'burn' });
@@ -106,13 +125,26 @@ async function bootstrap(): Promise<void> {
   await reconcileQueue.upsertJobScheduler('reconcile-hourly', { every: 60 * 60_000 }, { name: 'reconcile' });
   await rewardClaimsQueue.upsertJobScheduler('reward-claims-5min', { every: 5 * 60_000 }, { name: 'sweep' });
   await lotteryPayoutsQueue.upsertJobScheduler('lottery-payouts-5min', { every: 5 * 60_000 }, { name: 'sweep' });
+  // Run every 5 min to catch the top-of-hour boundary promptly; distribute() is
+  // a no-op until an unsettled hour exists, so over-firing is cheap.
+  await distributionQueue.upsertJobScheduler('distribution-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
 
-  logger.log('worker up — 4 queues, schedulers registered');
+  logger.log('worker up — 7 queues, schedulers registered');
 
   const shutdown = async () => {
     logger.log('shutting down…');
     await Promise.allSettled(consumers.map((c) => c.close()));
-    await Promise.allSettled([airdropQueue, burnQueue, leaderboardQueue, reconcileQueue].map((q) => q.close()));
+    await Promise.allSettled(
+      [
+        airdropQueue,
+        burnQueue,
+        leaderboardQueue,
+        reconcileQueue,
+        rewardClaimsQueue,
+        lotteryPayoutsQueue,
+        distributionQueue,
+      ].map((q) => q.close()),
+    );
     await app.close();
     process.exit(0);
   };

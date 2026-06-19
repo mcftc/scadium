@@ -9,6 +9,7 @@ import { SwapModule } from '../swap/swap.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { ReconciliationModule } from '../reconciliation/reconciliation.module';
 import { RewardsModule } from '../rewards/rewards.module';
+import { EngineModule } from '../engine/engine.module';
 
 /**
  * The module graph the `@scadium/worker` process boots via
@@ -32,6 +33,7 @@ import { RewardsModule } from '../rewards/rewards.module';
     LeaderboardModule,
     ReconciliationModule,
     RewardsModule,
+    EngineModule,
   ],
 })
 export class WorkerModule {}

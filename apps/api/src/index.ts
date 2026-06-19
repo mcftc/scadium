@@ -16,6 +16,7 @@ export {
   burnJobId,
   leaderboardJobId,
   reconcileJobId,
+  distributionRoundJobId,
 } from './queue/queue.constants';
 export { queueConnection } from './queue/queue.connection';
 export { withRedisLock } from './redis/redis-lock';
@@ -26,3 +27,4 @@ export { SwapService } from './swap/swap.service';
 export { LeaderboardService } from './leaderboard/leaderboard.service';
 export { ReconciliationService } from './reconciliation/reconciliation.service';
 export { RewardsService } from './rewards/rewards.service';
+export { DistributionService } from './engine/distribution.service';

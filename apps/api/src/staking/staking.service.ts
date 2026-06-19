@@ -1,0 +1,178 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ENGINE } from '@scadium/shared';
+import { PrismaService } from '../prisma/prisma.service';
+import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+
+/**
+ * SCAD Engine — staking (bc.game parity).
+ *
+ * Earned $SCAD (`User.scadiumBalance`, redeemable) is moved into a LOCKED staked
+ * balance (`User.scadiumStaked`). Stakers earn a pro-rata USDS dividend every
+ * distribution round (see DistributionService). Staking is a purely OFF-CHAIN
+ * ledger move — independent of `ChainService.enabled` — so it works in the
+ * current play-money phase; the USDS payout is what's later bridged on-chain.
+ *
+ * Every move goes through `applyBalanceDelta` so a `scad` debit + `scad_staked`
+ * credit (or the reverse on unstake) are written with their ledger rows in ONE
+ * transaction. A single `stakeLockedUntil` per user governs the whole staked
+ * balance; staking more RESETS the lock on the full balance (simplest faithful
+ * model — no per-deposit lock bookkeeping).
+ */
+@Injectable()
+export class StakingService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** Move `amount` $SCAD base units from spendable balance into the staked, locked balance. */
+  async stake(userId: string, amount: bigint) {
+    if (amount < BigInt(ENGINE.MIN_STAKE_SCAD_BASE)) {
+      throw new BadRequestException(
+        `Minimum stake is ${ENGINE.MIN_STAKE_SCAD_BASE} SCAD base units`,
+      );
+    }
+    return this.move(userId, amount, 'stake');
+  }
+
+  /** Stake the user's ENTIRE spendable $SCAD balance (the "claim & stake" action). */
+  async claimAndStake(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { scadiumBalance: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.scadiumBalance < BigInt(ENGINE.MIN_STAKE_SCAD_BASE)) {
+      throw new BadRequestException('Nothing to stake');
+    }
+    return this.move(userId, user.scadiumBalance, 'auto_stake');
+  }
+
+  /** Move `amount` staked $SCAD back to the spendable balance — only after the lock elapses. */
+  async unstake(userId: string, amount: bigint) {
+    if (amount <= 0n) throw new BadRequestException('Amount must be positive');
+
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { scadiumStaked: true, stakeLockedUntil: true },
+      });
+      if (!user) throw new NotFoundException('User not found');
+      if (amount > user.scadiumStaked) {
+        throw new BadRequestException('Amount exceeds staked balance');
+      }
+      const now = new Date();
+      if (user.stakeLockedUntil && user.stakeLockedUntil > now) {
+        throw new BadRequestException(
+          `Staked SCAD is locked until ${user.stakeLockedUntil.toISOString()}`,
+        );
+      }
+
+      // staked → spendable, both legs ledgered atomically.
+      const stakedAfter = await applyBalanceDelta(tx, userId, -amount, {
+        currency: 'scad_staked',
+        reason: 'unstake',
+        refType: 'StakeEvent',
+      });
+      await applyBalanceDelta(tx, userId, amount, {
+        currency: 'scad',
+        reason: 'unstake',
+        refType: 'StakeEvent',
+      });
+      await tx.stakeEvent.create({
+        data: { userId, kind: 'unstake', amountScad: amount, stakedAfter },
+      });
+      return this.serializeSummary(tx, userId);
+    });
+  }
+
+  async summary(userId: string) {
+    return this.serializeSummary(this.prisma, userId);
+  }
+
+  // ------------------------------------------------------------- internals
+
+  /** Shared stake/auto-stake path: spendable → staked, set the lock, record the event. */
+  private async move(userId: string, amount: bigint, kind: 'stake' | 'auto_stake') {
+    return this.prisma.$transaction(async (tx) => {
+      // Debit spendable $SCAD first — the guarded updateMany rejects if the
+      // balance is insufficient (atomic, same row-lock guarantee as wagering).
+      await applyBalanceDelta(tx, userId, -amount, {
+        currency: 'scad',
+        reason: kind,
+        refType: 'StakeEvent',
+      });
+      const stakedAfter = await applyBalanceDelta(tx, userId, amount, {
+        currency: 'scad_staked',
+        reason: kind,
+        refType: 'StakeEvent',
+      });
+      const lockedUntil = new Date(Date.now() + ENGINE.LOCK_PERIOD_MS);
+      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: lockedUntil } });
+      await tx.stakeEvent.create({
+        data: { userId, kind, amountScad: amount, stakedAfter, lockedUntil },
+      });
+      return this.serializeSummary(tx, userId);
+    });
+  }
+
+  /**
+   * Staking dashboard payload: staked/lock state, USDS earned, and a rough APY
+   * estimated from the most recent distributed round
+   * (per-round yield × rounds-per-year), expressed as a percentage string.
+   */
+  private async serializeSummary(
+    db: PrismaService | Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
+    userId: string,
+  ) {
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: {
+        scadiumBalance: true,
+        scadiumStaked: true,
+        stakeLockedUntil: true,
+        usdsBalance: true,
+        usdsReserved: true,
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const earned = await db.distributionClaim.aggregate({
+      where: { userId },
+      _sum: { shareUsds: true },
+    });
+
+    const lastRound = await db.distributionRound.findFirst({
+      where: { distributed: true, totalStakedSnapshot: { gt: 0n } },
+      orderBy: { distributedAt: 'desc' },
+      select: { poolUsds: true, totalStakedSnapshot: true },
+    });
+
+    const now = Date.now();
+    const locked = !!user.stakeLockedUntil && user.stakeLockedUntil.getTime() > now;
+
+    return {
+      spendableScad: user.scadiumBalance.toString(),
+      stakedScad: user.scadiumStaked.toString(),
+      locked,
+      lockedUntil: user.stakeLockedUntil ? user.stakeLockedUntil.toISOString() : null,
+      usdsBalance: user.usdsBalance.toString(),
+      usdsReserved: user.usdsReserved.toString(),
+      totalUsdsEarned: (earned._sum.shareUsds ?? 0n).toString(),
+      estApyPct: estimateApyPct(lastRound),
+      lockPeriodMs: ENGINE.LOCK_PERIOD_MS,
+    };
+  }
+}
+
+/**
+ * Rough APY from the last round: the per-round dividend yield on staked value,
+ * scaled to hourly rounds per year. SCAD↔USDS use different units/pegs, so this
+ * is an indicative pool-relative figure (USDS pool ÷ staked SCAD × rounds/yr),
+ * not a precise on-value return — the UI labels it "est.".
+ */
+export function estimateApyPct(
+  lastRound: { poolUsds: bigint; totalStakedSnapshot: bigint } | null,
+): number {
+  if (!lastRound || lastRound.totalStakedSnapshot <= 0n) return 0;
+  const roundsPerYear = (365 * 24 * 60 * 60 * 1000) / ENGINE.DISTRIBUTION_INTERVAL_MS;
+  const perRoundYield = Number(lastRound.poolUsds) / Number(lastRound.totalStakedSnapshot);
+  return Math.round(perRoundYield * roundsPerYear * 100 * 100) / 100;
+}

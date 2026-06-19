@@ -11,7 +11,7 @@ import {
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { USD_PER_SOL } from '@scadium/shared';
-import { SWAP } from '@scadium/shared';
+import { SWAP, buybackBudgetLamports } from '@scadium/shared';
 import { expectedSwapOut, minOutWithSlippage } from './swap-math';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -212,7 +212,11 @@ export class SwapService implements OnModuleInit {
 
   // ----------------------------------------------------- buy & burn job
 
-  /** 20% of positive NGR (stakes − payouts) since the last burn. */
+  /**
+   * ENGINE.BUYBACK_NGR_BPS (10%) of positive NGR (stakes − payouts) since the
+   * last burn. The other 10% of NGR funds the staker USDS dividend (see
+   * DistributionService) — the two run on independent windows and never contend.
+   */
   async runBuyAndBurn(): Promise<void> {
     if (!this.enabled || !this.cosigner) return;
     try {
@@ -228,7 +232,7 @@ export class SwapService implements OnModuleInit {
       const payouts = agg._sum.payoutLamports ?? BigInt(0);
       const ngr = stakes - payouts;
       if (ngr <= BigInt(0)) return;
-      const burnBudget = ngr / BigInt(5); // 20%
+      const burnBudget = buybackBudgetLamports(ngr); // ENGINE.BUYBACK_NGR_BPS (10%)
       if (burnBudget < BigInt(1_000_000)) return; // skip dust (<0.001 SOL)
 
       // 1) Swap SOL→SCAD as the cosigner (own wallet SOL funds the buy).

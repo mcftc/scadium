@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Gift, Package, Percent, Coins } from 'lucide-react';
+import { Gift, Package, Percent, Coins, Wallet } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/cn';
@@ -38,11 +38,21 @@ export function RewardsDropdown() {
     refetchInterval: 30_000,
   });
 
+  // SCAD Engine USDS dividend balance — surfaced here so a staker can claim
+  // without leaving the page they're on.
+  const staking = useQuery({
+    queryKey: ['staking', 'summary'],
+    enabled: !!token,
+    queryFn: () => api<{ usdsBalance: string }>('/staking/summary', { token }),
+    refetchInterval: 30_000,
+  });
+
   const claim = useMutation({
-    mutationFn: (kind: 'wagerReward' | 'cashback') =>
+    mutationFn: (kind: 'wagerReward' | 'cashback' | 'dividend') =>
       api('/rewards/claim', { method: 'POST', body: { kind }, token }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['rewards'] });
+      void qc.invalidateQueries({ queryKey: ['staking'] });
       void qc.invalidateQueries({ queryKey: ['me'] });
     },
   });
@@ -111,6 +121,16 @@ export function RewardsDropdown() {
             busy={claim.isPending}
             onAction={() => claim.mutate('wagerReward')}
           />
+          {staking.data && BigInt(staking.data.usdsBalance) > BigInt(0) && (
+            <RewardRow
+              icon={Wallet}
+              title="USDS Dividends"
+              subtitle={`$${(Number(BigInt(staking.data.usdsBalance)) / 1e6).toFixed(2)} USDS`}
+              action="Claim"
+              busy={claim.isPending}
+              onAction={() => claim.mutate('dividend')}
+            />
+          )}
         </div>
       )}
 

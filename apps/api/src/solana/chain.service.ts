@@ -67,6 +67,8 @@ export class ChainService implements OnModuleInit {
   }
 
   private scadMint: PublicKey | null = null;
+  // SCAD Engine: USD-pegged dividend mint stakers are paid in (claim_dividend).
+  private usdsMint: PublicKey | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -91,6 +93,8 @@ export class ChainService implements OnModuleInit {
       this.programId = new PublicKey(programId);
       const scadMint = this.config.get<string>('SCAD_MINT');
       this.scadMint = scadMint ? new PublicKey(scadMint) : null;
+      const usdsMint = this.config.get<string>('USDS_MINT');
+      this.usdsMint = usdsMint ? new PublicKey(usdsMint) : null;
       const lotteryProgramId = this.config.get<string>('LOTTERY_PROGRAM_ID');
       this.lotteryProgramId = lotteryProgramId ? new PublicKey(lotteryProgramId) : null;
       this.enabled = true;
@@ -420,6 +424,19 @@ export class ChainService implements OnModuleInit {
       return BigInt(bal.value.amount);
     } catch {
       return 0n;
+    }
+  }
+
+  /** USDS sitting in the dividend treasury (house PDA's USDS ATA) — the
+   * solvency ceiling for outstanding staker dividend claims (SCAD Engine). */
+  async usdsTreasuryBalance(): Promise<bigint | null> {
+    if (!this.enabled || !this.usdsMint) return null;
+    try {
+      const ataAddr = ata(this.usdsMint, this.housePda());
+      const bal = await this.connection.getTokenAccountBalance(ataAddr);
+      return BigInt(bal.value.amount);
+    } catch {
+      return null;
     }
   }
 
@@ -808,6 +825,71 @@ export class ChainService implements OnModuleInit {
       return null;
     }
   }
+
+  /**
+   * Cosigner-signed USDS dividend claim from the USDS treasury (SCAD Engine).
+   * Mirrors {@link claimReward} but targets the USDS mint via the program's
+   * `claim_dividend` instruction. `period` seeds the ClaimRecord PDA (with the
+   * Dividend kind), blocking double-pays. Returns the tx signature or null.
+   */
+  async claimDividend(params: {
+    walletAddress: string;
+    period: bigint;
+    amountUsdsBase: bigint;
+  }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner || !this.usdsMint) return null;
+    try {
+      const user = new PublicKey(params.walletAddress);
+      const kindIndex = REWARD_KIND_INDEX.dividend;
+      const periodLe = u64le(params.period);
+
+      const house = this.housePda();
+      const claimRecord = PublicKey.findProgramAddressSync(
+        [Buffer.from('claim'), user.toBuffer(), Buffer.from([kindIndex]), periodLe],
+        this.programId!,
+      )[0];
+      const treasuryAta = ata(this.usdsMint, house);
+      const userAta = ata(this.usdsMint, user);
+
+      const data = Buffer.concat([
+        anchorDiscriminator('claim_dividend'),
+        periodLe,
+        u64le(params.amountUsdsBase),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.programId!,
+        keys: [
+          { pubkey: house, isSigner: false, isWritable: false },
+          { pubkey: claimRecord, isSigner: false, isWritable: true },
+          { pubkey: user, isSigner: false, isWritable: false },
+          { pubkey: treasuryAta, isSigner: false, isWritable: true },
+          { pubkey: userAta, isSigner: false, isWritable: true },
+          { pubkey: this.usdsMint, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      const tx = new Transaction().add(ix);
+      const sig = await sendAndConfirmTransaction(this.connection, tx, [this.cosigner], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+      return sig;
+    } catch (e) {
+      this.logger.error(
+        `claim_dividend failed for ${params.walletAddress} ${params.period}: ${(e as Error).message}`,
+      );
+      payoutFailedTotal.inc({ kind: 'dividend' });
+      return null;
+    }
+  }
+
+  get usdsMintBase58(): string | null {
+    return this.usdsMint?.toBase58() ?? null;
+  }
 }
 
 // ------------------------------------------------------------------ utils
@@ -828,6 +910,8 @@ const REWARD_KIND_INDEX: Record<string, number> = {
   cashback: 1,
   dailyCase: 2,
   airdrop: 3,
+  // SCAD Engine staker dividend (USDS) — matches the on-chain RewardKind order.
+  dividend: 4,
 };
 
 const GAME_INDEX: Record<string, number> = {

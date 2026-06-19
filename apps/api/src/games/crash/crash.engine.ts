@@ -9,7 +9,7 @@ import {
   commitServerSeed,
   syntheticSlotHash,
 } from '@scadium/fair';
-import { CRASH, SCAD } from '@scadium/shared';
+import { CRASH } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
@@ -19,6 +19,7 @@ import { LeaderElection } from '../../redis/leader-election';
 import { CrashGateway } from './crash.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { ExposureGuard } from '../../common/exposure-guard';
+import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 
 type Phase = 'waiting' | 'running' | 'busted';
 
@@ -103,6 +104,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly gateway: CrashGateway,
     private readonly chain: ChainService,
+    private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
   ) {
     if (this.redis) {
@@ -713,13 +715,18 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
           await tx.user.update({
             where: { id: bet.userId },
             data: {
-              // Wager mining: 128 SCAD per SOL wagered (base units = lamports × 128)
-              scadiumBalance: { increment: stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT) },
               totalWagered: { increment: stake },
               totalWon: { increment: netProfit > BigInt(0) ? netProfit : BigInt(0) },
               totalLost: { increment: netProfit < BigInt(0) ? -netProfit : BigInt(0) },
               gamesPlayed: { increment: 1 },
             },
+          });
+          // Wager mining: central Proof-of-Wager accrual (base 128 SCAD/SOL ×
+          // lifetime-tier × campaign multipliers) + leaderboard, in this tx.
+          await this.proofOfWager.accrue(tx, {
+            userId: bet.userId,
+            gameType: 'crash',
+            stakeLamports: stake,
           });
 
           // Credit the play balance through the single mutation point (writes a

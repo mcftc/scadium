@@ -121,6 +121,60 @@ export class RewardsService {
     return { kind, amountScad: amount.toString(), claimId };
   }
 
+  /**
+   * Claim accrued USDS dividends on-chain (SCAD Engine). Reservation-based and
+   * idempotent, mirroring {@link claim}: `usdsBalance → usdsReserved`, a
+   * `RewardClaim(kind='dividend')` row (its `amountScad` column carries the USDS
+   * base-unit amount), then the on-chain `claim_dividend` transfer. The reserve
+   * finalizes on confirm or restores on permanent failure.
+   */
+  async claimDividend(userId: string, key?: string) {
+    if (!this.chain.enabled) {
+      throw new BadRequestException('On-chain claims are disabled on this server');
+    }
+    const period = BigInt(Date.now());
+    const scope = 'reward_claim_dividend';
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const replay = await claimIdempotency(tx, userId, scope, key);
+      if (replay) {
+        return { response: replay as { kind: string; amountUsds: string; claimId: string }, replayed: true };
+      }
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('User not found');
+
+      const pending = await tx.rewardClaim.count({
+        where: { userId, kind: 'dividend', status: 'pending' },
+      });
+      if (pending > 0) throw new BadRequestException('A claim is already pending confirmation');
+
+      const amount = user.usdsBalance;
+      if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
+      await tx.user.update({
+        where: { id: userId },
+        data: { usdsBalance: { decrement: amount }, usdsReserved: { increment: amount } },
+      });
+
+      const claim = await tx.rewardClaim.create({
+        data: { userId, kind: 'dividend', period, amountScad: amount, status: 'pending' },
+      });
+      const response = { kind: 'dividend', amountUsds: amount.toString(), claimId: claim.id };
+      await storeIdempotency(tx, userId, scope, key, response);
+      return {
+        response,
+        replayed: false,
+        chain: { claimId: claim.id, walletAddress: user.walletAddress, amount },
+      };
+    });
+
+    if (!result.replayed && result.chain) {
+      void this.attemptChainClaim(result.chain.claimId).catch((e) =>
+        this.logger.error(`dividend claim attempt ${result.chain!.claimId} failed: ${String(e)}`),
+      );
+    }
+    return result.response;
+  }
+
   /** Daily case: weighted SCAD prize, one per 24h (DB cooldown + on-chain PDA). */
   async openDailyCase(userId: string, key?: string) {
     const now = new Date();
@@ -258,12 +312,20 @@ export class RewardsService {
     });
     if (!claim || claim.status !== 'pending') return 'skipped';
 
-    const sig = await this.chain.claimReward({
-      walletAddress: claim.user.walletAddress,
-      kind: claim.kind as 'wagerReward' | 'cashback' | 'dailyCase' | 'airdrop',
-      period: claim.period,
-      amountScadBase: claim.amountScad,
-    });
+    const sig =
+      claim.kind === 'dividend'
+        ? await this.chain.claimDividend({
+            walletAddress: claim.user.walletAddress,
+            period: claim.period,
+            // amountScad carries the USDS base-unit amount for dividend rows.
+            amountUsdsBase: claim.amountScad,
+          })
+        : await this.chain.claimReward({
+            walletAddress: claim.user.walletAddress,
+            kind: claim.kind as 'wagerReward' | 'cashback' | 'dailyCase' | 'airdrop',
+            period: claim.period,
+            amountScadBase: claim.amountScad,
+          });
 
     if (sig) {
       await this.prisma.$transaction(async (tx) => {
@@ -282,6 +344,11 @@ export class RewardsService {
           await tx.user.update({
             where: { id: claim.userId },
             data: { cashbackBaselineLost: claim.user.totalLost },
+          });
+        } else if (claim.kind === 'dividend') {
+          await tx.user.update({
+            where: { id: claim.userId },
+            data: { usdsReserved: { decrement: claim.amountScad } },
           });
         }
       });
@@ -309,6 +376,14 @@ export class RewardsService {
           data: {
             scadiumReserved: { decrement: claim.amountScad },
             scadiumBalance: { increment: claim.amountScad },
+          },
+        });
+      } else if (claim.kind === 'dividend') {
+        await tx.user.update({
+          where: { id: claim.userId },
+          data: {
+            usdsReserved: { decrement: claim.amountScad },
+            usdsBalance: { increment: claim.amountScad },
           },
         });
       }
