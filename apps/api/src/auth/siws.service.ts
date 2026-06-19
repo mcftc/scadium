@@ -42,14 +42,10 @@ export class SiwsService {
 
   /** Environment binding (#37): a signature is only valid for THIS deployment.
    * The chainId is derived from the SAME network resolver as the RPC (#185), so a
-   * signature is bound to the cluster the app actually talks to — fail-closed in
-   * production for an unset/invalid network rather than silently `solana:devnet`. */
+   * signature is bound to the cluster the app actually talks to — an invalid
+   * network throws rather than silently binding to `solana:devnet`. */
   static binding(env = process.env): { domain: string; uri: string; chainId: string } {
-    const { network } = resolveNetworkConfig(
-      env.SOLANA_NETWORK,
-      env.SOLANA_RPC_URL,
-      env.NODE_ENV === 'production',
-    );
+    const { network } = resolveNetworkConfig(env.SOLANA_NETWORK, env.SOLANA_RPC_URL);
     return {
       domain: env.SIWS_DOMAIN ?? 'localhost:3000',
       uri: env.SIWS_URI ?? 'http://localhost:3000',

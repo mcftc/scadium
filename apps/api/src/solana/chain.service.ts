@@ -86,13 +86,11 @@ export class ChainService implements OnModuleInit {
     // Resolve network + RPC together (#185) at construction so `cluster` is
     // correct immediately (the explorer-link/chainId contract callers and tests
     // rely on), not only after onModuleInit. The RPC default is DERIVED from the
-    // selected network — never a fixed devnet string — and an unset network (or
-    // mainnet without an RPC) fails closed in production. process.env.NODE_ENV is
-    // the canonical prod signal (same convention as the cosigner provider).
+    // selected network — never a fixed devnet string — and selecting mainnet
+    // without an explicit RPC fails closed. Unset → devnet (play-money default).
     const { network, rpcUrl } = resolveNetworkConfig(
       this.config.get<string>('SOLANA_NETWORK'),
       this.config.get<string>('SOLANA_RPC_URL'),
-      process.env.NODE_ENV === 'production',
     );
     this.network = network;
     this.rpcUrl = rpcUrl;

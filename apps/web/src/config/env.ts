@@ -8,16 +8,16 @@ import { resolveNetworkConfig, type SolanaNetwork } from '@scadium/shared';
  *
  * Network/RPC (#185) go through the SAME shared resolver as the api, so the rule
  * is identical on both sides: the RPC default is DERIVED from the selected
- * network (never a fixed devnet string), an unset network fails closed in a
- * production build, and mainnet without an explicit RPC fails closed too. The
- * NEXT_PUBLIC_* values are inlined at build time, so the resolver runs against
- * the build-time env — a prod build with a mismatched/missing network throws at
- * build rather than shipping a bundle that talks to the wrong cluster.
+ * network (never a fixed devnet string), an unset network defaults to devnet
+ * (the play-money/beta default — a prod build with no network set still builds),
+ * and selecting mainnet without an explicit RPC fails closed. The NEXT_PUBLIC_*
+ * values are inlined at build time, so the resolver runs against the build-time
+ * env — a mainnet build with no RPC throws at build rather than shipping a bundle
+ * that would talk to the wrong cluster.
  */
 const network = resolveNetworkConfig(
   process.env.NEXT_PUBLIC_SOLANA_NETWORK,
   process.env.NEXT_PUBLIC_SOLANA_RPC,
-  process.env.NODE_ENV === 'production',
 );
 
 export const env = {

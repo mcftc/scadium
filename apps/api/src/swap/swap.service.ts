@@ -71,12 +71,11 @@ export class SwapService implements OnModuleInit {
 
   onModuleInit() {
     // RPC derived from SOLANA_NETWORK via the shared resolver (#185) — never a
-    // fixed devnet URL independent of the cluster; fails closed in production for
-    // an unset network or mainnet without an explicit RPC.
+    // fixed devnet URL independent of the cluster; selecting mainnet without an
+    // explicit RPC fails closed. Unset → devnet (play-money default).
     const { rpcUrl: rpc } = resolveNetworkConfig(
       this.config.get<string>('SOLANA_NETWORK'),
       this.config.get<string>('SOLANA_RPC_URL'),
-      process.env.NODE_ENV === 'production',
     );
     this.connection = new Connection(rpc, 'confirmed');
     const programId = this.config.get<string>('SWAP_PROGRAM_ID');
