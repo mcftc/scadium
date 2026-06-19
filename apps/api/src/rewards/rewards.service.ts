@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
 import { SeedManagerService } from '../fairness/seed-manager.service';
 import { claimIdempotency, storeIdempotency } from '../prisma/idempotency';
+import { withSerializable } from '../prisma/with-serializable';
 
 /**
  * $SCAD reward accrual + claims (Phase C).
@@ -55,7 +56,14 @@ export class RewardsService {
     const period = BigInt(Date.now());
     const scope = `reward_claim_${kind}`;
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    // Serializable + a guarded reserve (#214): the pending-guard read and the
+    // balance→reserved write must be conflict-serialized, else two concurrent
+    // claims both read scadiumBalance, both see 0 pending (each other's pending
+    // row is uncommitted under Read Committed), and both decrement → negative
+    // balance + double reserve. Serializable makes the second conflict (retry →
+    // sees the pending row → aborts); the guarded `updateMany (gte: amount)` is
+    // belt-and-suspenders so the reserve can never drive the balance negative.
+    const result = await withSerializable(this.prisma, async (tx) => {
       const replay = await claimIdempotency(tx, userId, scope, key);
       if (replay) {
         return { response: replay as ReturnType<typeof this.serializeClaim>, replayed: true };
@@ -77,13 +85,17 @@ export class RewardsService {
         if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
         // RESERVE, don't consume (#28): balance → reserved; the debit
         // finalizes on confirm, or the reserve restores on permanent failure.
-        await tx.user.update({
-          where: { id: userId },
+        // Guarded so a stale read can never reserve more than the live balance.
+        const reserved = await tx.user.updateMany({
+          where: { id: userId, scadiumBalance: { gte: amount } },
           data: {
             scadiumBalance: { decrement: amount },
             scadiumReserved: { increment: amount },
           },
         });
+        if (reserved.count === 0) {
+          throw new BadRequestException('Balance changed — retry the claim');
+        }
       } else {
         amount = this.cashbackAccrued(user.totalLost, user.cashbackBaselineLost);
         if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
@@ -135,7 +147,9 @@ export class RewardsService {
     const period = BigInt(Date.now());
     const scope = 'reward_claim_dividend';
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    // Serializable + guarded reserve (#214), mirroring claim() — prevents two
+    // concurrent dividend claims from both reserving the same usdsBalance.
+    const result = await withSerializable(this.prisma, async (tx) => {
       const replay = await claimIdempotency(tx, userId, scope, key);
       if (replay) {
         return { response: replay as { kind: string; amountUsds: string; claimId: string }, replayed: true };
@@ -150,10 +164,13 @@ export class RewardsService {
 
       const amount = user.usdsBalance;
       if (amount <= BigInt(0)) throw new BadRequestException('Nothing to claim');
-      await tx.user.update({
-        where: { id: userId },
+      const reserved = await tx.user.updateMany({
+        where: { id: userId, usdsBalance: { gte: amount } },
         data: { usdsBalance: { decrement: amount }, usdsReserved: { increment: amount } },
       });
+      if (reserved.count === 0) {
+        throw new BadRequestException('Balance changed — retry the claim');
+      }
 
       const claim = await tx.rewardClaim.create({
         data: { userId, kind: 'dividend', period, amountScad: amount, status: 'pending' },
