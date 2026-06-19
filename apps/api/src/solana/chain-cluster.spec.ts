@@ -13,9 +13,10 @@ describe('ChainService.cluster (#53)', () => {
   });
 
   it('reflects a configured SOLANA_NETWORK (e.g. mainnet-beta)', () => {
-    expect(new ChainService(cfg({ SOLANA_NETWORK: 'mainnet-beta' }), noCosigner()).cluster).toBe(
-      'mainnet-beta',
-    );
+    // mainnet requires an explicit RPC (#185 fail-closed) — provide one so this
+    // exercises the cluster getter rather than the no-RPC guard.
+    const env = { SOLANA_NETWORK: 'mainnet-beta', SOLANA_RPC_URL: 'https://my.rpc' };
+    expect(new ChainService(cfg(env), noCosigner()).cluster).toBe('mainnet-beta');
   });
 
   it('trims whitespace and falls back to devnet on blank', () => {

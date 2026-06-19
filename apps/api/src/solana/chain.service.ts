@@ -11,7 +11,7 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
-import { HOUSE } from '@scadium/shared';
+import { HOUSE, resolveNetworkConfig, type SolanaNetwork } from '@scadium/shared';
 import { settlementMoved } from './settlement-verify';
 import { parseVaultEvent, type VaultEvent } from './vault-events';
 import { COSIGNER_PROVIDER, type CosignerKeyProvider } from './cosigner-key.provider';
@@ -60,10 +60,19 @@ export class ChainService implements OnModuleInit {
     return this.programId?.toBase58() ?? null;
   }
 
-  /** Configured Solana cluster (#53). Drives the web's explorer links + tx
-   *  building; defaults to devnet so the play-money/beta deploy is unchanged. */
+  /**
+   * Resolved Solana network (#185). Derived once at boot from SOLANA_NETWORK via
+   * the shared resolver — fail-closed in production, devnet in dev/beta. Drives
+   * the web's explorer links, tx building, and (critically) the RPC endpoint, so
+   * the RPC can never silently point at a different cluster than this.
+   */
+  private network: SolanaNetwork = 'devnet';
+  /** Resolved RPC endpoint (#185) — derived from `network` in the constructor. */
+  private rpcUrl = '';
+
+  /** Configured Solana cluster (#53/#185). */
   get cluster(): string {
-    return this.config.get<string>('SOLANA_NETWORK')?.trim() || 'devnet';
+    return this.network;
   }
 
   private scadMint: PublicKey | null = null;
@@ -73,11 +82,23 @@ export class ChainService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     @Inject(COSIGNER_PROVIDER) private readonly cosignerProvider: CosignerKeyProvider,
-  ) {}
+  ) {
+    // Resolve network + RPC together (#185) at construction so `cluster` is
+    // correct immediately (the explorer-link/chainId contract callers and tests
+    // rely on), not only after onModuleInit. The RPC default is DERIVED from the
+    // selected network — never a fixed devnet string — and selecting mainnet
+    // without an explicit RPC fails closed. Unset → devnet (play-money default).
+    const { network, rpcUrl } = resolveNetworkConfig(
+      this.config.get<string>('SOLANA_NETWORK'),
+      this.config.get<string>('SOLANA_RPC_URL'),
+    );
+    this.network = network;
+    this.rpcUrl = rpcUrl;
+  }
 
   onModuleInit() {
-    const rpcUrl = this.config.get<string>('SOLANA_RPC_URL') ?? 'https://api.devnet.solana.com';
-    this.connection = new Connection(rpcUrl, 'confirmed');
+    // Connection is opened at boot using the constructor-resolved RPC (#185).
+    this.connection = new Connection(this.rpcUrl, 'confirmed');
 
     const programId = this.config.get<string>('VAULT_PROGRAM_ID');
     // The cosigner key comes through the custody provider (#36): production
