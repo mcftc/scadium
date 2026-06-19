@@ -274,7 +274,9 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   private currentPoolScadBase(): bigint {
-    return this.current.salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
+    return (
+      this.current.salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase
+    );
   }
 
   /** Register freshly-persisted tickets in the live tallies (`count` for bulk buys). */
@@ -519,7 +521,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
 
     // Sales are recomputed from the tickets (robust across restarts).
     const salesScadBase = tickets.reduce((acc, t) => acc + t.costScadBase, BigInt(0));
-    const totalPool = salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
+    const totalPool =
+      salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
     const {
       bracketSlices,
       perWinner,
@@ -567,6 +570,12 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       await withSerializable(this.prisma, async (tx) => {
         for (const r of ticketResults) {
           const t = r.ticket;
+          // NET prize (#183 basis): GREATEST(payout - cost, 0). Reused for both
+          // the totalWon increment and the biggestWin floor below.
+          const netProfit =
+            r.won && r.payoutLamports > t.costLamports
+              ? r.payoutLamports - t.costLamports
+              : BigInt(0);
           await tx.user.update({
             where: { id: t.userId },
             data: {
@@ -579,17 +588,18 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               // cost, drifting reconciliation by exactly the stake. Floor at 0 —
               // a winning ticket's prize always covers its cost, but mirror the
               // GREATEST(...,0) basis defensively.
-              totalWon: {
-                increment: r.won
-                  ? r.payoutLamports > t.costLamports
-                    ? r.payoutLamports - t.costLamports
-                    : BigInt(0)
-                  : BigInt(0),
-              },
+              totalWon: { increment: netProfit },
               totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
               gamesPlayed: { increment: 1 },
             },
           });
+          // biggestWin = max(current, netProfit) atomically under the row lock
+          // (no stale read-then-write). Same GREATEST(payout-cost,0) basis as
+          // reconcileAll (Bet amount = costLamports); a losing ticket nets 0.
+          await tx.$executeRaw`
+            UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${netProfit})
+            WHERE "id" = ${t.userId}::uuid
+          `;
           // Loyalty $SCAD reward kept (per product decision): wagering the
           // lottery still accrues the standard Proof-of-Wager reward.
           await this.proofOfWager.accrue(tx, {
