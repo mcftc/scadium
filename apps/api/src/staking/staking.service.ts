@@ -84,7 +84,73 @@ export class StakingService {
   }
 
   async summary(userId: string) {
+    // Auto-stake fires lazily on the staking touch: before serializing, sweep any
+    // spendable earned $SCAD into the locked stake (no-op unless enabled + above
+    // MIN_STAKE). This is the simplest safe trigger — it keeps the hot per-bet
+    // settlement path untouched (accrue() stays a pure credit) yet runs for every
+    // active player, since the /engine dashboard polls /staking/summary.
+    await this.autoStakeSweep(userId);
     return this.serializeSummary(this.prisma, userId);
+  }
+
+  /** Read the user's auto-stake preference. */
+  async getAutoStake(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { autoStakeEnabled: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user.autoStakeEnabled;
+  }
+
+  /** Set the user's auto-stake preference; sweeps immediately when turning it ON. */
+  async setAutoStake(userId: string, enabled: boolean): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: userId },
+      data: { autoStakeEnabled: enabled },
+    });
+    if (count === 0) throw new NotFoundException('User not found');
+    if (enabled) await this.autoStakeSweep(userId);
+    return enabled;
+  }
+
+  /**
+   * Sweep the user's spendable earned $SCAD into the locked staked balance IF
+   * `autoStakeEnabled` AND the spendable balance is ≥ ENGINE.MIN_STAKE_SCAD_BASE.
+   * Reuses the EXACT stake semantics (applyBalanceDelta scad→scad_staked, reset
+   * `stakeLockedUntil`, `StakeEvent kind:'auto_stake'`) in ONE $transaction, so
+   * the auto-stake leaves the same ledger trail as a manual stake and keeps
+   * `stakeLedgerDrift()` at zero. No-op (returns 0n) when disabled or below MIN.
+   */
+  async autoStakeSweep(userId: string): Promise<bigint> {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { autoStakeEnabled: true, scadiumBalance: true },
+      });
+      if (!user || !user.autoStakeEnabled) return 0n;
+      if (user.scadiumBalance < BigInt(ENGINE.MIN_STAKE_SCAD_BASE)) return 0n;
+
+      const amount = user.scadiumBalance;
+      // Debit spendable first — the guarded updateMany rejects on insufficient
+      // balance, the same atomic guarantee the manual stake path relies on.
+      await applyBalanceDelta(tx, userId, -amount, {
+        currency: 'scad',
+        reason: 'auto_stake',
+        refType: 'StakeEvent',
+      });
+      const stakedAfter = await applyBalanceDelta(tx, userId, amount, {
+        currency: 'scad_staked',
+        reason: 'auto_stake',
+        refType: 'StakeEvent',
+      });
+      const lockedUntil = new Date(Date.now() + ENGINE.LOCK_PERIOD_MS);
+      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: lockedUntil } });
+      await tx.stakeEvent.create({
+        data: { userId, kind: 'auto_stake', amountScad: amount, stakedAfter, lockedUntil },
+      });
+      return amount;
+    });
   }
 
   // ------------------------------------------------------------- internals
@@ -130,6 +196,7 @@ export class StakingService {
         stakeLockedUntil: true,
         usdsBalance: true,
         usdsReserved: true,
+        autoStakeEnabled: true,
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -158,6 +225,8 @@ export class StakingService {
       totalUsdsEarned: (earned._sum.shareUsds ?? 0n).toString(),
       estApyPct: estimateApyPct(lastRound),
       lockPeriodMs: ENGINE.LOCK_PERIOD_MS,
+      autoStakeEnabled: user.autoStakeEnabled,
+      minStakeScad: ENGINE.MIN_STAKE_SCAD_BASE.toString(),
     };
   }
 }

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ENGINE } from '@scadium/shared';
 import { Coins, Flame, Lock, TrendingUp, Wallet, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,7 +27,12 @@ interface EngineSummary {
   dividendNgrBps: number;
   buybackNgrBps: number;
   distributionIntervalMs: number;
-  lastRound: { period: string; poolUsds: string; participantCount: number; distributedAt: string | null } | null;
+  lastRound: {
+    period: string;
+    poolUsds: string;
+    participantCount: number;
+    distributedAt: string | null;
+  } | null;
 }
 
 interface StakingSummary {
@@ -39,6 +45,16 @@ interface StakingSummary {
   totalUsdsEarned: string;
   estApyPct: number;
   lockPeriodMs: number;
+  autoStakeEnabled: boolean;
+  minStakeScad: string;
+}
+
+interface EarnRate {
+  baseRewardPerLamport: number;
+  tierMultiplier: number;
+  campaignMultiplier: number;
+  effectiveMultiplier: number;
+  scadPerSolWagered: string;
 }
 
 interface Round {
@@ -70,6 +86,12 @@ export function EngineDashboard() {
     enabled: !!token,
     refetchInterval: 30_000,
   });
+  const earnRate = useQuery({
+    queryKey: ['staking', 'earn-rate'],
+    queryFn: () => api<EarnRate>('/staking/earn-rate', { token }),
+    enabled: !!token,
+    refetchInterval: 30_000,
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['staking'] });
@@ -81,13 +103,25 @@ export function EngineDashboard() {
       <FlowDiagram />
 
       <div className="grid sm:grid-cols-3 gap-4">
-        <Stat label="Total staked" value={stats.data ? `${scad(stats.data.totalStakedScad, 0)} SCAD` : '…'} icon={Lock} />
-        <Stat label="USDS distributed" value={stats.data ? usds(stats.data.totalDistributedUsds) : '…'} icon={Coins} />
-        <Stat label="$SCAD burned" value={stats.data ? `${scad(stats.data.totalBurnedScad, 0)}` : '…'} icon={Flame} />
+        <Stat
+          label="Total staked"
+          value={stats.data ? `${scad(stats.data.totalStakedScad, 0)} SCAD` : '…'}
+          icon={Lock}
+        />
+        <Stat
+          label="USDS distributed"
+          value={stats.data ? usds(stats.data.totalDistributedUsds) : '…'}
+          icon={Coins}
+        />
+        <Stat
+          label="$SCAD burned"
+          value={stats.data ? `${scad(stats.data.totalBurnedScad, 0)}` : '…'}
+          icon={Flame}
+        />
       </div>
 
       {token ? (
-        <StakePanel summary={staking.data} onChange={invalidate} />
+        <StakePanel summary={staking.data} earnRate={earnRate.data} onChange={invalidate} />
       ) : (
         <Card>
           <CardContent className="py-12 text-center text-foreground-muted text-sm">
@@ -147,8 +181,21 @@ function Stat({ label, value, icon: Icon }: { label: string; value: string; icon
   );
 }
 
-function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined; onChange: () => void }) {
+// Client-side min stake (whole SCAD) derived from the engine constant — keeps the
+// UI guard in lockstep with StakingService's MIN_STAKE_SCAD_BASE check.
+const MIN_STAKE_SCAD = ENGINE.MIN_STAKE_SCAD_BASE / 10 ** SCAD_DECIMALS;
+
+function StakePanel({
+  summary,
+  earnRate,
+  onChange,
+}: {
+  summary: StakingSummary | undefined;
+  earnRate: EarnRate | undefined;
+  onChange: () => void;
+}) {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
   const [amount, setAmount] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
@@ -162,25 +209,66 @@ function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined
   const run = (path: string, body?: Record<string, unknown>) =>
     api(path, { method: 'POST', token, body });
 
+  // Client-side min-stake validation mirrors the server guard for instant feedback.
+  const amountNum = Number(amount);
+  const belowMin =
+    !!amount && Number.isFinite(amountNum) && amountNum > 0 && amountNum < MIN_STAKE_SCAD;
+
   const stake = useMutation({
     mutationFn: () => run('/staking/stake', { amount: toBase(amount) }),
-    onSuccess: () => { setAmount(''); setErr(null); onChange(); },
+    onSuccess: () => {
+      setAmount('');
+      setErr(null);
+      onChange();
+    },
     onError: (e: Error) => setErr(e.message),
   });
   const unstake = useMutation({
     mutationFn: () => run('/staking/unstake', { amount: toBase(amount) }),
-    onSuccess: () => { setAmount(''); setErr(null); onChange(); },
+    onSuccess: () => {
+      setAmount('');
+      setErr(null);
+      onChange();
+    },
     onError: (e: Error) => setErr(e.message),
   });
   const stakeAll = useMutation({
     mutationFn: () => run('/staking/claim-and-stake'),
-    onSuccess: () => { setErr(null); onChange(); },
+    onSuccess: () => {
+      setErr(null);
+      onChange();
+    },
     onError: (e: Error) => setErr(e.message),
   });
   const claimUsds = useMutation({
     mutationFn: () => run('/rewards/claim', { kind: 'dividend' }),
-    onSuccess: () => { setErr(null); onChange(); },
+    onSuccess: () => {
+      setErr(null);
+      onChange();
+    },
     onError: (e: Error) => setErr(e.message),
+  });
+
+  // Auto-stake toggle: optimistic flip on the cached summary, PATCH, then invalidate.
+  const autoStake = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api<{ enabled: boolean }>('/staking/auto-stake', {
+        method: 'PATCH',
+        token,
+        body: { enabled },
+      }),
+    onMutate: async (enabled: boolean) => {
+      await qc.cancelQueries({ queryKey: ['staking', 'summary'] });
+      const prev = qc.getQueryData<StakingSummary>(['staking', 'summary']);
+      if (prev) qc.setQueryData(['staking', 'summary'], { ...prev, autoStakeEnabled: enabled });
+      return { prev };
+    },
+    onError: (e: Error, _enabled, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['staking', 'summary'], ctx.prev);
+      setErr(e.message);
+    },
+    onSuccess: () => setErr(null),
+    onSettled: () => onChange(),
   });
 
   const busy = stake.isPending || unstake.isPending || stakeAll.isPending;
@@ -198,12 +286,23 @@ function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined
           <Field label="Est. APY" value={summary ? `${summary.estApyPct.toFixed(1)}%` : '…'} />
         </div>
 
-        {summary?.locked && summary.lockedUntil && (
-          <div className="flex items-center gap-2 text-xs text-warning">
-            <Lock className="h-3.5 w-3.5" />
-            Locked until {new Date(summary.lockedUntil).toLocaleString()}
-          </div>
+        {earnRate && (
+          <p className="flex items-center gap-1.5 text-xs text-foreground-muted">
+            <Zap className="h-3.5 w-3.5 text-primary-400" />≈ {scad(earnRate.scadPerSolWagered, 0)}{' '}
+            $SCAD per 1 SOL wagered · tier ×{earnRate.effectiveMultiplier.toFixed(2)}
+          </p>
         )}
+
+        <AutoStakeToggle
+          enabled={summary?.autoStakeEnabled ?? false}
+          disabled={!summary || autoStake.isPending}
+          onToggle={(v) => autoStake.mutate(v)}
+        />
+
+        <LockCountdown
+          lockedUntil={summary?.lockedUntil ?? null}
+          locked={summary?.locked ?? false}
+        />
 
         <div className="flex gap-2">
           <input
@@ -215,7 +314,11 @@ function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined
             placeholder="Amount in SCAD"
             className="flex-1 rounded-xl border border-border bg-surface-elevated px-4 py-3 font-mono text-sm focus:border-primary-400 outline-none"
           />
-          <Button variant="primary" disabled={busy || !amount} onClick={() => stake.mutate()}>
+          <Button
+            variant="primary"
+            disabled={busy || !amount || belowMin}
+            onClick={() => stake.mutate()}
+          >
             Stake
           </Button>
           <Button
@@ -226,6 +329,12 @@ function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined
             Unstake
           </Button>
         </div>
+
+        {belowMin && (
+          <p className="text-xs text-warning">
+            Minimum stake is {MIN_STAKE_SCAD.toLocaleString()} $SCAD.
+          </p>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={busy} onClick={() => stakeAll.mutate()}>
@@ -243,6 +352,73 @@ function StakePanel({ summary, onChange }: { summary: StakingSummary | undefined
         {err && <p className="text-xs text-danger">{err}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+function AutoStakeToggle({
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-border bg-surface-elevated px-4 py-3">
+      <div>
+        <div className="text-sm font-medium">Auto-stake earned $SCAD</div>
+        <div className="text-[11px] text-foreground-muted">
+          Sweep new $SCAD into your locked stake automatically.
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        disabled={disabled}
+        onClick={() => onToggle(!enabled)}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+          enabled ? 'bg-primary-500' : 'bg-border'
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+            enabled ? 'translate-x-[22px]' : 'translate-x-0.5'
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
+/** Live lock countdown; auto-clears (Unstake re-enables) the moment it expires. */
+function LockCountdown({ lockedUntil, locked }: { lockedUntil: string | null; locked: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  const target = lockedUntil ? new Date(lockedUntil).getTime() : 0;
+  const remaining = target - now;
+  const active = locked && remaining > 0;
+
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(t);
+  }, [active]);
+
+  if (!active) return null;
+
+  const s = Math.floor(remaining / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const parts = [d && `${d}d`, h && `${h}h`, m && `${m}m`, `${sec}s`].filter(Boolean).join(' ');
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-warning">
+      <Lock className="h-3.5 w-3.5" />
+      Staked $SCAD locked — unstake in {parts}
+    </div>
   );
 }
 

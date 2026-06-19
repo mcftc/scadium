@@ -67,7 +67,9 @@ describe('ProofOfWagerService.accrue (unit)', () => {
     const past = new Date(Date.now() - 86_400_000);
     const { tx } = makeTx({
       totalWagered: BigInt(1_000 * LAMPORTS_PER_SOL), // top tier ×1.5
-      campaigns: [{ active: true, multiplier: 100, gameType: null, startsAt: past, endsAt: future }],
+      campaigns: [
+        { active: true, multiplier: 100, gameType: null, startsAt: past, endsAt: future },
+      ],
     });
     const stake = 1_000_000n;
     const amount = await svc.accrue(tx as never, {
@@ -82,10 +84,50 @@ describe('ProofOfWagerService.accrue (unit)', () => {
 
   it('zero/negative stake accrues nothing', async () => {
     const { tx, userUpdate } = makeTx({ totalWagered: 0n });
-    expect(await svc.accrue(tx as never, { userId: 'u1', gameType: 'dice', stakeLamports: 0n })).toBe(
-      0n,
-    );
+    expect(
+      await svc.accrue(tx as never, { userId: 'u1', gameType: 'dice', stakeLamports: 0n }),
+    ).toBe(0n);
     expect(userUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProofOfWagerService.effectiveMultiplier (unit, #205)', () => {
+  const svc = new ProofOfWagerService({} as never);
+
+  // The same float multiplier accrue() applies (min(tier × campaign, MAX)); the
+  // readout must NOT duplicate the math — it calls this exact method.
+  function appliedByAccrue(totalWagered: bigint, campaignMult = 1.0): number {
+    const thresholds = WAGER.TIER_THRESHOLDS_LAMPORTS;
+    let tier: number = WAGER.TIER_MULTIPLIER[0];
+    for (let i = 0; i < thresholds.length; i += 1) {
+      if (totalWagered >= BigInt(thresholds[i]!)) tier = WAGER.TIER_MULTIPLIER[i] ?? tier;
+    }
+    return Math.min(tier * campaignMult, WAGER.MAX_MULTIPLIER);
+  }
+
+  it('matches accrue() across every tier boundary', () => {
+    const cases = [
+      0n, // tier 0 ×1.0
+      BigInt(10 * LAMPORTS_PER_SOL - 1), // just below tier 1
+      BigInt(10 * LAMPORTS_PER_SOL), // tier 1 ×1.1
+      BigInt(100 * LAMPORTS_PER_SOL), // tier 2 ×1.25
+      BigInt(1_000 * LAMPORTS_PER_SOL), // tier 3 ×1.5
+      BigInt(10_000 * LAMPORTS_PER_SOL), // still top tier
+    ];
+    for (const w of cases) {
+      expect(svc.effectiveMultiplier(w)).toBeCloseTo(appliedByAccrue(w), 10);
+    }
+  });
+
+  it('folds in an active campaign multiplier', () => {
+    const w = BigInt(100 * LAMPORTS_PER_SOL); // tier 2 ×1.25
+    expect(svc.effectiveMultiplier(w, 2.0)).toBeCloseTo(appliedByAccrue(w, 2.0), 10);
+    expect(svc.effectiveMultiplier(w, 2.0)).toBeCloseTo(2.5, 10); // 1.25 × 2.0
+  });
+
+  it('caps at WAGER.MAX_MULTIPLIER', () => {
+    const w = BigInt(1_000 * LAMPORTS_PER_SOL); // top tier ×1.5
+    expect(svc.effectiveMultiplier(w, 100)).toBe(WAGER.MAX_MULTIPLIER);
   });
 });
 

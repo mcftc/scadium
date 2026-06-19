@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type GameType, type WagerCampaign } from '@prisma/client';
-import { SCAD, WAGER } from '@scadium/shared';
+import { LAMPORTS_PER_SOL, SCAD, WAGER } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface AccrueParams {
@@ -56,9 +56,8 @@ export class ProofOfWagerService {
       where: { id: userId },
       select: { totalWagered: true },
     });
-    const tierMult = this.tierMultiplier(user?.totalWagered ?? 0n);
     const campaignMult = await this.campaignMultiplier(tx, gameType);
-    const multiplier = Math.min(tierMult * campaignMult, WAGER.MAX_MULTIPLIER);
+    const multiplier = this.effectiveMultiplier(user?.totalWagered ?? 0n, campaignMult);
 
     // BigInt-safe: scale the float multiplier to an integer (3 dp) then divide.
     const scaled = BigInt(Math.round(multiplier * 1000));
@@ -83,6 +82,48 @@ export class ProofOfWagerService {
     return amount;
   }
 
+  /**
+   * The combined accrual multiplier actually applied by `accrue()`:
+   * `min(tier × campaign, MAX_MULTIPLIER)`. Pure (no I/O) so it can be reused by
+   * the earn-rate readout (#205) AND `accrue()` without duplicating the tier/cap
+   * math. `campaignMult` defaults to 1.0 (no active campaign).
+   */
+  effectiveMultiplier(lifetimeWagered: bigint, campaignMult = 1.0): number {
+    const tierMult = this.tierMultiplier(lifetimeWagered);
+    return Math.min(tierMult * campaignMult, WAGER.MAX_MULTIPLIER);
+  }
+
+  /**
+   * Read-only earn-rate readout for a user (#205 — DISPLAY ONLY, never credits).
+   * Surfaces the same multiplier `accrue()` would apply right now, the base
+   * per-lamport rate, and the derived "$SCAD per 1 SOL wagered" headline.
+   */
+  async earnRate(userId: string, gameType?: GameType) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { totalWagered: true },
+    });
+    const campaignMult = await this.campaignMultiplier(this.prisma as never, gameType ?? null);
+    const lifetimeWagered = user?.totalWagered ?? 0n;
+    const tierMult = this.tierMultiplier(lifetimeWagered);
+    const multiplier = this.effectiveMultiplier(lifetimeWagered, campaignMult);
+
+    // $SCAD base units earned per 1 SOL (1e9 lamports) wagered at this multiplier.
+    // base = LAMPORTS_PER_SOL × WAGER_REWARD_PER_LAMPORT; scale the float
+    // multiplier to an integer (3 dp) then divide — BigInt-safe, matches accrue.
+    const base = BigInt(LAMPORTS_PER_SOL) * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT);
+    const scaled = BigInt(Math.round(multiplier * 1000));
+    const scadPerSol = (base * scaled) / 1000n;
+
+    return {
+      baseRewardPerLamport: SCAD.WAGER_REWARD_PER_LAMPORT,
+      tierMultiplier: tierMult,
+      campaignMultiplier: campaignMult,
+      effectiveMultiplier: multiplier,
+      scadPerSolWagered: scadPerSol.toString(),
+    };
+  }
+
   /** Lifetime-wager → permanent accrual multiplier (WAGER tiers). */
   private tierMultiplier(lifetimeWagered: bigint): number {
     const thresholds = WAGER.TIER_THRESHOLDS_LAMPORTS;
@@ -98,7 +139,7 @@ export class ProofOfWagerService {
   /** Highest applicable active-campaign multiplier (campaigns do not stack). */
   private async campaignMultiplier(
     tx: Prisma.TransactionClient,
-    gameType: GameType,
+    gameType: GameType | null,
   ): Promise<number> {
     const now = Date.now();
     if (now - this.campaignCacheAt > ProofOfWagerService.CACHE_TTL_MS) {
@@ -149,8 +190,7 @@ export function periodKeys(now: Date): { daily: string; weekly: string } {
   const dayNum = (date.getUTCDay() + 6) % 7; // Mon=0..Sun=6
   date.setUTCDate(date.getUTCDate() - dayNum + 3); // nearest Thursday
   const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
-  const week =
-    1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 86400000));
+  const week = 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 86400000));
   const weekly = `weekly:${date.getUTCFullYear()}${String(week).padStart(2, '0')}`;
   return { daily, weekly };
 }
