@@ -3,6 +3,7 @@ import { ENGINE } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+import { withSerializable } from '../prisma/with-serializable';
 
 /**
  * SCAD Engine — staking (bc.game parity).
@@ -127,10 +128,16 @@ export class StakingService {
    * `stakeLedgerDrift()` at zero. No-op (returns 0n) when disabled or below MIN.
    */
   async autoStakeSweep(userId: string): Promise<bigint> {
-    return this.prisma.$transaction(async (tx) => {
+    // Serializable (not a bare $transaction): this fires automatically on every
+    // /staking/summary poll (30s, and once per open tab), so concurrent sweeps for
+    // the same user are realistic. Serializable makes the race-loser abort with
+    // 40001 → withSerializable retries the closure, re-reads a now-zero spendable
+    // balance, and returns 0n cleanly instead of 500-ing the summary with the
+    // applyBalanceDelta "Insufficient balance" guard.
+    return withSerializable(this.prisma, async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { autoStakeEnabled: true, scadiumBalance: true },
+        select: { autoStakeEnabled: true, scadiumBalance: true, stakeLockedUntil: true },
       });
       if (!user || !user.autoStakeEnabled) return 0n;
       if (user.scadiumBalance < BigInt(ENGINE.MIN_STAKE_SCAD_BASE)) return 0n;
@@ -148,7 +155,16 @@ export class StakingService {
         reason: 'auto_stake',
         refType: 'StakeEvent',
       });
-      const lockedUntil = new Date(Date.now() + ENGINE.LOCK_PERIOD_MS);
+      // Unlike a MANUAL stake (a deliberate action that resets the whole-balance
+      // lock), an automatic sweep must NOT perpetually extend the lock — otherwise
+      // an active player whose earnings sweep every 30s could never reach an
+      // unstake window. Preserve any existing unexpired lock; only start a fresh
+      // 7-day lock when the stake is currently unlocked.
+      const now = Date.now();
+      const lockedUntil =
+        user.stakeLockedUntil && user.stakeLockedUntil.getTime() > now
+          ? user.stakeLockedUntil
+          : new Date(now + ENGINE.LOCK_PERIOD_MS);
       await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: lockedUntil } });
       await tx.stakeEvent.create({
         data: { userId, kind: 'auto_stake', amountScad: amount, stakedAfter, lockedUntil },

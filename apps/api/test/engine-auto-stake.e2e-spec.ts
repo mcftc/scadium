@@ -75,6 +75,26 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
     expect(stakedLedger!.balanceAfter).toBe(earned);
   });
 
+  it('a second auto-sweep does NOT extend the existing lock (no perpetual-lock trap)', async () => {
+    // #2 (review): an automatic 30s sweep must not perpetually renew the whole-
+    // balance lock, or an active player could never reach an unstake window.
+    const userId = await makeStaker(true, 500_000_000_000n);
+    await staking.autoStakeSweep(userId);
+    const lock1 = (await prisma.user.findUniqueOrThrow({ where: { id: userId } })).stakeLockedUntil;
+    expect(lock1).not.toBeNull();
+
+    // Earn more $SCAD (still under the original lock), then sweep again.
+    await prisma.user.update({
+      where: { id: userId },
+      data: { scadiumBalance: 200_000_000_000n },
+    });
+    await staking.autoStakeSweep(userId);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(after.scadiumStaked).toBe(700_000_000_000n); // both tranches swept
+    expect(after.stakeLockedUntil!.getTime()).toBe(lock1!.getTime()); // lock UNCHANGED, not renewed
+  });
+
   it('conserves total scad + scad_staked and never double-credits', async () => {
     const earned = 300_000_000_000n;
     const userId = await makeStaker(true, earned);
