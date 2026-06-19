@@ -264,7 +264,7 @@ pub mod scadium_vault {
         let seeds: &[&[u8]] = &[b"house", &[house.bump]];
         token::transfer(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.token_program.key(),
                 SplTransfer {
                     from: ctx.accounts.usds_treasury_ata.to_account_info(),
                     to: ctx.accounts.user_ata.to_account_info(),

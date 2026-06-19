@@ -26,6 +26,7 @@ describe('scadium_vault', () => {
   const stranger = Keypair.generate();
 
   let scadMint: PublicKey;
+  let usdsMint: PublicKey;
   let housePda: PublicKey;
   let houseVaultPda: PublicKey;
   let userVaultPda: PublicKey;
@@ -40,6 +41,8 @@ describe('scadium_vault', () => {
       await provider.connection.confirmTransaction(sig);
     }
     scadMint = await createMint(provider.connection, payer, payer.publicKey, null, 9);
+    // SCAD Engine: USD-pegged dividend mint (6 decimals, USDC convention).
+    usdsMint = await createMint(provider.connection, payer, payer.publicKey, null, 6);
 
     housePda = pda(Buffer.from('house'));
     houseVaultPda = pda(Buffer.from('house_vault'));
@@ -53,12 +56,14 @@ describe('scadium_vault', () => {
         house: housePda,
         houseVault: houseVaultPda,
         scadMint,
+        usdsMint,
         authority: payer.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
     const house = await (program.account as any).house.fetch(housePda);
     assert.equal(house.cosigner.toBase58(), cosigner.publicKey.toBase58());
+    assert.equal(house.usdsMint.toBase58(), usdsMint.toBase58());
     assert.isFalse(house.paused);
 
     // Seed the house float so it can pay net wins.
@@ -341,6 +346,59 @@ describe('scadium_vault', () => {
           treasuryAta,
           userAta,
           scadMint,
+          cosigner: cosigner.publicKey,
+        })
+        .signers([cosigner])
+        .rpc();
+      assert.fail('should have thrown');
+    } catch (e) {
+      assert.ok(e);
+    }
+  });
+
+  it('claim_dividend transfers USDS and blocks double claims', async () => {
+    // Fund the USDS dividend treasury ATA (authority = house PDA).
+    const treasuryAta = getAssociatedTokenAddressSync(usdsMint, housePda, true);
+    await getOrCreateAssociatedTokenAccount(provider.connection, payer, usdsMint, housePda, true);
+    await mintTo(provider.connection, payer, usdsMint, treasuryAta, payer, 1_000_000_000n);
+
+    const period = new anchor.BN(2026061904);
+    const claimRecord = pda(
+      Buffer.from('claim'),
+      user.publicKey.toBuffer(),
+      Buffer.from([4]), // RewardKind::Dividend
+      Buffer.from(new Uint8Array(new BigUint64Array([BigInt(2026061904)]).buffer)),
+    );
+    const userAta = getAssociatedTokenAddressSync(usdsMint, user.publicKey);
+
+    await program.methods
+      .claimDividend(period, new anchor.BN(10_000_000)) // $10 USDS (6 decimals)
+      .accounts({
+        house: housePda,
+        claimRecord,
+        user: user.publicKey,
+        usdsTreasuryAta: treasuryAta,
+        userAta,
+        usdsMint,
+        cosigner: cosigner.publicKey,
+      })
+      .signers([cosigner])
+      .rpc();
+
+    const acct = await getAccount(provider.connection, userAta);
+    assert.equal(acct.amount, 10_000_000n);
+
+    // Second claim for the same (user, Dividend, period) must fail (PDA exists).
+    try {
+      await program.methods
+        .claimDividend(period, new anchor.BN(1))
+        .accounts({
+          house: housePda,
+          claimRecord,
+          user: user.publicKey,
+          usdsTreasuryAta: treasuryAta,
+          userAta,
+          usdsMint,
           cosigner: cosigner.publicKey,
         })
         .signers([cosigner])
