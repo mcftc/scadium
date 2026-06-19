@@ -86,11 +86,26 @@ export interface BootstrapResult {
 }
 
 /**
+ * Options for the bootstrap. Chaos specs (#179) use these to boot a SECOND
+ * replica that does NOT wait for crash/jackpot leadership (the standby replica
+ * intentionally starts as a follower behind the already-elected leader, and only
+ * becomes leader after the original leader's Redis lock TTL lapses).
+ */
+export interface BootstrapOptions {
+  /**
+   * Skip the "wait until crash + jackpot lead and a round is bettable" gate.
+   * The kill-9 spec boots a standby replica that must remain a FOLLOWER while
+   * the leader is alive, so it must NOT wait to lead.
+   */
+  skipLeaderWait?: boolean;
+}
+
+/**
  * Build + init the full app over real Postgres, mirroring main.ts global
  * config. Returns a supertest-ready http server and helpers. Call
  * `await app.close()` in `afterAll`.
  */
-export async function bootstrapApp(): Promise<BootstrapResult> {
+export async function bootstrapApp(options: BootstrapOptions = {}): Promise<BootstrapResult> {
   // Imported here (not top-level) so the process.env override above is applied
   // before AppModule / its providers are evaluated.
   const { Test } = await import('@nestjs/testing');
@@ -138,8 +153,12 @@ export async function bootstrapApp(): Promise<BootstrapResult> {
     (crash.snapshot() as { phase: string }).phase === 'waiting' &&
     jackpot.isLeader() &&
     jackpot.getOpenRound() !== null;
-  for (let i = 0; i < 150 && !bettable(); i++) {
-    await new Promise((r) => setTimeout(r, 100));
+  // A standby replica (kill-9 spec) must stay a FOLLOWER behind the live leader,
+  // so it explicitly does NOT wait to lead.
+  if (!options.skipLeaderWait) {
+    for (let i = 0; i < 150 && !bettable(); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   const jwt = app.get(JwtService);
