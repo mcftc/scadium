@@ -16,6 +16,7 @@ import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { JackpotGateway } from './jackpot.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
+import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 
 // Single-writer election (#13/#86): only the lock holder opens/draws rounds, so
 // N replicas never produce duplicate JackpotRound rows. No Redis → always leader.
@@ -269,6 +270,11 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           await this.drawAndSettle();
           this.logger.log(`jackpot recovery: round ${r.id} settled`);
         } catch (e) {
+          // #212 — benign: live draw or a concurrent recovery pass already settled it.
+          if (isSettleClaimLost(e)) {
+            this.logger.warn(`jackpot recovery skipped round ${r.id}: already settled`);
+            continue;
+          }
           await this.recordSettlementFailure(r.id, e, { roundId: r.id, path: 'recovery' });
         }
       }
@@ -394,6 +400,17 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       // serializable transaction — no partial refunds, no terminal-without-money.
       try {
         await withSerializable(this.prisma, async (tx) => {
+          // #212 — re-assert leadership AFTER the tx opens (a demoted leader aborts
+          // before refunding), then CLAIM the round: the guarded flip is the
+          // concurrency gate. Only the settler that transitions 'open'→'refunded'
+          // wins; a resumed-stale leader OR a concurrent recovery pass matches 0
+          // rows and throws, rolling back the whole tx (no double refund).
+          assertStillLeader(() => this.isLeader(), 'jackpot');
+          const { count } = await tx.jackpotRound.updateMany({
+            where: { id: roundId, status: 'open' },
+            data: { status: 'refunded', totalLamports: total, drawnAt: new Date() },
+          });
+          assertRoundClaimed(count, 'jackpot', roundId);
           for (const e of entries) {
             await applyBalanceDelta(tx, e.userId, e.amountLamports, {
               reason: 'jackpot_refund',
@@ -401,13 +418,14 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               refId: roundId,
             });
           }
-          await tx.jackpotRound.update({
-            where: { id: roundId },
-            data: { status: 'refunded', totalLamports: total, drawnAt: new Date() },
-          });
           await tx.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
         });
       } catch (e) {
+        // #212 — benign: peer already settled this round (no dead-letter, no new round).
+        if (isSettleClaimLost(e)) {
+          this.logger.warn(`jackpot refund skipped: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        }
         await this.recordSettlementFailure(roundId, e, {
           roundId,
           path: 'refund',
@@ -496,6 +514,25 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     // the seed reveal in ONE serializable transaction.
     try {
       await withSerializable(this.prisma, async (tx) => {
+        // #212 — re-assert leadership AFTER the tx opens, then CLAIM the round:
+        // the guarded 'open'→'drawn' flip (with the draw result) is the
+        // concurrency gate. Only the winning settler proceeds; a resumed-stale
+        // leader OR a concurrent recovery pass matches 0 rows and throws, rolling
+        // back the whole tx so NO credits/Bet rows commit (no double payout).
+        assertStillLeader(() => this.isLeader(), 'jackpot');
+        const { count } = await tx.jackpotRound.updateMany({
+          where: { id: roundId, status: 'open' },
+          data: {
+            status: 'drawn',
+            totalLamports: total,
+            winnerId: winner.userId,
+            winningTicket: ticket,
+            payoutLamports: payout,
+            drawnAt: new Date(),
+          },
+        });
+        assertRoundClaimed(count, 'jackpot', roundId);
+
         let i = 0;
         for (const [userId, info] of byUser) {
           const job = settleJobs[i]!;
@@ -564,20 +601,16 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             },
           });
         }
-        await tx.jackpotRound.update({
-          where: { id: roundId },
-          data: {
-            status: 'drawn',
-            totalLamports: total,
-            winnerId: winner.userId,
-            winningTicket: ticket,
-            payoutLamports: payout,
-            drawnAt: new Date(),
-          },
-        });
+        // Round terminal flip (+ draw result) happened at claim time above; only
+        // the seed reveal remains.
         await tx.seed.update({ where: { id: seedId }, data: { revealedAt: new Date() } });
       });
     } catch (e) {
+      // #212 — benign: peer already settled this round (no dead-letter, no new round).
+      if (isSettleClaimLost(e)) {
+        this.logger.warn(`jackpot draw skipped: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
       await this.recordSettlementFailure(roundId, e, {
         roundId,
         path: 'draw',
