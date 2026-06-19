@@ -571,7 +571,21 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
             where: { id: t.userId },
             data: {
               totalWagered: { increment: t.costLamports },
-              totalWon: { increment: r.won ? r.payoutLamports : BigInt(0) },
+              // NET, not gross (#183): reconcileAll derives totalWon as
+              // SUM(GREATEST(payoutLamports - amountLamports, 0)) from the Bet
+              // row (amountLamports = costLamports, payoutLamports = gross
+              // prize), and crash settle increments by net too. Incrementing by
+              // the gross payout here over-counted every winning ticket by its
+              // cost, drifting reconciliation by exactly the stake. Floor at 0 —
+              // a winning ticket's prize always covers its cost, but mirror the
+              // GREATEST(...,0) basis defensively.
+              totalWon: {
+                increment: r.won
+                  ? r.payoutLamports > t.costLamports
+                    ? r.payoutLamports - t.costLamports
+                    : BigInt(0)
+                  : BigInt(0),
+              },
               totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
               gamesPlayed: { increment: 1 },
             },
