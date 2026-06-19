@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import IORedis from 'ioredis';
 import { CrashEngine } from '../src/games/crash/crash.engine';
-import { prisma, gw, offChain } from './engine-harness';
+import { prisma, gw, offChain, pow } from './engine-harness';
 
 /**
  * Issue #85 — two CrashEngine instances sharing one Redis must elect a single
@@ -27,8 +27,8 @@ describe('crash single-writer leader election (issue #85)', () => {
   it('only the leader writes rounds; the follower mirrors the same round', async () => {
     await r1.del('lock:engine:crash', 'round:crash:current');
 
-    a = new CrashEngine(prisma as never, gw(), offChain, { client: r1 } as never);
-    b = new CrashEngine(prisma as never, gw(), offChain, { client: r2 } as never);
+    a = new CrashEngine(prisma as never, gw(), offChain, pow(), { client: r1 } as never);
+    b = new CrashEngine(prisma as never, gw(), offChain, pow(), { client: r2 } as never);
     await a.onModuleInit();
     await b.onModuleInit();
 

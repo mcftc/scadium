@@ -32,7 +32,8 @@ async function makeSeed() {
 function makeCrashEngine() {
   const gateway = new Proxy({}, { get: () => () => undefined }) as never;
   const chain = { enabled: false } as never;
-  return new CrashEngine(prisma as never, gateway, chain);
+  const proofOfWager = { accrue: async () => 0n } as never;
+  return new CrashEngine(prisma as never, gateway, chain, proofOfWager);
 }
 const recoverScheduled = (engine: unknown) =>
   (engine as { recoverScheduledBets: () => Promise<void> }).recoverScheduledBets();

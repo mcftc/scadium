@@ -18,6 +18,7 @@ const svc = new CoinflipService(
   new SeedManagerService(prisma as never),
   { assertCanWager: async () => undefined } as never,
   { creditReferral: async () => undefined } as never,
+  { accrue: async () => 0n } as never,
 );
 
 const RUN = `${Date.now().toString(36)}`;

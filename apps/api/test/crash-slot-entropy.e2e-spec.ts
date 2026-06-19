@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { crashPointFromSlot, syntheticSlotHash } from '@scadium/fair';
 import { CrashEngine } from '../src/games/crash/crash.engine';
-import { prisma, gw } from './engine-harness';
+import { prisma, gw, pow } from './engine-harness';
 
 /**
  * Issue #101 / ADR 0002 — with CRASH_ONCHAIN_ENTROPY on, the bust is NOT known at
@@ -30,7 +30,7 @@ describe('crash on-chain SlotHashes entropy flow (issue #101)', () => {
   });
 
   it('defers the bust at open, derives + persists it at run, idempotently', async () => {
-    const engine = new CrashEngine(prisma as never, gw(), chainStub) as unknown as Eng;
+    const engine = new CrashEngine(prisma as never, gw(), chainStub, pow()) as unknown as Eng;
     await engine.startNewRound();
     const cur = engine.current;
 

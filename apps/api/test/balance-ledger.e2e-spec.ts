@@ -87,6 +87,7 @@ describe('BalanceLedger projection (integration, real Postgres)', () => {
       prisma as never,
       { emitTick() {}, emitBust() {} } as never,
       { enabled: false } as never,
+      { accrue: async () => 0n } as never,
     );
     (engine as unknown as { current: unknown }).current = {
       id: round.id,
@@ -124,6 +125,7 @@ describe('BalanceLedger projection (integration, real Postgres)', () => {
       prisma as never,
       { emitTick() {}, emitBust() {} } as never,
       { enabled: false } as never,
+      { accrue: async () => 0n } as never,
     );
     (engine as unknown as { current: unknown }).current = {
       id: round.id,
