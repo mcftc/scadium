@@ -510,76 +510,106 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       digits = lotteryDraw(serverSeed, padClientSeed32(clientSeed), synthetic, nonce).digits;
     }
 
-    const tickets = await this.prisma.lotteryTicket.findMany({
-      where: { drawId: this.current.id },
-      include: { user: { select: { walletAddress: true } } },
-    });
-
-    // ----- Phase 1 (pure): bracket every ticket + size the pool -----
+    // #215 — the bracket math + the pool size are computed INSIDE the
+    // serializable tx below from an inside-the-tx ticket read, so the ticket set
+    // shares the serializable snapshot with the #212 claim. A late buy that
+    // commits its ticket before our claim is ALWAYS included; one that would
+    // commit after is rejected by its own open-guard (debit rolled back) — never
+    // an orphaned ticket. These outer vars carry the in-tx result out for the
+    // gateway/log/chain side effects, which fire only AFTER the tx commits.
     const B = LOTTERY.BRACKET_COUNT;
-    const bracketWinnerCounts = new Array<number>(B).fill(0);
-    const matched = tickets.map((t) => {
-      const matchLen = lotteryLeadingMatch(t.digits, digits);
-      const bracket = lotteryBracket(matchLen);
-      if (bracket !== null) bracketWinnerCounts[bracket] += 1;
-      return { ticket: t, matchLen, bracket };
-    });
-
-    // Sales are recomputed from the tickets (robust across restarts).
-    const salesScadBase = tickets.reduce((acc, t) => acc + t.costScadBase, BigInt(0));
-    const totalPool =
-      salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
-    const {
-      bracketSlices,
-      perWinner,
-      bracketRollover,
-      burn: burnScadBase,
-      nextRollover,
-    } = splitBracketPrizes(totalPool, bracketWinnerCounts);
-
+    let bracketWinnerCounts = new Array<number>(B).fill(0);
+    let totalPool = BigInt(0);
+    let burnScadBase = BigInt(0);
+    let nextRollover = BigInt(0);
     let winnersCount = 0;
     let topPrizeScadBase = BigInt(0);
-    // AGGREGATED per winner (#29): the on-chain Payout PDA is keyed
-    // (draw, winner), so a winner with multiple winning tickets must receive
-    // ONE pay_prize for the sum — per-ticket calls would pay only the first
-    // and strand the rest forever.
-    const prizeByWallet = new Map<
-      string,
-      { walletAddress: string; amountScadBase: bigint; bracket: number; ticketIds: string[] }
-    >();
+    let prizeJobs: {
+      walletAddress: string;
+      amountScadBase: bigint;
+      bracket: number;
+      ticketIds: string[];
+    }[] = [];
+    let ticketsLen = 0;
 
-    const ticketResults = matched.map((m) => {
-      const payoutScadBase = m.bracket !== null ? perWinner[m.bracket]! : BigInt(0);
-      const won = payoutScadBase > BigInt(0);
-      if (won) winnersCount += 1;
-      if (payoutScadBase > topPrizeScadBase) topPrizeScadBase = payoutScadBase;
-      const payoutLamports = scadBaseToLamports(payoutScadBase);
-      if (won && this.chain.lotteryEnabled) {
-        const wallet = m.ticket.user.walletAddress;
-        const agg = prizeByWallet.get(wallet) ?? {
-          walletAddress: wallet,
-          amountScadBase: BigInt(0),
-          bracket: m.bracket!,
-          ticketIds: [],
-        };
-        agg.amountScadBase += payoutScadBase;
-        agg.bracket = Math.max(agg.bracket, m.bracket!);
-        agg.ticketIds.push(m.ticket.id);
-        prizeByWallet.set(wallet, agg);
-      }
-      return { ...m, payoutScadBase, payoutLamports, won };
-    });
-    const prizeJobs = [...prizeByWallet.values()];
-
-    // ----- Phase 2: ledger + ticket updates + draw flip + reveal, atomically -----
+    // ----- Ledger + ticket updates + draw flip + reveal, atomically -----
     try {
       await withSerializable(this.prisma, async (tx) => {
-        // #212 — re-assert leadership AFTER the tx opens, then CLAIM the draw:
-        // the guarded 'open'→'drawn' flip (with the full draw result) is the
-        // concurrency gate. Only the winning settler proceeds; a resumed-stale
-        // leader OR a concurrent recovery pass matches 0 rows and throws, rolling
-        // back the whole tx so NO prize credits/Bet rows commit (no double payout).
+        // #212 — re-assert leadership AFTER the tx opens (a demoted leader aborts
+        // before crediting).
         assertStillLeader(() => this.isLeader(), 'lottery');
+
+        // #215 — read the tickets INSIDE the tx so the read shares the
+        // serializable snapshot with the claim below: a late buy's guarded
+        // open-write on the draw row conflict-serializes against our claim's
+        // flip, so it is either in this snapshot or rejected (no orphan).
+        const tickets = await tx.lotteryTicket.findMany({
+          where: { drawId: this.current.id },
+          include: { user: { select: { walletAddress: true } } },
+        });
+        ticketsLen = tickets.length;
+
+        // ----- bracket every ticket + size the pool -----
+        bracketWinnerCounts = new Array<number>(B).fill(0);
+        const matched = tickets.map((t) => {
+          const matchLen = lotteryLeadingMatch(t.digits, digits);
+          const bracket = lotteryBracket(matchLen);
+          if (bracket !== null) bracketWinnerCounts[bracket] += 1;
+          return { ticket: t, matchLen, bracket };
+        });
+
+        // Sales are recomputed from the tickets (robust across restarts).
+        const salesScadBase = tickets.reduce((acc, t) => acc + t.costScadBase, BigInt(0));
+        totalPool = salesScadBase + this.current.injectionScadBase + this.current.rolloverScadBase;
+        const {
+          bracketSlices,
+          perWinner,
+          bracketRollover,
+          burn,
+          nextRollover: nextRoll,
+        } = splitBracketPrizes(totalPool, bracketWinnerCounts);
+        burnScadBase = burn;
+        nextRollover = nextRoll;
+
+        winnersCount = 0;
+        topPrizeScadBase = BigInt(0);
+        // AGGREGATED per winner (#29): the on-chain Payout PDA is keyed
+        // (draw, winner), so a winner with multiple winning tickets must receive
+        // ONE pay_prize for the sum — per-ticket calls would pay only the first
+        // and strand the rest forever.
+        const prizeByWallet = new Map<
+          string,
+          { walletAddress: string; amountScadBase: bigint; bracket: number; ticketIds: string[] }
+        >();
+
+        const ticketResults = matched.map((m) => {
+          const payoutScadBase = m.bracket !== null ? perWinner[m.bracket]! : BigInt(0);
+          const won = payoutScadBase > BigInt(0);
+          if (won) winnersCount += 1;
+          if (payoutScadBase > topPrizeScadBase) topPrizeScadBase = payoutScadBase;
+          const payoutLamports = scadBaseToLamports(payoutScadBase);
+          if (won && this.chain.lotteryEnabled) {
+            const wallet = m.ticket.user.walletAddress;
+            const agg = prizeByWallet.get(wallet) ?? {
+              walletAddress: wallet,
+              amountScadBase: BigInt(0),
+              bracket: m.bracket!,
+              ticketIds: [],
+            };
+            agg.amountScadBase += payoutScadBase;
+            agg.bracket = Math.max(agg.bracket, m.bracket!);
+            agg.ticketIds.push(m.ticket.id);
+            prizeByWallet.set(wallet, agg);
+          }
+          return { ...m, payoutScadBase, payoutLamports, won };
+        });
+        prizeJobs = [...prizeByWallet.values()];
+
+        // #212 — CLAIM the draw: the guarded 'open'→'drawn' flip (with the full
+        // draw result) is the concurrency gate. Only the winning settler
+        // proceeds; a resumed-stale leader OR a concurrent recovery pass matches
+        // 0 rows and throws, rolling back the whole tx so NO prize credits/Bet
+        // rows commit (no double payout).
         const { count } = await tx.lotteryDraw.updateMany({
           where: { id: this.current.id, status: 'open' },
           data: {
@@ -709,13 +739,11 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               digits,
               slotHash: slotHashHex,
               totalPoolScadBase: totalPool.toString(),
-              tickets: ticketResults.map((r) => ({
-                ticketId: r.ticket.id,
-                userId: r.ticket.userId,
-                bracket: r.bracket,
-                payoutScadBase: r.payoutScadBase.toString(),
-                won: r.won,
-              })),
+              // #215 — per-ticket detail now lives inside the settle tx; the
+              // recovery sweep re-derives the full breakdown from the draw's
+              // persisted tickets, so the dead-letter only carries the summary.
+              ticketCount: ticketsLen,
+              winnersCount,
             },
             error: message,
           },
@@ -803,7 +831,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     });
 
     this.logger.log(
-      `Lottery #${drawIndex} → [${digits.join('')}] · ${tickets.length} tickets · ${winnersCount} winners · ` +
+      `Lottery #${drawIndex} → [${digits.join('')}] · ${ticketsLen} tickets · ${winnersCount} winners · ` +
         `pool ${Number(totalPool) / SCAD_BASE_NUM} SCAD · burn ${Number(burnScadBase) / SCAD_BASE_NUM} · ` +
         `rollover ${Number(nextRollover) / SCAD_BASE_NUM}`,
     );

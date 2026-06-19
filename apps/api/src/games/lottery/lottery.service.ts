@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { LOTTERY, bulkDiscountTotal, scadBaseToLamports } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChainService } from '../../solana/chain.service';
@@ -112,21 +113,33 @@ export class LotteryService {
 
     // @@unique([txSignature, txIndex]) makes replaying a signature impossible —
     // the transaction throws on the duplicate key before anything is recorded.
-    const tickets = await this.prisma.$transaction(
-      events.map((event, txIndex) =>
-        this.prisma.lotteryTicket.create({
-          data: {
-            drawId: open.id,
-            userId: params.userId,
-            digits: event.digits,
-            costScadBase: perTicketScad,
-            costLamports: perTicketLamports,
-            txSignature: params.signature,
-            txIndex,
-          },
-        }),
-      ),
-    );
+    const tickets = await this.prisma.$transaction(async (tx) => {
+      const created = [];
+      for (const [txIndex, event] of events.entries()) {
+        created.push(
+          await tx.lotteryTicket.create({
+            data: {
+              drawId: open.id,
+              userId: params.userId,
+              digits: event.digits,
+              costScadBase: perTicketScad,
+              costLamports: perTicketLamports,
+              txSignature: params.signature,
+              txIndex,
+            },
+          }),
+        );
+      }
+      // #215 — even an on-chain-confirmed buy can race the off-chain draw close:
+      // if the draw is claimed terminal between getOpenDraw() and this commit the
+      // tickets would be orphaned (recorded, but bracketed by no settle). Make the
+      // whole tx conditional on the draw still being open. (The on-chain $SCAD
+      // transfer already happened; a rejected confirm leaves it reconcilable via
+      // the unique signature — re-confirm against the next open draw is blocked by
+      // the drawIndex check above, so this surfaces the race to the buyer.)
+      await this.assertDrawStillOpen(tx, open.id);
+      return created;
+    });
     await this.engine.onTicketSold(totalScad, scadBaseToLamports(totalScad), tickets.length);
 
     return {
@@ -175,7 +188,7 @@ export class LotteryService {
         where: { id: params.userId },
         data: { freeTicketBaselineWagered: { increment: per } },
       });
-      return tx.lotteryTicket.create({
+      const created = await tx.lotteryTicket.create({
         data: {
           drawId: open.id,
           userId: params.userId,
@@ -185,6 +198,13 @@ export class LotteryService {
           free: true,
         },
       });
+      // #215 — a free ticket is still a draw entry: if the draw is claimed
+      // terminal between getOpenDraw() and this commit it would be orphaned
+      // (consumed watermark + a ticket that no settle ever brackets). Make the
+      // whole tx conditional on the draw still being open (rolls back the
+      // watermark advance too).
+      await this.assertDrawStillOpen(tx, open.id);
+      return created;
     });
     await this.engine.onTicketSold(BigInt(0), BigInt(0));
     return { id: ticket.id, drawId: ticket.drawId, digits: ticket.digits, free: true };
@@ -251,6 +271,17 @@ export class LotteryService {
         },
       });
 
+      // #215 — close the late-buy orphan window (see jackpot.service for the full
+      // argument). getOpenDraw() above is pre-tx and races the settle: a draw can
+      // claim the draw terminal between that check and this commit, orphaning the
+      // debit + ticket (no Bet, no payout, no refund). A guarded no-op write on
+      // the draw row makes the whole tx CONDITIONAL on the draw still being 'open'
+      // at commit — it row-locks the same draw row the settle's claim updateMany
+      // flips (open→drawn), so they serialize: a claimed draw rejects this buy and
+      // rolls back the debit; a buy that commits first is read by the settle
+      // INSIDE its serializable tx after the claim and is settled.
+      await this.assertDrawStillOpen(tx, open.id);
+
       const response = this.serializeTicket(ticket);
       await storeIdempotency(tx, params.userId, 'lottery_buy', key, response);
       return { response, replayed: false };
@@ -259,6 +290,24 @@ export class LotteryService {
     if (!outcome.replayed) await this.engine.onTicketSold(priceScad, priceLamports, 1);
 
     return outcome.response;
+  }
+
+  /**
+   * #215 — re-assert (inside the buy tx) that the draw is still open at commit,
+   * via a guarded no-op write on the draw row. Returns nothing; throws (rolling
+   * the WHOLE tx back, including the debit) if the draw was already claimed
+   * terminal by the settle. The updateMany row-locks the draw row the settle's
+   * claim flips, so a late buy is EITHER included by the settle's
+   * inside-the-tx ticket read OR fully rejected — never an orphaned debit.
+   */
+  private async assertDrawStillOpen(tx: Prisma.TransactionClient, drawId: string) {
+    const { count } = await tx.lotteryDraw.updateMany({
+      where: { id: drawId, status: 'open' },
+      data: { status: 'open' },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Draw just closed — your ticket was not bought');
+    }
   }
 
   private serializeTicket(ticket: {
