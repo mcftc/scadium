@@ -633,9 +633,15 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           // NET prize (#183 basis): GREATEST(payout - cost, 0). Reused for both
           // the totalWon increment and the biggestWin floor below.
           const netProfit =
-            r.won && r.payoutLamports > t.costLamports
-              ? r.payoutLamports - t.costLamports
-              : BigInt(0);
+            r.payoutLamports > t.costLamports ? r.payoutLamports - t.costLamports : BigInt(0);
+          // Net LOSS, mirroring reconcileAll's GREATEST(amount - payout, 0)
+          // (#187): a SUB-COST "win" (prize < cost) still nets a loss of
+          // (cost - payout), so gating the loss on `!won` under-counted
+          // totalLost by exactly that shortfall and drifted reconciliation on
+          // every sub-cost-winning ticket. Derive it from payout vs cost, not
+          // from the won flag. A losing ticket (payout 0) loses its full cost.
+          const netLoss =
+            t.costLamports > r.payoutLamports ? t.costLamports - r.payoutLamports : BigInt(0);
           await tx.user.update({
             where: { id: t.userId },
             data: {
@@ -645,11 +651,9 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               // row (amountLamports = costLamports, payoutLamports = gross
               // prize), and crash settle increments by net too. Incrementing by
               // the gross payout here over-counted every winning ticket by its
-              // cost, drifting reconciliation by exactly the stake. Floor at 0 —
-              // a winning ticket's prize always covers its cost, but mirror the
-              // GREATEST(...,0) basis defensively.
+              // cost, drifting reconciliation by exactly the stake.
               totalWon: { increment: netProfit },
-              totalLost: { increment: r.won ? BigInt(0) : t.costLamports },
+              totalLost: { increment: netLoss },
               gamesPlayed: { increment: 1 },
             },
           });
