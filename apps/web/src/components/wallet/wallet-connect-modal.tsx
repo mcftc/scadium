@@ -7,6 +7,8 @@ import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useSiwsSignIn } from '@/hooks/use-siws-sign-in';
+import { PrivySocialButtons } from './privy-social-buttons';
+import { env } from '@/config/env';
 import { cn } from '@/lib/cn';
 
 interface WalletConnectModalProps {
@@ -94,6 +96,13 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
     }
   }
 
+  // Privy (Google/Apple) finished its own login + JWT exchange (#203) — reuse the
+  // same success → auto-close UX as SIWS.
+  function handlePrivySuccess() {
+    setStep('success');
+    setTimeout(() => onClose(), 800);
+  }
+
   function handleChoose(w: Wallet) {
     setError(null);
     connectStartedRef.current = false;
@@ -104,11 +113,10 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
   }
 
   const installedWallets = wallets.filter(
-    (w) => w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable,
+    (w) =>
+      w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable,
   );
-  const otherWallets = wallets.filter(
-    (w) => w.readyState === WalletReadyState.NotDetected,
-  );
+  const otherWallets = wallets.filter((w) => w.readyState === WalletReadyState.NotDetected);
 
   return (
     <Dialog
@@ -119,6 +127,7 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
     >
       {step === 'choose' && (
         <div className="space-y-2">
+          {env.privyAppId && <PrivySocialButtons onSuccess={handlePrivySuccess} />}
           {installedWallets.length === 0 && otherWallets.length === 0 && (
             <div className="rounded-xl border border-border bg-surface-elevated p-4 text-center text-sm text-foreground-muted">
               No Solana wallets detected. Install{' '}
@@ -211,9 +220,7 @@ function WalletRow({ wallet, onSelect }: { wallet: Wallet; onSelect: () => void 
       <img src={wallet.adapter.icon} alt="" className="h-9 w-9 rounded-lg" />
       <div className="flex-1">
         <p className="font-semibold">{wallet.adapter.name}</p>
-        <p className="text-xs text-foreground-muted">
-          {installed ? 'Detected' : 'Not installed'}
-        </p>
+        <p className="text-xs text-foreground-muted">{installed ? 'Detected' : 'Not installed'}</p>
       </div>
     </button>
   );

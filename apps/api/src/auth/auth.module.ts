@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { SiwsService } from './siws.service';
+import { PrivyService } from './privy.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 /** Minimum acceptable JWT signing secret length. A short/guessable secret is as
@@ -39,7 +40,7 @@ export function jwtModuleOptions(config: ConfigService): JwtModuleOptions {
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, SiwsService, JwtAuthGuard],
-  exports: [AuthService, SiwsService, JwtAuthGuard, JwtModule],
+  providers: [AuthService, SiwsService, PrivyService, JwtAuthGuard],
+  exports: [AuthService, SiwsService, PrivyService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

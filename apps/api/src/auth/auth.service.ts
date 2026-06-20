@@ -1,7 +1,13 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SiwsService } from './siws.service';
+import { PrivyService } from './privy.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { createHash, randomBytes } from 'node:crypto';
 import { hashRefreshToken, newJti, newRefreshToken, parseTtlMs } from './session-tokens';
@@ -29,6 +35,7 @@ export interface IssuedTokens {
 export class AuthService {
   constructor(
     private readonly siws: SiwsService,
+    private readonly privy: PrivyService,
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -55,8 +62,48 @@ export class AuthService {
       ref: params.ref,
       ipAddress: ctx.ipAddress,
     });
-    // Banned users must not mint tokens/sessions (#37) — a valid signature only
-    // proves key ownership, not standing.
+    return this.gateAndIssue(user, ctx);
+  }
+
+  /**
+   * Privy social login (#203). The Privy access token — NOT any client-supplied
+   * identity — is the gate: it's verified cryptographically server-side, then the
+   * Privy user id + linked Google/Apple email are sourced from Privy. We then
+   * find-or-create a `User` (`authProvider='privy'`) and issue the SAME app
+   * access+refresh pair as SIWS, so every downstream guard/store is unchanged.
+   */
+  async verifyPrivyAndIssueToken(
+    params: { accessToken: string; ref?: string },
+    ctx: SessionContext = {},
+  ) {
+    const identity = await this.privy.verifyPrivyToken(params.accessToken);
+    const user = await this.upsertPrivyUser(identity, {
+      ref: params.ref,
+      ipAddress: ctx.ipAddress,
+    });
+    return this.gateAndIssue(user, ctx);
+  }
+
+  /**
+   * Shared post-verification path for BOTH SIWS and Privy: enforce the standing
+   * gates (ban / self-exclusion #37/#46), mint the session, and shape the
+   * response identically so the frontend store is provider-agnostic.
+   */
+  private async gateAndIssue(
+    user: {
+      id: string;
+      walletAddress: string;
+      username: string | null;
+      avatarUrl: string | null;
+      refCode: string;
+      banned: boolean;
+      selfExcludedUntil: Date | null;
+      createdAt: Date;
+    },
+    ctx: SessionContext,
+  ) {
+    // Banned users must not mint tokens/sessions (#37) — a valid signature/token
+    // only proves identity, not standing.
     if (user.banned) throw new ForbiddenException('Account banned');
     // Self-exclusion (#46) hard-blocks login for its duration; cooling-off does
     // NOT (the user may sign in to manage settings — wagering is gated at the
@@ -64,11 +111,7 @@ export class AuthService {
     if (user.selfExcludedUntil && user.selfExcludedUntil > new Date()) {
       throw new ForbiddenException('Account self-excluded');
     }
-    const { accessToken, refreshToken } = await this.issueSession(
-      user.id,
-      user.walletAddress,
-      ctx,
-    );
+    const { accessToken, refreshToken } = await this.issueSession(user.id, user.walletAddress, ctx);
 
     return {
       accessToken,
@@ -213,14 +256,9 @@ export class AuthService {
     // First-ever sign-in: capture a salted signup IP-hash and resolve an
     // optional referral code, rejecting self-referral (#47).
     const signupIpHash = this.hashIp(opts.ipAddress ?? null);
-    let referredById: string | null = null;
-    if (opts.ref) {
-      const referrer = await this.prisma.user.findUnique({
-        where: { refCode: opts.ref },
-        select: { id: true, walletAddress: true },
-      });
-      if (referrer && referrer.walletAddress !== walletAddress) referredById = referrer.id;
-    }
+    const referredById = await this.resolveReferrer(opts.ref, {
+      excludeWalletAddress: walletAddress,
+    });
 
     try {
       return await this.prisma.user.create({
@@ -237,6 +275,114 @@ export class AuthService {
       if (retry) return retry;
       throw new Error('Failed to provision user');
     }
+  }
+
+  /**
+   * Find the Privy user by `privyUserId` or create a fresh row, mirroring the
+   * SIWS `upsertUser` semantics (refCode, salted signup IP, referral resolution,
+   * unique-race retry) so a Privy account is provisioned IDENTICALLY to a wallet
+   * account — same balances seed (schema default), same `Bet`/engine eligibility.
+   *
+   * Differences from SIWS: `authProvider='privy'`, `privyUserId` is set, the
+   * linked Google/Apple email is recorded, and `walletAddress` is either the
+   * user's linked Solana address (if any) or a unique non-signable placeholder
+   * (`privy:<did>`) — Privy social users may have no external wallet, but the
+   * column is `@unique`+NOT NULL and the JWT carries it. The placeholder is NOT a
+   * valid base58 Solana key, so it can never collide with a real SIWS wallet.
+   */
+  private async upsertPrivyUser(
+    identity: {
+      privyUserId: string;
+      email: string | null;
+      emailProvider: 'google' | 'apple' | 'email' | null;
+      solanaAddress: string | null;
+    },
+    opts: { ref?: string; ipAddress?: string | null } = {},
+  ) {
+    const existing = await this.prisma.user.findUnique({
+      where: { privyUserId: identity.privyUserId },
+    });
+    if (existing) return existing;
+
+    const walletAddress = identity.solanaAddress ?? `privy:${identity.privyUserId}`;
+
+    // Mirror the SIWS path: if the Privy user's linked Solana address is a
+    // NON-PRIMARY linked wallet of an existing user, resolve to its owner instead
+    // of trying to create a second account (which would 500 on the @unique race
+    // or orphan the link).
+    if (identity.solanaAddress) {
+      const linked = await this.prisma.linkedWallet.findUnique({
+        where: { address: identity.solanaAddress },
+        include: { user: true },
+      });
+      if (linked) return linked.user;
+    }
+
+    const signupIpHash = this.hashIp(opts.ipAddress ?? null);
+    const referredById = await this.resolveReferrer(opts.ref, {
+      excludePrivyUserId: identity.privyUserId,
+      // A Privy user must not self-refer via the refCode of their own SIWS wallet.
+      excludeWalletAddress: identity.solanaAddress ?? undefined,
+    });
+
+    try {
+      return await this.prisma.user.create({
+        data: {
+          walletAddress,
+          authProvider: 'privy',
+          privyUserId: identity.privyUserId,
+          email: identity.email,
+          googleAccount: identity.emailProvider === 'google' ? identity.email : null,
+          refCode: this.generateRefCode(),
+          signupIpHash,
+          referredById,
+        },
+      });
+    } catch {
+      // Unique violation race (two concurrent first-logins for the same Privy
+      // user) — re-read and return the winner.
+      const retry = await this.prisma.user.findUnique({
+        where: { privyUserId: identity.privyUserId },
+      });
+      if (retry) return retry;
+
+      // Not a privyUserId race: the most likely remaining unique violation is the
+      // user's linked Solana address already being some other user's primary
+      // `walletAddress` (they previously signed in via SIWS). Surface a clear
+      // 409 instead of a generic 500.
+      if (identity.solanaAddress) {
+        const walletOwner = await this.prisma.user.findUnique({
+          where: { walletAddress: identity.solanaAddress },
+        });
+        if (walletOwner) {
+          throw new ConflictException('This wallet is already registered via wallet sign-in');
+        }
+      }
+      throw new Error('Failed to provision Privy user');
+    }
+  }
+
+  /**
+   * Resolve an optional referral code to a referrer id, rejecting self-referral
+   * (#47). Shared by the SIWS and Privy provisioning paths.
+   */
+  private async resolveReferrer(
+    ref: string | undefined,
+    exclude: { excludeWalletAddress?: string; excludePrivyUserId?: string },
+  ): Promise<string | null> {
+    if (!ref) return null;
+    const referrer = await this.prisma.user.findUnique({
+      where: { refCode: ref },
+      select: { id: true, walletAddress: true, privyUserId: true },
+    });
+    if (!referrer) return null;
+    if (exclude.excludeWalletAddress && referrer.walletAddress === exclude.excludeWalletAddress) {
+      return null;
+    }
+    if (exclude.excludePrivyUserId && referrer.privyUserId === exclude.excludePrivyUserId) {
+      return null;
+    }
+    return referrer.id;
   }
 
   /** Salted SHA-256 of the signup IP (#47) — raw IPs are never stored. */
