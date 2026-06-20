@@ -1,21 +1,25 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsNumberString } from 'class-validator';
+import { IsBoolean, IsString, Matches, MaxLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthContext } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { ProofOfWagerService } from '../proof-of-wager/proof-of-wager.service';
 import { StakingService } from './staking.service';
 
-class StakeDto {
+export class StakeDto {
   /** $SCAD base units (9 decimals) to stake, as a decimal string. */
-  @IsNumberString()
+  @IsString()
+  @Matches(/^[1-9]\d*$/)
+  @MaxLength(20)
   amount!: string;
 }
 
-class UnstakeDto {
+export class UnstakeDto {
   /** $SCAD base units (9 decimals) to unstake, as a decimal string. */
-  @IsNumberString()
+  @IsString()
+  @Matches(/^[1-9]\d*$/)
+  @MaxLength(20)
   amount!: string;
 }
 

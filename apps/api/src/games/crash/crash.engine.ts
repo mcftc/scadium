@@ -566,6 +566,35 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Full-exit every still-riding bet whose auto-cashout multiplier has been
+   * reached at `m`. Extracted from the tick loop so the failure path is testable.
+   * A failed cashOut is logged, NOT swallowed (#218): the in-RAM bet is mutated
+   * before the durable CrashBet write, so a silent failure here is invisible and
+   * only self-heals if the live settle's upsert runs before a restart.
+   */
+  private async runAutoCashouts(m: number): Promise<void> {
+    if (!this.current) return;
+    for (const bet of this.current.bets.values()) {
+      if (
+        bet.cashedOutAt === null &&
+        bet.amountLamports > BigInt(0) &&
+        bet.autoCashout !== null &&
+        m >= bet.autoCashout
+      ) {
+        try {
+          await this.cashOut(bet.userId);
+        } catch (e) {
+          this.logger.error(
+            `crash auto-cashout failed for user ${bet.userId} @ ${m}x (round ${this.current.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
+      }
+    }
+  }
+
   private async beginRun(): Promise<void> {
     if (!this.isLeader()) return; // leadership lost during the betting window
     if (onchainEntropyOn()) await this.fulfillEntropy(); // derive the deferred bust
@@ -586,20 +615,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
 
       // Auto-cashouts (full exit of whatever is still riding). Awaited so the
       // CrashBet row is persisted before bust settles the round.
-      for (const bet of this.current.bets.values()) {
-        if (
-          bet.cashedOutAt === null &&
-          bet.amountLamports > BigInt(0) &&
-          bet.autoCashout !== null &&
-          m >= bet.autoCashout
-        ) {
-          try {
-            await this.cashOut(bet.userId);
-          } catch {
-            /* noop */
-          }
-        }
-      }
+      await this.runAutoCashouts(m);
 
       if (m >= this.current.bustPoint) {
         void this.bust();

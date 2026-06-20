@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, Matches } from 'class-validator';
+import { IsString, Matches, MaxLength } from 'class-validator';
 
 export class EnterJackpotDto {
   @ApiProperty({
@@ -7,6 +7,7 @@ export class EnterJackpotDto {
     example: '100000000',
   })
   @IsString()
-  @Matches(/^\d+$/, { message: 'amountLamports must be a positive integer string' })
+  @Matches(/^[1-9]\d*$/, { message: 'amountLamports must be a positive integer string' })
+  @MaxLength(20)
   amountLamports!: string;
 }

@@ -223,6 +223,102 @@ export async function jackpotRoll(
   return BigInt(`0x${hash}`);
 }
 
+/** HMAC-SHA256(key, message) → raw bytes (the float stream reads 4-byte words). */
+async function hmacSha256Bytes(key: string, message: string): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return new Uint8Array(sig);
+}
+
+/**
+ * Pull `count` uniform floats in [0, 1) — mirrors @scadium/fair `floatsFromHmac`
+ * (packages/fair/src/floats.ts). Each 32-byte HMAC block is keyed by
+ * `${clientSeed}:${nonce}:${block}`, and each float consumes 4 bytes as a
+ * base-256 fraction (the Stake-style encoding). Used by dice / limbo / plinko /
+ * wheel so the browser reproduces the exact same result the server computed.
+ */
+async function floatsFromHmac(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  count: number,
+): Promise<number[]> {
+  const out: number[] = [];
+  let block = 0;
+  while (out.length < count) {
+    const bytes = await hmacSha256Bytes(serverSeed, `${clientSeed}:${nonce}:${block}`);
+    for (let i = 0; i + 4 <= bytes.length && out.length < count; i += 4) {
+      out.push(
+        bytes[i]! / 256 +
+          bytes[i + 1]! / 256 ** 2 +
+          bytes[i + 2]! / 256 ** 3 +
+          bytes[i + 3]! / 256 ** 4,
+      );
+    }
+    block += 1;
+  }
+  return out;
+}
+
+/** Matches @scadium/fair `diceRoll` — roll in [0.00, 99.99]. */
+export async function diceRoll(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+): Promise<number> {
+  const [u] = await floatsFromHmac(serverSeed, clientSeed, nonce, 1);
+  return Math.floor(u! * 10000) / 100;
+}
+
+/** Matches @scadium/fair `limboResult` — crash-style multiplier ≥ 1.00. */
+export async function limboResult(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  edge = 0.01,
+): Promise<number> {
+  const [u] = await floatsFromHmac(serverSeed, clientSeed, nonce, 1);
+  const raw = u! <= 0 ? 1_000_000 : (1 - edge) / u!;
+  return Math.max(1, Math.floor(raw * 100) / 100);
+}
+
+/** Matches @scadium/fair `wheelSpin` — segment index in [0, segmentCount). */
+export async function wheelSpin(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  segmentCount: number,
+): Promise<number> {
+  const [u] = await floatsFromHmac(serverSeed, clientSeed, nonce, 1);
+  const idx = Math.floor(u! * segmentCount);
+  return idx >= segmentCount ? segmentCount - 1 : idx;
+}
+
+export interface PlinkoDrop {
+  path: number[];
+  bin: number;
+}
+
+/** Matches @scadium/fair `plinkoDrop` — one float per row decides left/right. */
+export async function plinkoDrop(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  rows: number,
+): Promise<PlinkoDrop> {
+  const floats = await floatsFromHmac(serverSeed, clientSeed, nonce, rows);
+  const path = floats.map((f): number => (f >= 0.5 ? 1 : 0));
+  const bin = path.reduce((a, b) => a + b, 0);
+  return { path, bin };
+}
+
 /**
  * Verify a server seed matches its committed hash. Lets the user prove the
  * server didn't swap in a different seed after the fact.

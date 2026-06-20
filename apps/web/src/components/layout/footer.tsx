@@ -13,6 +13,10 @@ const footerSections = [
       { href: '/blackjack', label: 'Blackjack' },
       { href: '/jackpot', label: 'Jackpot' },
       { href: '/lottery', label: 'Lottery' },
+      { href: '/dice', label: 'Dice' },
+      { href: '/limbo', label: 'Limbo' },
+      { href: '/plinko', label: 'Plinko' },
+      { href: '/wheel', label: 'Wheel' },
     ],
   },
   {
