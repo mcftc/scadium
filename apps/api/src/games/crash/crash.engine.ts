@@ -772,6 +772,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
             userId: bet.userId,
             gameType: 'crash',
             stakeLamports: stake,
+            betId: job.betId,
           });
 
           // Credit the play balance through the single mutation point (writes a

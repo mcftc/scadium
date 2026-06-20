@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type GameType, type WagerCampaign } from '@prisma/client';
 import { LAMPORTS_PER_SOL, SCAD, WAGER } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 
 export interface AccrueParams {
   userId: string;
@@ -44,7 +45,7 @@ export class ProofOfWagerService {
    * credited (callers may ignore it).
    */
   async accrue(tx: Prisma.TransactionClient, params: AccrueParams): Promise<bigint> {
-    const { userId, gameType, stakeLamports } = params;
+    const { userId, gameType, stakeLamports, betId } = params;
     if (stakeLamports <= 0n) return 0n;
 
     const base = stakeLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT);
@@ -64,9 +65,17 @@ export class ProofOfWagerService {
     const amount = (base * scaled) / 1000n;
     if (amount <= 0n) return 0n;
 
-    await tx.user.update({
-      where: { id: userId },
-      data: { scadiumBalance: { increment: amount } },
+    // Credit the REDEEMABLE $SCAD through the single mutation point so a
+    // `scad` BalanceLedger row is written in THIS tx (#229). Previously this
+    // was a raw `increment`, leaving the `scad` ledger with stake-path debits
+    // but no matching credits — unreconcilable. `applyBalanceDelta` stamps the
+    // post-credit `scadiumBalance` as `balanceAfter`, so `scadLedgerDrift` can
+    // assert the live balance equals the latest ledger checkpoint.
+    await applyBalanceDelta(tx, userId, amount, {
+      currency: 'scad',
+      reason: 'wager_reward',
+      refType: 'Bet',
+      refId: betId ?? null,
     });
 
     // Roll the wager into the daily + weekly leaderboard buckets.

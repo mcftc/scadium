@@ -287,6 +287,62 @@ export class ReconciliationService {
   }
 
   /**
+   * Spendable $SCAD ledger drift (#229): `User.scadiumBalance` must equal the
+   * latest `BalanceLedger` `balanceAfter` for currency `scad`. Every $SCAD
+   * movement — wager-reward credits (`accrue`) and stake-path debits — flows
+   * through `applyBalanceDelta`, which ledgers it, and $SCAD has NO un-ledgered
+   * opening balance (new users start at 0). So a user with no `scad` ledger row
+   * must have `scadiumBalance = 0`; any non-zero value there (or a checkpoint
+   * mismatch) is a direct write and is flagged. Only users with `scad` activity
+   * (a stored balance or a ledger row) are scanned. Flag-only; appends
+   * `ReconciliationDrift`. Mirrors `stakeLedgerDrift`.
+   */
+  async scadLedgerDrift(): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const ledgerAgg = await tx.$queryRaw<Array<{ userId: string; latest: bigint | string }>>(
+        Prisma.sql`
+          SELECT "userId", "balanceAfter" AS latest
+          FROM (
+            SELECT "userId", "balanceAfter",
+                   ROW_NUMBER() OVER (
+                     PARTITION BY "userId" ORDER BY "createdAt" DESC, "id" DESC
+                   ) AS rn
+            FROM "BalanceLedger"
+            WHERE "currency" = 'scad'
+          ) t
+          WHERE rn = 1
+        `,
+      );
+      const latestByUser = new Map(ledgerAgg.map((r) => [r.userId, BigInt(r.latest.toString())]));
+
+      // Only users who either hold a spendable $SCAD balance or have a `scad`
+      // ledger row are relevant — bounded for this phase.
+      const users = await tx.user.findMany({
+        where: { OR: [{ scadiumBalance: { gt: 0n } }, { id: { in: [...latestByUser.keys()] } }] },
+        select: { id: true, scadiumBalance: true },
+      });
+
+      const drifts: Prisma.ReconciliationDriftCreateManyInput[] = [];
+      for (const u of users) {
+        const derived = latestByUser.get(u.id) ?? 0n;
+        if (u.scadiumBalance !== derived) {
+          drifts.push({
+            userId: u.id,
+            field: 'scadiumBalance',
+            storedValue: u.scadiumBalance.toString(),
+            derivedValue: derived.toString(),
+          });
+        }
+      }
+      if (drifts.length > 0) await tx.reconciliationDrift.createMany({ data: drifts });
+      if (drifts.length > 0) {
+        this.logger.error(`scad drift: flagged ${drifts.length} scadiumBalance mismatch(es)`);
+      }
+      return drifts.length;
+    });
+  }
+
+  /**
    * USDS dividend solvency: the total outstanding USDS liability
    * (Σ `usdsBalance` + Σ `usdsReserved`) must be backed by the on-chain USDS
    * treasury. Flag-only early warning (the on-chain transfer is the hard stop);
@@ -382,6 +438,12 @@ export class ReconciliationService {
       // balance right after the mutation, so for any untampered user the latest
       // `balanceAfter` equals `playBalanceLamports`; a direct (non-ledgered)
       // write to the balance breaks that equality and is flagged.
+      // SCOPE to currency = 'jeton' (#229): BalanceLedger is now multi-currency
+      // (jeton play balance, scad, scad_staked, usds). `playBalanceLamports`
+      // must be compared against the latest PLAY-balance row's `balanceAfter` —
+      // an unfiltered "latest row" picks up a later `scad`/`usds` movement whose
+      // `balanceAfter` is a different balance entirely, false-positiving every
+      // user who earned $SCAD after their last play-balance move.
       const ledgerAgg = await tx.$queryRaw<Array<{ userId: string; latest: bigint | string }>>(
         Prisma.sql`
           SELECT "userId", "balanceAfter" AS latest
@@ -391,6 +453,7 @@ export class ReconciliationService {
                      PARTITION BY "userId" ORDER BY "createdAt" DESC, "id" DESC
                    ) AS rn
             FROM "BalanceLedger"
+            WHERE "currency" = 'jeton'
           ) t
           WHERE rn = 1
         `,
