@@ -4,6 +4,10 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
+  // Generate the alpine-musl engine alongside native so the prod image
+  // (node:20-alpine) can run migrate/queries. Without this + openssl in the
+  // image, the engine defaults to openssl-1.1.x and fails to load (#81).
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

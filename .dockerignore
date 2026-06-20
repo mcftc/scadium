@@ -17,3 +17,10 @@ target
 .env
 .env.*
 !.env.example
+# Local Solana validator ledger + Anchor artifacts (#81): test-ledger holds a
+# unix socket (admin.rpc — breaks tar) and ~hundreds of MB of rocksdb data,
+# bloating the build context. Never needed in the image.
+test-ledger
+**/test-ledger
+.anchor
+**/*.so
