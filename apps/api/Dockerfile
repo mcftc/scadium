@@ -9,7 +9,8 @@
 # it can't silently rot again. One full install in the build stage is the
 # simple-and-correct trade against broken layer-cache cleverness.
 FROM node:20-alpine AS build
-RUN npm install -g pnpm@10.33.0
+# openssl: Prisma's engines need libssl to load on alpine-musl (#81).
+RUN apk add --no-cache openssl && npm install -g pnpm@10.33.0
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile
@@ -20,7 +21,7 @@ RUN pnpm --filter @scadium/api exec tsc -p tsconfig.json
 FROM node:20-alpine AS runner
 # Pick up alpine security fixes newer than the base tag (e.g. libcrypto3 HIGH
 # CVEs flagged by the #39 Trivy gate).
-RUN apk upgrade --no-cache && npm install -g pnpm@10.33.0
+RUN apk upgrade --no-cache && apk add --no-cache openssl && npm install -g pnpm@10.33.0
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
