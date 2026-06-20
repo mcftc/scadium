@@ -956,16 +956,15 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               where: { id: bet.id },
               data: { payoutLamports: payout, remainingLamports: BigInt(0), won },
             });
+            // Stable Bet id so the wager-mining accrual's `scad` ledger row
+            // (refId) and the unified Bet row reference the same settlement.
+            const recoveredBetId = randomUUID();
             // Mirror the live-settle aggregate update (see settle path above): the
             // recovered Bet row counts as a played wager, so the denormalized User
             // columns must move with it or hourly reconciliation flags drift on
             // every kill-9 recovery (totalWagered/gamesPlayed derive from Bet).
             // Matched to reconcileAll's GREATEST(payout-amount,0) derivation, with
             // `credit` (= locked-in payout + refunded stake) as the Bet payout.
-            // NB: unlike the live-settle path we intentionally do NOT call
-            // proofOfWager.accrue here — a recovered round under-credits wager
-            // mining (safe direction; not a reconciliation field). Tracked as a
-            // follow-up; do not read this omission as a bug.
             await tx.user.update({
               where: { id: bet.userId },
               data: {
@@ -987,8 +986,20 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${credit - bet.amountLamports})
               WHERE "id" = ${bet.userId}::uuid
             `;
+            // #182 — mint the wager-mining $SCAD the live-settle path credits.
+            // A restart between bet and bust must not silently drop the reward;
+            // accrue is idempotent per settlement (one call per recovered bet)
+            // and the Engine coverage contract requires every settlement to
+            // accrue. Same args as the live path (stake lamports + crash + betId).
+            await this.proofOfWager.accrue(tx, {
+              userId: bet.userId,
+              gameType: 'crash',
+              stakeLamports: bet.amountLamports,
+              betId: recoveredBetId,
+            });
             await tx.bet.create({
               data: {
+                id: recoveredBetId,
                 userId: bet.userId,
                 gameType: 'crash',
                 amountLamports: bet.amountLamports,
