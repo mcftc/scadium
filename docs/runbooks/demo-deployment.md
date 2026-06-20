@@ -7,6 +7,17 @@ Vercel ISP block does **not** apply — the deploy runs on the VPS over SSH.
 Stack: Caddy (auto-HTTPS, the only public ports) → web (Next.js) + api (NestJS) →
 Postgres + Redis on the internal network. `app.<domain>` → web, `api.<domain>` → api.
 
+> **✅ Build + boot verified (2026-06-20, #81/#245).** The prod images build and the
+> full stack (postgres + redis + api + web) boots healthy end-to-end: migrations
+> apply, `/health/live` = `{"status":"ok"}`, `/api/v1/status` = `{"paused":false}`,
+> the crash/jackpot/blackjack/lottery engines elect leader + drive rounds, and the
+> web app SSR-renders every route. Five first-deploy blockers were fixed in the
+> build so a fresh `up --build` from `main` just works: `.dockerignore` excludes the
+> multi-GB `test-ledger/`; the web image builds self-contained (pnpm's per-package
+> `node_modules`); the api image ships OpenSSL + the alpine-musl Prisma engine; and
+> the api healthcheck targets `127.0.0.1` (alpine `localhost` resolves to IPv6, but
+> the API binds IPv4 — see Troubleshooting).
+
 ---
 
 ## Phase 1 — Provision the host (#80)
@@ -106,6 +117,17 @@ healthy and api/web/caddy up.
 - **CORS / WebSocket errors in the browser:** `CORS_ORIGIN` must exactly equal
   `https://app.<domain>` and the web image must have been built with the right
   `NEXT_PUBLIC_*` (rebuild with `--build` if you changed them).
+
+## Alternative — Kubernetes (Helm)
+
+For a multi-node / HA deploy instead of the single-VPS compose stack,
+`infra/helm/scadium` is a complete chart — api / web / worker / postgres / redis +
+ingress + ConfigMap/Secret + Prometheus `ServiceMonitor` and alerting rules. It
+`helm lint`s clean and `helm template scadium infra/helm/scadium` renders valid
+manifests (verified 2026-06-20). Supply the same secrets (`JWT_SECRET`,
+`POSTGRES_PASSWORD`, …) via `values.yaml` / the secret template, and the
+`NEXT_PUBLIC_*` build args via the web image build. Real-money HA is the Phase M
+gate (see Scope note); for the play-money demo the compose stack above is simpler.
 
 ## Scope note
 
