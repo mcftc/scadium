@@ -1,3 +1,13 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - 'apps/*'
+  - 'packages/*'
+
+# @privy-io/react-auth@3.32.1 statically imports `sequentialInstructionPlan` from
+# `@solana/kit` (its Solana-funding module, which Scadium does NOT use). That symbol
+# only exists in @solana/kit >= 3.x, but the wallet-adapter/Trezor stack drags in
+# @solana/kit@2.3.0, which Privy's peer (>=3.0.3) was being deduped onto — breaking
+# `next build`. Scadium itself imports nothing from @solana/kit (it uses
+# @solana/web3.js v1 for wallet-adapter/SIWS), so pinning to a version that exports
+# the symbol is safe. 5.5.1 is already in the tree (via @coinbase/cdp-sdk → x402).
+overrides:
+  '@solana/kit': '^5.5.1'

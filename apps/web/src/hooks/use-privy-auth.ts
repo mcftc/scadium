@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { usePrivy, useLogin, PrivyErrorCode } from '@privy-io/react-auth';
+import { usePrivy, useLogin } from '@privy-io/react-auth';
+import type { PrivyErrorCode } from '@privy-io/react-auth';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { getRef, clearRef } from '@/lib/ref-capture';
@@ -70,9 +71,11 @@ export function usePrivyAuth() {
     onComplete: () => {
       void exchange();
     },
-    onError: (err) => {
-      // User-cancelled is not an error worth surfacing loudly.
-      if (err === PrivyErrorCode.USER_EXITED_AUTH_FLOW) {
+    onError: (err: PrivyErrorCode) => {
+      // User-cancelled is not an error worth surfacing loudly. `PrivyErrorCode`
+      // is a `declare enum` (type-only, no runtime object in the ESM bundle), so
+      // we compare against its underlying string value instead of the member.
+      if (err === ('exited_auth_flow' as PrivyErrorCode)) {
         setStatus('idle');
         return;
       }
