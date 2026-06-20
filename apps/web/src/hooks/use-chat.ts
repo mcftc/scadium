@@ -50,6 +50,7 @@ export function useChat() {
       setTimeout(() => setError(null), 4000);
     });
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- io() opens a Socket.io connection (a side effect that must not run during render); storing the resulting socket in state is the intended subscribe-to-external-system pattern.
     setSocket(sock);
     return () => {
       sock.disconnect();

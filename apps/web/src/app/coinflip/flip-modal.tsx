@@ -31,12 +31,17 @@ export function FlipModal({
   const [game, setGame] = useState<CoinflipGame | null>(initial);
   const [stage, setStage] = useState<Stage>('waiting');
 
-  // (Re)arm whenever a different game is opened. Settled games replay the flip.
-  useEffect(() => {
+  // (Re)arm whenever a different game is opened (or the modal re-opens). Settled
+  // games replay the flip. Reset during render on the open/initial edge rather
+  // than via a setState-in-effect; the socket effect below still mutates
+  // game/stage live afterwards.
+  const armKey = `${open}:${initial?.id ?? 'none'}`;
+  const [prevArmKey, setPrevArmKey] = useState(armKey);
+  if (prevArmKey !== armKey) {
+    setPrevArmKey(armKey);
     setGame(initial);
-    if (!initial) return;
-    setStage(initial.status === 'completed' ? 'flipping' : 'waiting');
-  }, [initial, open]);
+    setStage(initial?.status === 'completed' ? 'flipping' : 'waiting');
+  }
 
   // Live spectate: when the watched open game resolves, run the animation.
   useEffect(() => {
@@ -190,7 +195,9 @@ function PlayerCard({
       <span
         className={cn(
           'mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-full text-sm font-black text-white ring-2',
-          side === 'heads' ? 'bg-primary-400/80 ring-primary-400/50' : 'bg-cyan-500/80 ring-cyan-400/50',
+          side === 'heads'
+            ? 'bg-primary-400/80 ring-primary-400/50'
+            : 'bg-cyan-500/80 ring-cyan-400/50',
         )}
       >
         {name.slice(0, 1).toUpperCase()}

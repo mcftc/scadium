@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe, useAcceptLegal } from '@/hooks/use-me';
 import { LEGAL_VERSION } from '@/lib/legal/versions';
 
@@ -21,26 +21,13 @@ const LS_KEY = 'scadium_legal_version';
 export function LegalGate() {
   const { data: me } = useMe();
   const acceptLegal = useAcceptLegal();
-  const [localVersion, setLocalVersion] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      setLocalVersion(window.localStorage.getItem(LS_KEY));
-    } catch {
-      /* private mode — server acceptance still gates authed users */
-    }
-  }, []);
+  const localVersion = useLocalStorageValue(LS_KEY);
 
   const accepted = me?.acceptedLegalVersion === LEGAL_VERSION || localVersion === LEGAL_VERSION;
   if (accepted) return null;
 
   const handleAccept = () => {
-    try {
-      window.localStorage.setItem(LS_KEY, LEGAL_VERSION);
-    } catch {
-      /* private mode — in-memory + server acceptance still cover this session */
-    }
-    setLocalVersion(LEGAL_VERSION);
+    writeLocalStorageValue(LS_KEY, LEGAL_VERSION);
     if (me) acceptLegal.mutate();
   };
 

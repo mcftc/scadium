@@ -5,6 +5,7 @@ import { CalendarClock, ChevronDown, Loader2, Repeat } from 'lucide-react';
 import { useCrashActions, type CrashSnapshot } from '@/hooks/use-crash';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe } from '@/hooks/use-me';
 import { ApiError } from '@/lib/api-client';
 import { formatSol } from '@/lib/format';
@@ -30,14 +31,18 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   const autoBetRef = useRef(autoBet);
   autoBetRef.current = autoBet;
 
-  // Default progressive-cashout % persists across sessions.
-  useEffect(() => {
-    const saved = Number(localStorage.getItem(CASHOUT_PCT_KEY));
-    if (saved >= 10 && saved <= 100) setCashoutPct(saved);
-  }, []);
+  // Default progressive-cashout % persists across sessions. Read reactively
+  // (null on SSR → no hydration mismatch) and apply during render on its edge
+  // rather than via a setState-in-effect; a user pick overrides afterwards.
+  const savedPct = Number(useLocalStorageValue(CASHOUT_PCT_KEY));
+  const [syncedPct, setSyncedPct] = useState<number | null>(null);
+  if (savedPct >= 10 && savedPct <= 100 && savedPct !== syncedPct) {
+    setSyncedPct(savedPct);
+    setCashoutPct(savedPct);
+  }
   function pickCashoutPct(p: number) {
     setCashoutPct(p);
-    localStorage.setItem(CASHOUT_PCT_KEY, String(p));
+    writeLocalStorageValue(CASHOUT_PCT_KEY, String(p));
   }
 
   const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
@@ -46,10 +51,10 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   const canCashout = phase === 'running' && myBet && myBet.cashedOutAt === null;
 
   // My scheduled bet auto-places at round start → the bet-placed upsert makes
-  // it MY bet in the fresh round; drop the local "scheduled" flag then.
-  useEffect(() => {
-    if (scheduled && phase === 'waiting' && myBet) setScheduled(false);
-  }, [scheduled, phase, myBet]);
+  // it MY bet in the fresh round; drop the local "scheduled" flag then. Done
+  // during render on the edge where the server-pushed `myBet` appears, rather
+  // than via a setState-in-effect.
+  if (scheduled && phase === 'waiting' && myBet) setScheduled(false);
 
   // Auto Bet (Advanced): re-place the same bet whenever a fresh betting
   // window opens and we don't already have a bet riding or queued.
@@ -255,8 +260,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
             className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-            Cash out {cashoutPct < 100 ? `${cashoutPct}% ` : ''}at {state?.multiplier.toFixed(2)}×
-            ·{' '}
+            Cash out {cashoutPct < 100 ? `${cashoutPct}% ` : ''}at {state?.multiplier.toFixed(2)}× ·{' '}
             {formatSol(
               (
                 (((BigInt(myBet!.amountLamports) * BigInt(cashoutPct)) / BigInt(100)) *
@@ -346,9 +350,9 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
               </button>
             </label>
             <p className="text-[10px] text-foreground-muted">
-              Default progressive cashout: <span className="font-mono">{cashoutPct}%</span> —
-              adjust the slider during a round to change it. Auto Bet stops automatically if a
-              bet fails (e.g. insufficient balance).
+              Default progressive cashout: <span className="font-mono">{cashoutPct}%</span> — adjust
+              the slider during a round to change it. Auto Bet stops automatically if a bet fails
+              (e.g. insufficient balance).
             </p>
           </div>
         )}

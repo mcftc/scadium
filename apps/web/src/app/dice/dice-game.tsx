@@ -152,6 +152,7 @@ function DiceTrack({
     lastBetId.current = betId;
     sound.tick(won ? 760 : 320, 90, 0.05);
     if (reduce) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reduced-motion path: snap the pin straight to the server's authoritative roll. The effect otherwise drives a RAF animation toward `roll`; the pin is animation state, not derivable during render.
       setPin(roll);
       return;
     }

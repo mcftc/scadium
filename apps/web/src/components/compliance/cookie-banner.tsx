@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useHydrated } from '@/hooks/use-hydrated';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 
 const LS_KEY = 'scadium_cookie_consent';
 export type CookieConsent = 'accepted' | 'rejected';
@@ -24,23 +25,17 @@ export function getCookieConsent(): CookieConsent | null {
  * undecided visitors after mount.
  */
 export function CookieBanner() {
-  // Hidden by default so the server render and first client render match (no
-  // SSR flash); the effect reveals it only for an undecided visitor.
-  const [show, setShow] = useState(false);
-
-  useEffect(() => {
-    if (getCookieConsent() === null) setShow(true);
-  }, []);
+  // Reads via useSyncExternalStore: null on the server + first client render
+  // (so markup matches — no SSR flash). Show only once hydrated AND undecided,
+  // so the banner appears for an undecided visitor without an SSR flash.
+  const hydrated = useHydrated();
+  const consent = useLocalStorageValue(LS_KEY);
+  const show = hydrated && consent !== 'accepted' && consent !== 'rejected';
 
   if (!show) return null;
 
   const decide = (value: CookieConsent) => {
-    try {
-      window.localStorage.setItem(LS_KEY, value);
-    } catch {
-      /* private mode — nothing to persist; essential-only is the safe default */
-    }
-    setShow(false);
+    writeLocalStorageValue(LS_KEY, value);
   };
 
   return (

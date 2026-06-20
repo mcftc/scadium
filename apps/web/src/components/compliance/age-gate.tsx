@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe, useAckAge } from '@/hooks/use-me';
 
 const ACK_KEY = 'scadium_age_ok';
@@ -20,26 +20,13 @@ const DECLINE_URL = 'https://www.google.com';
 export function AgeGate() {
   const { data: me } = useMe();
   const ackAge = useAckAge();
-  const [localAck, setLocalAck] = useState(false);
-
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem(ACK_KEY) === '1') setLocalAck(true);
-    } catch {
-      /* localStorage blocked (private mode) — server ack still gates authed users */
-    }
-  }, []);
+  const localAck = useLocalStorageValue(ACK_KEY) === '1';
 
   const acked = localAck || !!me?.ageConfirmedAt;
   if (acked) return null;
 
   const handleConfirm = () => {
-    try {
-      window.localStorage.setItem(ACK_KEY, '1');
-    } catch {
-      /* private mode — in-memory state + server ack still cover this session */
-    }
-    setLocalAck(true);
+    writeLocalStorageValue(ACK_KEY, '1');
     if (me) ackAge.mutate();
   };
 

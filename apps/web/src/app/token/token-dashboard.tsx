@@ -59,8 +59,10 @@ export function TokenDashboard() {
   const marketCap = price != null && circulating != null ? price * circulating : null;
 
   const rows = burns.data?.burns ?? [];
+  // eslint-disable-next-line react-hooks/purity -- snapshots the wall clock once to tally burns from the last 24h; a render-time read of "now" is the intended semantics (display-only stat, no money/fairness).
+  const now24h = Date.now();
   const burned24h = rows
-    .filter((b) => Date.now() - new Date(b.createdAt).getTime() < 86_400_000)
+    .filter((b) => now24h - new Date(b.createdAt).getTime() < 86_400_000)
     .reduce((s, b) => s + toWhole(b.scadBurned), 0);
   // Cumulative burned over time (chronological) for the area chart.
   const chrono = [...rows].reverse();

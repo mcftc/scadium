@@ -164,6 +164,7 @@ function LimboReadout({
     if (result == null || betId == null || betId === lastBetId.current) return;
     lastBetId.current = betId;
     if (reduce) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reduced-motion path: snap the display straight to the server's authoritative result. The effect otherwise drives a RAF count-up toward `result`; display/locked are animation state, not derivable during render.
       setDisplay(result);
       setLocked(true);
       if (won) sound.win(result);

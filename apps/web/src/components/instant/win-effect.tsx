@@ -78,7 +78,11 @@ export function WinEffect({
             title={sound.enabled ? 'Mute sound' : 'Unmute sound'}
             className="rounded-lg border border-border p-1.5 text-foreground-muted hover:text-foreground hover:border-primary-400/40 transition-colors"
           >
-            {sound.enabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+            {sound.enabled ? (
+              <Volume2 className="h-3.5 w-3.5" />
+            ) : (
+              <VolumeX className="h-3.5 w-3.5" />
+            )}
           </button>
         )}
       </div>
@@ -94,6 +98,7 @@ function CountUpSol({ lamports, animate }: { lamports: string; animate: boolean 
 
   useEffect(() => {
     if (!animate || !Number.isFinite(target)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- snaps the count-up to the final value when animation is skipped; the effect also drives the RAF animation toward `target`, so the displayed number is animation state, not derivable during render.
       setVal(target);
       return;
     }

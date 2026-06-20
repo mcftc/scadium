@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ticket, Shuffle, Trophy } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -120,8 +120,9 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
 
   // Keep the card array in lockstep with the quantity: grow with EMPTY cards
   // (bc.game starts blank), trim from the end when the quantity shrinks.
-  // tickets.length is a dep so deleting a card while autoCount > 0 backfills.
-  useEffect(() => {
+  // Reconciled during render rather than via a setState-in-effect — adjust only
+  // the array length (end rows), preserving the user's edits to existing rows.
+  if (tickets.length !== manualCount) {
     setTickets((cur) => {
       if (cur.length === manualCount) return cur;
       if (cur.length > manualCount) return cur.slice(0, manualCount);
@@ -129,7 +130,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
       while (next.length < manualCount) next.push(EMPTY_ROW);
       return next;
     });
-  }, [manualCount, tickets.length]);
+  }
 
   function setQty(n: number) {
     setError(null);
@@ -243,9 +244,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
             </h3>
             <div className="text-xs text-foreground-muted">
               1 Ticket ={' '}
-              <span className="font-mono text-foreground">
-                {priceScad.toLocaleString()} SCAD
-              </span>
+              <span className="font-mono text-foreground">{priceScad.toLocaleString()} SCAD</span>
             </div>
           </div>
 

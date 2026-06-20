@@ -33,8 +33,13 @@ export interface BlobShadowProps {
 }
 
 /** Cheap fake contact shadow — no shadow maps anywhere in the stages. */
-export function BlobShadow({ position = [0, 0, 0], scale = 1, opacity = 0.5, meshRef }: BlobShadowProps) {
-  const texture = useMemo(getBlobTexture, []);
+export function BlobShadow({
+  position = [0, 0, 0],
+  scale = 1,
+  opacity = 0.5,
+  meshRef,
+}: BlobShadowProps) {
+  const texture = useMemo(() => getBlobTexture(), []);
   return (
     <mesh ref={meshRef} position={position} rotation={[-Math.PI / 2, 0, 0]} scale={scale}>
       <planeGeometry args={[1, 1]} />

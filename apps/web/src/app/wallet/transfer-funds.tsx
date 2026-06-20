@@ -66,9 +66,13 @@ export function TransferFunds() {
     refetchInterval: 15_000,
   });
 
+  // Read the id into a primitive so the memo dep matches the value actually
+  // used (the React Compiler otherwise infers `config.data` and skips
+  // optimizing this component).
+  const programIdStr = config.data?.programId;
   const programId = useMemo(
-    () => (config.data?.programId ? new PublicKey(config.data.programId) : null),
-    [config.data?.programId],
+    () => (programIdStr ? new PublicKey(programIdStr) : null),
+    [programIdStr],
   );
 
   const run = useCallback(

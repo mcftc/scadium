@@ -20,7 +20,11 @@ interface CaseOpenResult {
 }
 
 const RARITY: Record<TierName, { label: string; color: string; ring: string }> = {
-  legendary: { label: 'Legendary', color: '#f59e0b', ring: 'shadow-[0_0_28px_rgba(245,158,11,0.65)]' },
+  legendary: {
+    label: 'Legendary',
+    color: '#f59e0b',
+    ring: 'shadow-[0_0_28px_rgba(245,158,11,0.65)]',
+  },
   epic: { label: 'Epic', color: '#a855f7', ring: 'shadow-[0_0_26px_rgba(168,85,247,0.55)]' },
   rare: { label: 'Rare', color: '#60a5fa', ring: 'shadow-[0_0_22px_rgba(96,165,250,0.5)]' },
   common: { label: 'Common', color: '#64748b', ring: '' },
@@ -72,15 +76,18 @@ export function DailyCaseModal({ open, onClose }: { open: boolean; onClose: () =
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not open the case'),
   });
 
-  // Reset to a fresh state whenever the modal is (re)opened.
-  useEffect(() => {
+  // Reset to a fresh state whenever the modal transitions to open — done during
+  // render on the open→ edge rather than via a setState-in-effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setPhase('ready');
       setResult(null);
       setError(null);
       setStrip([]);
     }
-  }, [open]);
+  }
 
   function handleClose() {
     // Refresh case availability + balances after a reveal.
@@ -164,10 +171,7 @@ export function DailyCaseModal({ open, onClose }: { open: boolean; onClose: () =
               <div className="text-[10px] uppercase tracking-[0.3em] text-foreground-muted">
                 You won
               </div>
-              <div
-                className="text-3xl font-black"
-                style={{ color: RARITY[result.tier].color }}
-              >
+              <div className="text-3xl font-black" style={{ color: RARITY[result.tier].color }}>
                 {fmtScad(result.rewardScad)} <span className="text-lg">SCAD</span>
               </div>
               <div

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Sparkles, X } from 'lucide-react';
+import { useHydrated } from '@/hooks/use-hydrated';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 
 const PROMO_KEY = 'scadium-promo-dismissed-v1';
 
@@ -11,11 +12,11 @@ const PROMO_KEY = 'scadium-promo-dismissed-v1';
  * target are ours; bump PROMO_KEY when the campaign changes so it reappears.
  */
 export function PromoBar() {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    setVisible(localStorage.getItem(PROMO_KEY) !== '1');
-  }, []);
+  // Hidden on the server + first client render (markup matches → no SSR flash),
+  // then shown once hydrated unless previously dismissed.
+  const hydrated = useHydrated();
+  const dismissed = useLocalStorageValue(PROMO_KEY) === '1';
+  const visible = hydrated && !dismissed;
 
   if (!visible) return null;
 
@@ -36,10 +37,7 @@ export function PromoBar() {
         <button
           type="button"
           aria-label="Dismiss promo"
-          onClick={() => {
-            localStorage.setItem(PROMO_KEY, '1');
-            setVisible(false);
-          }}
+          onClick={() => writeLocalStorageValue(PROMO_KEY, '1')}
           className="ml-2 rounded p-0.5 text-foreground-muted hover:text-foreground"
         >
           <X className="h-3 w-3" />

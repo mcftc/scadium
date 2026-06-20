@@ -172,6 +172,7 @@ function PlinkoBoard({
 
     const id = result.betId;
     const hue = result.won ? '#10b981' : '#EE86FF';
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- spawns a falling ball for each fresh server result; the effect then drives its RAF descent down the server's authoritative path. Ball/animation state, not derivable during render.
     setBalls((prev) => [...prev.slice(-5), { id, path, bin, hue }]);
 
     if (reduce) {
@@ -213,8 +214,16 @@ function PlinkoBoard({
     [],
   );
 
+  // Auto-clear the landing pulse ~700ms after it fires, via a timer — keeps the
+  // render pure (no Date.now() during render) while preserving the brief flash.
+  useEffect(() => {
+    if (!pulseBin) return;
+    const t = setTimeout(() => setPulseBin(null), 700);
+    return () => clearTimeout(t);
+  }, [pulseBin]);
+
   const binCount = payouts.length; // rows + 1
-  const pulseActive = pulseBin && Date.now() - pulseBin.at < 700 ? pulseBin.bin : null;
+  const pulseActive = pulseBin?.bin ?? null;
 
   return (
     <Card className="p-6 lg:p-10">

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { cn } from '@/lib/cn';
 
 /**
@@ -37,16 +38,19 @@ export function NavDropdown({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+
+  // Close on route change — reset during render on a pathname change rather than
+  // via a setState-in-effect.
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    if (open) setOpen(false);
+  }
   // Header switches its layout at `lg` (desktop nav is `hidden lg:flex`); below
   // that the dropdowns render as a bottom sheet.
   const isMobile = useMediaQuery('(max-width: 1023px)');
 
   const close = () => setOpen(false);
-
-  // Close on route change.
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
 
   // Desktop: close on outside click. Escape closes in both modes.
   useEffect(() => {
@@ -109,7 +113,11 @@ export function NavDropdown({
       )}
 
       {/* Mobile bottom sheet — same menu content, slides up from the bottom. */}
-      {isMobile && <BottomSheet open={open} label={label} onClose={close}>{children}</BottomSheet>}
+      {isMobile && (
+        <BottomSheet open={open} label={label} onClose={close}>
+          {children}
+        </BottomSheet>
+      )}
     </div>
   );
 }
@@ -126,8 +134,7 @@ function BottomSheet({
   onClose: () => void;
   children: (close: () => void) => ReactNode;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useHydrated();
   if (!mounted) return null;
 
   return createPortal(

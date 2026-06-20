@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, ExternalLink, Star } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -15,12 +15,12 @@ import { PlayerCell } from './player-cell';
 export function ResultsTab() {
   const recent = useRecentDraws(100);
   const draws = (recent.data ?? []).filter((d) => d.drawIndex !== null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selectedOverride, setSelected] = useState<string | null>(null);
 
-  // Default to the most recent settled round once the list arrives.
-  useEffect(() => {
-    if (selected === null && draws.length > 0) setSelected(draws[0]!.drawIndex);
-  }, [selected, draws]);
+  // Default to the most recent settled round once the list arrives — derived
+  // during render rather than via a setState-in-effect. A user pick (override)
+  // wins; otherwise fall back to the newest draw.
+  const selected = selectedOverride ?? draws[0]?.drawIndex ?? null;
 
   const pos = draws.findIndex((d) => d.drawIndex === selected);
   const results = useDrawResults(selected);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RotateCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,10 +39,15 @@ export function MySeedsPanel() {
     queryFn: () => api<SeedView>('/fairness/seed', { token }),
   });
 
-  // Sync the editable field whenever the active client seed changes (load / set / rotate).
-  useEffect(() => {
-    if (seed.data) setDraft(seed.data.clientSeed);
-  }, [seed.data?.clientSeed]);
+  // Sync the editable field whenever the active client seed changes (load / set
+  // / rotate) — reset during render on the value's edge rather than via a
+  // setState-in-effect, so local edits aren't clobbered every render.
+  const activeClientSeed = seed.data?.clientSeed;
+  const [syncedClientSeed, setSyncedClientSeed] = useState(activeClientSeed);
+  if (activeClientSeed !== undefined && activeClientSeed !== syncedClientSeed) {
+    setSyncedClientSeed(activeClientSeed);
+    setDraft(activeClientSeed);
+  }
 
   const setClient = useMutation({
     mutationFn: (clientSeed: string) =>

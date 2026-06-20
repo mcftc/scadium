@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWallet, type Wallet } from '@solana/wallet-adapter-react';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
@@ -35,13 +35,21 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
   const [error, setError] = useState<string | null>(null);
   const connectStartedRef = useRef(false);
 
-  // Reset state whenever the modal opens afresh
-  useEffect(() => {
+  // Reset state whenever the modal opens afresh — the setState resets run
+  // during render on the open edge (no setState-in-effect); the ref reset
+  // (not render state) stays in an effect since refs must not be written
+  // during render.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setStep('choose');
       setError(null);
-      connectStartedRef.current = false;
     }
+  }
+
+  useEffect(() => {
+    if (open) connectStartedRef.current = false;
   }, [open]);
 
   // `select()` only sets the active wallet on the *next* render — calling
@@ -68,16 +76,7 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
     return () => clearTimeout(t);
   }, [open, step, wallet, connected, connecting, connect]);
 
-  // After the wallet adapter reports `connected: true`, kick off SIWS
-  useEffect(() => {
-    if (!open) return;
-    if (connected && step === 'connecting') {
-      void runSiws();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, step, open]);
-
-  async function runSiws() {
+  const runSiws = useCallback(async () => {
     setStep('signing');
     setError(null);
     try {
@@ -94,7 +93,16 @@ export function WalletConnectModal({ open, onClose }: WalletConnectModalProps) {
         /* noop */
       }
     }
-  }
+  }, [signIn, onClose, disconnect]);
+
+  // After the wallet adapter reports `connected: true`, kick off SIWS.
+  useEffect(() => {
+    if (!open) return;
+    if (connected && step === 'connecting') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reacts to the external wallet-adapter `connected` flag flipping true and launches the SIWS sign-in flow (which advances `step`); this is the intended "external system changed → drive our state machine" effect.
+      void runSiws();
+    }
+  }, [connected, step, open, runSiws]);
 
   // Privy (Google/Apple) finished its own login + JWT exchange (#203) — reuse the
   // same success → auto-close UX as SIWS.

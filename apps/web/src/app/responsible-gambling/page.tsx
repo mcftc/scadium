@@ -57,6 +57,7 @@ export default function ResponsibleGamblingPage() {
   const [loss, setLoss] = useState('');
   const [wager, setWager] = useState('');
 
+  // eslint-disable-next-line react-hooks/purity -- reads the wall clock to decide whether a self-exclusion / cool-off window is still in the future; a render-time snapshot of "now" is exactly the intended semantics here (display-only, no money/fairness).
   const now = Date.now();
   const excludedUntil =
     rg?.selfExcludedUntil && new Date(rg.selfExcludedUntil).getTime() > now
@@ -80,8 +81,14 @@ export default function ResponsibleGamblingPage() {
         </p>
 
         <Card className="space-y-1 p-6 text-sm">
-          <Row label="Self-excluded until" value={excludedUntil ? excludedUntil.toLocaleString() : '—'} />
-          <Row label="Cooling-off until" value={coolingUntil ? coolingUntil.toLocaleString() : '—'} />
+          <Row
+            label="Self-excluded until"
+            value={excludedUntil ? excludedUntil.toLocaleString() : '—'}
+          />
+          <Row
+            label="Cooling-off until"
+            value={coolingUntil ? coolingUntil.toLocaleString() : '—'}
+          />
           <Row label="Daily deposit limit" value={fmtLimit(rg?.dailyDepositLimitLamports)} />
           <Row label="Daily loss limit" value={fmtLimit(rg?.dailyLossLimitLamports)} />
           <Row label="Daily wager limit" value={fmtLimit(rg?.dailyWagerLimitLamports)} />

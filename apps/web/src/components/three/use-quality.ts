@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 export type QualityTier = 'off' | 'low' | 'high';
 
@@ -27,15 +27,18 @@ function detect(): QualityTier {
   return 'high';
 }
 
+const noopSubscribe = () => () => {};
+
 /**
  * Render-quality tier for 3D stages. `null` during SSR and the first client
  * paint (render the 2D fallback then); afterwards sticky for the session.
+ * `useSyncExternalStore` runs the (DOM-touching) detection in the client
+ * snapshot — never during SSR — so there's no setState-in-effect.
  */
 export function useQualityTier(): QualityTier | null {
-  const [tier, setTier] = useState<QualityTier | null>(detected);
-  useEffect(() => {
-    detected ??= detect();
-    setTier(detected);
-  }, []);
-  return tier;
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => (detected ??= detect()),
+    () => null,
+  );
 }

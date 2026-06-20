@@ -39,17 +39,16 @@ export function BlackjackTable() {
   const { open: openWallet } = useWalletModal();
   const { data: me } = useMe();
   const tables = useBlackjackTables();
-  const [tableId, setTableId] = useState<string | null>(null);
+  const [selectedTableId, setTableId] = useState<string | null>(null);
+  // Default to the first public table once the lobby list arrives — derived
+  // during render rather than via a setState-in-effect. An explicit user
+  // selection wins; otherwise fall back to the first table.
+  const tableId = selectedTableId ?? tables.data?.[0]?.id ?? null;
   const { snapshot: state, refetch } = useBlackjackTable(tableId);
   const actions = useBlackjackActions(tableId);
   const [error, setError] = useState<string | null>(null);
   const [rulebookOpen, setRulebookOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-
-  // Default to the first public table once the lobby list arrives.
-  useEffect(() => {
-    if (!tableId && tables.data && tables.data.length > 0) setTableId(tables.data[0]!.id);
-  }, [tableId, tables.data]);
 
   // Phase countdowns (betting window / turn clock).
   useEffect(() => {
@@ -156,10 +155,25 @@ export function BlackjackTable() {
               stroke="#3a3a55"
               strokeWidth="1"
             />
-            <text x="500" y="280" textAnchor="middle" fill="rgba(255,255,255,0.04)" fontSize="24" fontWeight="bold" letterSpacing="8">
+            <text
+              x="500"
+              y="280"
+              textAnchor="middle"
+              fill="rgba(255,255,255,0.04)"
+              fontSize="24"
+              fontWeight="bold"
+              letterSpacing="8"
+            >
               BLACKJACK PAYS 3 TO 2
             </text>
-            <text x="500" y="310" textAnchor="middle" fill="rgba(255,255,255,0.03)" fontSize="14" letterSpacing="4">
+            <text
+              x="500"
+              y="310"
+              textAnchor="middle"
+              fill="rgba(255,255,255,0.03)"
+              fontSize="14"
+              letterSpacing="4"
+            >
               DEALER HITS ON SOFT 17
             </text>
           </svg>
@@ -167,7 +181,9 @@ export function BlackjackTable() {
           {/* Dealer zone */}
           <div className="absolute top-[5%] left-1/2 -translate-x-1/2 flex flex-col items-center">
             <div className="flex items-end gap-3">
-              <DealerAvatar dealing={state?.phase === 'dealing' || state?.phase === 'dealer_turn'} />
+              <DealerAvatar
+                dealing={state?.phase === 'dealing' || state?.phase === 'dealer_turn'}
+              />
               <CardShoe />
             </div>
             <div className="mt-1.5 mb-2 flex items-center gap-2 rounded-full bg-black/40 px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-foreground-muted/70 backdrop-blur-sm">
@@ -304,7 +320,12 @@ function DealerAvatar({ dealing = false }: { dealing?: boolean }) {
             <motion.span
               key={i}
               animate={{ scaleY: [1, 1, 0.1, 1], opacity: [1, 1, 0.4, 1] }}
-              transition={{ duration: 4.2, repeat: Infinity, times: [0, 0.9, 0.95, 1], delay: i * 0.04 }}
+              transition={{
+                duration: 4.2,
+                repeat: Infinity,
+                times: [0, 0.9, 0.95, 1],
+                delay: i * 0.04,
+              }}
               className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.95)]"
             />
           ))}
@@ -347,7 +368,9 @@ function CardShoe() {
         {/* lip of the shoe */}
         <div className="absolute inset-x-0 bottom-0 h-2 bg-gradient-to-t from-black/60 to-transparent" />
       </div>
-      <span className="mt-0.5 text-[8px] uppercase tracking-widest text-foreground-muted/50">Shoe</span>
+      <span className="mt-0.5 text-[8px] uppercase tracking-widest text-foreground-muted/50">
+        Shoe
+      </span>
     </div>
   );
 }
@@ -394,7 +417,11 @@ function SeatSpot({
       {seat.cards.length > 0 && (
         <div className="-mt-16 mb-1 flex">
           {seat.cards.map((c, i) => (
-            <div key={i} className="origin-bottom scale-[0.55]" style={{ marginLeft: i > 0 ? -34 : 0 }}>
+            <div
+              key={i}
+              className="origin-bottom scale-[0.55]"
+              style={{ marginLeft: i > 0 ? -34 : 0 }}
+            >
               <DealtCard index={i}>
                 <CardFace card={c} />
               </DealtCard>
@@ -423,7 +450,12 @@ function SeatSpot({
           {seat.bet ? formatSol(seat.bet.mainLamports, 3) : '—'}
         </span>
         {seat.total !== null && (
-          <span className={cn('font-bold', seat.status === 'busted' ? 'text-danger' : 'text-foreground')}>
+          <span
+            className={cn(
+              'font-bold',
+              seat.status === 'busted' ? 'text-danger' : 'text-foreground',
+            )}
+          >
             {seat.total}
           </span>
         )}

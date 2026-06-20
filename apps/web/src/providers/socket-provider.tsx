@@ -55,6 +55,7 @@ export function useSocket(namespace: string): Socket | null {
   useEffect(() => {
     if (!ctx) return;
     const s = ctx.getSocket(namespace);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- getSocket() lazily opens a Socket.io connection (a side effect that must not run during render); storing the resulting socket in state is the intended subscribe-to-external-system pattern.
     setSock(s);
   }, [ctx, namespace]);
 

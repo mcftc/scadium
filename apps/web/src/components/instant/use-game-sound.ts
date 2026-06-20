@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 
 /**
  * Tiny Web-Audio sound layer for the instant games — NO audio assets. A single
@@ -11,29 +12,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const STORAGE_KEY = 'scadium:instant:sound';
 
 export function useGameSound() {
-  const [enabled, setEnabled] = useState(false);
+  // Persisted preference read reactively (null/false on SSR + first paint → no
+  // hydration drift), so there's no setState-in-effect to restore it.
+  const enabled = useLocalStorageValue(STORAGE_KEY) === '1';
   const ctxRef = useRef<AudioContext | null>(null);
 
-  // Restore persisted preference on mount (client-only to avoid hydration drift).
-  useEffect(() => {
-    try {
-      setEnabled(window.localStorage.getItem(STORAGE_KEY) === '1');
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   const toggle = useCallback(() => {
-    setEnabled((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
+    writeLocalStorageValue(STORAGE_KEY, enabled ? '0' : '1');
+  }, [enabled]);
 
   // Browsers cap AudioContexts per origin (~6); close ours on unmount so
   // hopping between the four game pages doesn't leak one context each.
