@@ -79,6 +79,13 @@ describe('SCAD Engine — stake, distribute, lock', () => {
   });
 
   it('distributes a USDS dividend pro-rata to the staker', async () => {
+    // distribute() aggregates NGR over EVERY bet in the hour window across the
+    // shared test DB. Other suites' net-winning bets in the current hour can drive
+    // the global NGR negative (observed ~-132 SOL) → pool 0 → no dividend. Clear the
+    // window first so the pool is deterministic from this suite's own bet.
+    const hourEnd = new Date(hourStart.getTime() + 3_600_000);
+    await prisma.bet.deleteMany({ where: { createdAt: { gte: hourStart, lt: hourEnd } } });
+
     // 1 SOL-equivalent NGR in this round's hour → 10% dividend = $10 USDS.
     await prisma.bet.create({
       data: {
