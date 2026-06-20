@@ -24,6 +24,15 @@ describe('SCAD Engine — stake, distribute, lock', () => {
 
   beforeAll(async () => {
     // Isolate this round from any rows other suites left in the shared test DB.
+    // Delete the period's claims before its rounds (FK) — a prior run or another
+    // suite that left staked users (which distribute() pays) would otherwise block this.
+    const stale = await prisma.distributionRound.findMany({
+      where: { period },
+      select: { id: true },
+    });
+    await prisma.distributionClaim.deleteMany({
+      where: { roundId: { in: stale.map((r) => r.id) } },
+    });
     await prisma.distributionRound.deleteMany({ where: { period } });
 
     const id = randomUUID();
@@ -38,7 +47,16 @@ describe('SCAD Engine — stake, distribute, lock', () => {
   });
 
   afterAll(async () => {
-    await prisma.distributionClaim.deleteMany({ where: { userId } });
+    // distribute() pays EVERY staked user in the shared test DB, so the round can
+    // hold claims beyond this suite's user — delete all of the period's claims
+    // before the rounds (FK) so teardown is robust regardless of who got paid.
+    const rounds = await prisma.distributionRound.findMany({
+      where: { period },
+      select: { id: true },
+    });
+    await prisma.distributionClaim.deleteMany({
+      where: { roundId: { in: rounds.map((r) => r.id) } },
+    });
     await prisma.distributionRound.deleteMany({ where: { period } });
     await prisma.stakeEvent.deleteMany({ where: { userId } });
     await prisma.balanceLedger.deleteMany({ where: { userId } });
@@ -80,7 +98,9 @@ describe('SCAD Engine — stake, distribute, lock', () => {
     expect(round.distributed).toBe(true);
     expect(round.poolUsds).toBeGreaterThan(0n);
 
-    const claim = await prisma.distributionClaim.findFirst({ where: { userId, roundId: round.id } });
+    const claim = await prisma.distributionClaim.findFirst({
+      where: { userId, roundId: round.id },
+    });
     expect(claim).not.toBeNull();
     expect(claim!.shareUsds).toBeGreaterThan(0n);
 
