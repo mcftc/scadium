@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { TrendingUp, Coins, Spade } from 'lucide-react';
+import { TrendingUp, Coins, Spade, Dices, Rocket, Circle, Bomb } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
 import { ChainCopy } from '@/components/chain/chain-copy';
@@ -31,6 +31,42 @@ const games = [
     href: '/blackjack',
     accent: 'from-[#9C4FE0] to-[#4D3D99]',
     rtp: '99.5%',
+  },
+  {
+    id: 'dice',
+    title: 'Dice',
+    description: 'Roll under your target. Set your own odds.',
+    icon: Dices,
+    href: '/dice',
+    accent: 'from-[#EE86FF] to-[#9C4FE0]',
+    rtp: '99%',
+  },
+  {
+    id: 'limbo',
+    title: 'Limbo',
+    description: 'Pick a multiplier. Beat the roll, win big.',
+    icon: Rocket,
+    href: '/limbo',
+    accent: 'from-[#C76BFF] to-[#6F5FCC]',
+    rtp: '99%',
+  },
+  {
+    id: 'plinko',
+    title: 'Plinko',
+    description: 'Drop the ball. Bounce into a payout bin.',
+    icon: Circle,
+    href: '/plinko',
+    accent: 'from-[#9C4FE0] to-[#4D3D99]',
+    rtp: '96.5%',
+  },
+  {
+    id: 'wheel',
+    title: 'Wheel',
+    description: 'Spin the wheel. Land on a multiplier.',
+    icon: Bomb,
+    href: '/wheel',
+    accent: 'from-[#6F5FCC] to-[#4D3D99]',
+    rtp: '96.5%',
   },
 ];
 

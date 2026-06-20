@@ -58,7 +58,7 @@ export function AffiliatesDashboard() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <Card>
+      <Card id="referral-link" className="scroll-mt-28">
         <CardHeader>
           <CardTitle>Your referral link</CardTitle>
         </CardHeader>
@@ -97,7 +97,7 @@ export function AffiliatesDashboard() {
         />
       </div>
 
-      <Card>
+      <Card id="recent-referrals" className="scroll-mt-28">
         <CardHeader>
           <CardTitle>Recent referrals</CardTitle>
         </CardHeader>
@@ -136,7 +136,7 @@ export function AffiliatesDashboard() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="commission-tiers" className="scroll-mt-28">
         <CardHeader>
           <CardTitle>Commission tiers</CardTitle>
         </CardHeader>
