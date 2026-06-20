@@ -85,6 +85,13 @@ export function useBlackjackTables() {
  */
 export function useBlackjackTable(tableId: string | null) {
   const [snapshot, setSnapshot] = useState<BlackjackTableSnapshot | null>(null);
+  // Reset the snapshot during render when the table changes, rather than via a
+  // setState-in-effect — avoids briefly showing the previous table's state.
+  const [prevTableId, setPrevTableId] = useState(tableId);
+  if (prevTableId !== tableId) {
+    setPrevTableId(tableId);
+    setSnapshot(null);
+  }
   const [lastCard, setLastCard] = useState<{
     seatIndex: number | 'dealer';
     card: Card | null;
@@ -101,7 +108,6 @@ export function useBlackjackTable(tableId: string | null) {
   }, [tableId]);
 
   useEffect(() => {
-    setSnapshot(null);
     refetch();
     // Light polling fallback — covers socket events that raced the initial
     // namespace connect (e.g. seating yourself right after page load).

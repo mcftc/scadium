@@ -66,7 +66,6 @@ export function JackpotGame() {
       });
     };
     socket.on('jackpot:result', onResult);
-    // eslint-disable-next-line no-console
     const logAny = (event: string) => console.debug('[jp socket]', event);
     socket.onAny(logAny);
     return () => {
@@ -183,8 +182,9 @@ export function JackpotGame() {
             </div>
           )}
           <p className="text-[11px] text-foreground-muted text-center">
-            Win chance = your stake ÷ total pot. Provably fair · {snap ? Math.round(snap.config.houseEdge * 100) : 5}% house edge ·
-            needs {snap?.config.minPlayers ?? 2}+ players or all entries refund.
+            Win chance = your stake ÷ total pot. Provably fair ·{' '}
+            {snap ? Math.round(snap.config.houseEdge * 100) : 5}% house edge · needs{' '}
+            {snap?.config.minPlayers ?? 2}+ players or all entries refund.
           </p>
         </Card>
 
@@ -271,9 +271,7 @@ function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
               </span>
             </>
           ) : (
-            <span className="text-foreground-muted">
-              Last round refunded — not enough players.
-            </span>
+            <span className="text-foreground-muted">Last round refunded — not enough players.</span>
           )}
         </div>
       )}
@@ -283,7 +281,11 @@ function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
 
 function PlayersList({ snap, meId }: { snap: JackpotSnapshot | null; meId?: string }) {
   if (!snap || snap.players.length === 0) {
-    return <div className="py-6 text-center text-xs text-foreground-muted">No entries yet — be first in.</div>;
+    return (
+      <div className="py-6 text-center text-xs text-foreground-muted">
+        No entries yet — be first in.
+      </div>
+    );
   }
   return (
     <div className="space-y-2">
@@ -316,7 +318,8 @@ function PlayersList({ snap, meId }: { snap: JackpotSnapshot | null; meId?: stri
 
 function MyEntries() {
   const { data, isLoading } = useMyJackpot();
-  if (isLoading) return <div className="py-6 text-center text-xs text-foreground-muted">Loading…</div>;
+  if (isLoading)
+    return <div className="py-6 text-center text-xs text-foreground-muted">Loading…</div>;
   if (!data || data.length === 0)
     return <div className="py-6 text-center text-xs text-foreground-muted">No entries yet.</div>;
   return (
@@ -328,9 +331,7 @@ function MyEntries() {
             key={r.roundId}
             className={cn(
               'flex items-center justify-between px-3 py-2 rounded-lg text-xs border',
-              r.won
-                ? 'bg-success/10 border-success/40'
-                : 'bg-surface-elevated/40 border-border',
+              r.won ? 'bg-success/10 border-success/40' : 'bg-surface-elevated/40 border-border',
             )}
           >
             <span className="font-mono">{formatSol(r.myAmountLamports, 3)}</span>
@@ -338,7 +339,9 @@ function MyEntries() {
               {!settled ? (
                 <span className="text-foreground-muted">in pot</span>
               ) : r.won ? (
-                <span className="text-success font-semibold">won +{formatSol(r.payoutLamports, 3)}</span>
+                <span className="text-success font-semibold">
+                  won +{formatSol(r.payoutLamports, 3)}
+                </span>
               ) : r.status === 'refunded' ? (
                 <span className="text-foreground-muted">refunded</span>
               ) : (
@@ -354,7 +357,8 @@ function MyEntries() {
 
 function RecentWinners() {
   const { data, isLoading } = useJackpotRecent();
-  if (isLoading) return <div className="py-6 text-center text-xs text-foreground-muted">Loading…</div>;
+  if (isLoading)
+    return <div className="py-6 text-center text-xs text-foreground-muted">Loading…</div>;
   if (!data || data.length === 0)
     return <div className="py-6 text-center text-xs text-foreground-muted">No draws yet.</div>;
   return (
@@ -415,9 +419,8 @@ function JackpotFairness({ snap }: { snap: JackpotSnapshot | null }) {
           <SeedRow label="Last round — server seed (revealed)" value={last.serverSeed} />
           {last.winningTicket && (
             <div className="text-[10px] text-foreground-muted">
-              Winning ticket{' '}
-              <span className="font-mono text-foreground">{last.winningTicket}</span> of{' '}
-              {last.totalLamports} lamports
+              Winning ticket <span className="font-mono text-foreground">{last.winningTicket}</span>{' '}
+              of {last.totalLamports} lamports
             </div>
           )}
           <Link
@@ -436,8 +439,12 @@ function JackpotFairness({ snap }: { snap: JackpotSnapshot | null }) {
 function SeedRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-wider text-foreground-muted/70 mb-0.5">{label}</div>
-      <div className="font-mono text-[10px] break-all leading-tight text-foreground/90">{value}</div>
+      <div className="text-[9px] uppercase tracking-wider text-foreground-muted/70 mb-0.5">
+        {label}
+      </div>
+      <div className="font-mono text-[10px] break-all leading-tight text-foreground/90">
+        {value}
+      </div>
     </div>
   );
 }

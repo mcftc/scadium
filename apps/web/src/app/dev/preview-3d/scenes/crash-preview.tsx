@@ -48,9 +48,12 @@ export function CrashPreview() {
     const n = 2 + Math.floor(Math.random() * 4);
     for (let i = 0; i < n; i++) {
       timers.current.push(
-        setTimeout(() => {
-          if (mult.current < bustAt.current) fireCashout(Number(mult.current.toFixed(2)));
-        }, 600 + Math.random() * 4000),
+        setTimeout(
+          () => {
+            if (mult.current < bustAt.current) fireCashout(Number(mult.current.toFixed(2)));
+          },
+          600 + Math.random() * 4000,
+        ),
       );
     }
 
@@ -79,6 +82,7 @@ export function CrashPreview() {
   const snapshot: CrashSnapshot = {
     roundId: String(roundId),
     phase,
+    // eslint-disable-next-line react-hooks/purity -- dev-only 3D preview harness; the fake snapshot stamps wall-clock "now" as startedAt purely for the visual, not used in any money/fairness path.
     startedAt: Date.now(),
     serverSeedHash: '0'.repeat(64),
     clientSeed: 'preview',

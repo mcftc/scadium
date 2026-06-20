@@ -81,6 +81,7 @@ export function VerifierForm() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const g = q.get('game');
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot client-only prefill from window.location query params on mount (the deep-link "Verify this round" flow); seeding form state here is intentional and runs once.
     if (g && (GAMES as string[]).includes(g)) setGame(g as Game);
     const ss = q.get('serverSeed');
     const cs = q.get('clientSeed');
@@ -120,7 +121,9 @@ export function VerifierForm() {
         output = r;
       } else if (game === 'lottery') {
         if (!slotHash.trim()) {
-          throw new Error('Lottery needs the draw’s slot hash (64 hex chars) — shown on the lottery page after each draw');
+          throw new Error(
+            'Lottery needs the draw’s slot hash (64 hex chars) — shown on the lottery page after each draw',
+          );
         }
         const { digits } = await lotteryDraw(serverSeed, clientSeed, slotHash.trim(), nonceNum);
         output = digits.join('  ');
@@ -158,9 +161,7 @@ export function VerifierForm() {
         output = await verifyBlackjack(serverSeed, clientSeed, nonceNum, dealLog);
       }
 
-      const commitOk = commitHash.trim()
-        ? await verifyCommit(serverSeed, commitHash.trim())
-        : null;
+      const commitOk = commitHash.trim() ? await verifyCommit(serverSeed, commitHash.trim()) : null;
 
       setResult({ game, output, commitOk });
     } catch (e) {
@@ -210,13 +211,7 @@ export function VerifierForm() {
         placeholder="client-chosen entropy"
         mono
       />
-      <TextField
-        label="Nonce"
-        value={nonce}
-        onChange={setNonce}
-        placeholder="0"
-        mono
-      />
+      <TextField label="Nonce" value={nonce} onChange={setNonce} placeholder="0" mono />
       {game === 'lottery' && (
         <TextField
           label="Slot hash — pinned at commit (the target slot's hash, from the reveal tx)"
@@ -270,8 +265,9 @@ export function VerifierForm() {
       )}
       {game === 'limbo' && (
         <p className="-mt-2 text-[11px] text-foreground-muted">
-          The result is computed from the seeds alone (house edge {(LIMBO.HOUSE_EDGE * 100).toFixed(0)}
-          % baked in). Enter your target to see whether the round would have won.
+          The result is computed from the seeds alone (house edge{' '}
+          {(LIMBO.HOUSE_EDGE * 100).toFixed(0)}% baked in). Enter your target to see whether the
+          round would have won.
         </p>
       )}
       {game === 'plinko' && (
@@ -300,8 +296,8 @@ export function VerifierForm() {
       )}
       {game === 'wheel' && (
         <p className="text-[11px] text-foreground-muted">
-          The spin lands on one of {WHEEL_SEGMENTS} weighted segments; the verifier maps the index to
-          its payout multiplier (from the shared bucket table, EV ≈ 0.965).
+          The spin lands on one of {WHEEL_SEGMENTS} weighted segments; the verifier maps the index
+          to its payout multiplier (from the shared bucket table, EV ≈ 0.965).
         </p>
       )}
       <TextField
@@ -313,7 +309,11 @@ export function VerifierForm() {
       />
 
       <Button onClick={compute} size="lg" className="w-full" disabled={loading}>
-        {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
+        {loading ? (
+          <Loader2 className="h-5 w-5 animate-spin" />
+        ) : (
+          <ShieldCheck className="h-5 w-5" />
+        )}
         Verify
       </Button>
 

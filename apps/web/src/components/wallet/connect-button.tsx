@@ -6,6 +6,7 @@ import { Wallet, LogOut, User as UserIcon, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { cn } from '@/lib/cn';
 
 /**
@@ -15,12 +16,10 @@ import { cn } from '@/lib/cn';
 export function ConnectButton() {
   const { open } = useWalletModal();
   const { isAuthenticated, walletAddress, signOut } = useWalletAuth();
-  const [mounted, setMounted] = useState(false);
+  // Avoid hydration mismatch — zustand persist reads from localStorage after mount
+  const mounted = useHydrated();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  // Avoid hydration mismatch — zustand persist reads from localStorage after mount
-  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!menuOpen) return;

@@ -31,6 +31,7 @@ export function CrashCurve({
 
   useEffect(() => {
     if (state?.phase !== 'waiting') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- countdown is timer-driven display state: this seeds it to 20 at the start of each betting window, after which the interval below animates it down. Not derivable during render.
     setCountdown(20);
     const interval = setInterval(() => {
       setCountdown((c) => Math.max(0, c - 0.1));
@@ -378,7 +379,11 @@ function CrashTrail({
 
   return (
     <div ref={rootRef} className="absolute inset-0 z-[5]">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="absolute inset-0 w-full h-full"
+      >
         <defs>
           <linearGradient id="trail-grad" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor={trailColor} stopOpacity="0.05" />
@@ -447,15 +452,39 @@ function CrashTrail({
             <motion.div
               className="flex flex-col items-center"
               initial={{ opacity: 0, y: -6, scale: 0.55 }}
-              animate={{ opacity: [0, 1, 1, 1, 0], y: [-6, 10, 64, 116, 158], x: [0, 7, -7, 5, 0], scale: 1 }}
+              animate={{
+                opacity: [0, 1, 1, 1, 0],
+                y: [-6, 10, 64, 116, 158],
+                x: [0, 7, -7, 5, 0],
+                scale: 1,
+              }}
               transition={{ duration: 3, times: [0, 0.12, 0.5, 0.82, 1], ease: 'easeOut' }}
             >
               {/* Canopy */}
-              <svg width="46" height="26" viewBox="0 0 46 26" className="drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
-                <path d={`M2 15 A21 21 0 0 1 44 15 L37 15 L31 19 L23 15 L15 19 L9 15 Z`} fill={hue} fillOpacity={0.92} />
-                <path d="M23 2 L23 15 M13.5 4 L15 15 M32.5 4 L31 15" stroke="rgba(255,255,255,0.45)" strokeWidth={1} fill="none" />
+              <svg
+                width="46"
+                height="26"
+                viewBox="0 0 46 26"
+                className="drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]"
+              >
+                <path
+                  d={`M2 15 A21 21 0 0 1 44 15 L37 15 L31 19 L23 15 L15 19 L9 15 Z`}
+                  fill={hue}
+                  fillOpacity={0.92}
+                />
+                <path
+                  d="M23 2 L23 15 M13.5 4 L15 15 M32.5 4 L31 15"
+                  stroke="rgba(255,255,255,0.45)"
+                  strokeWidth={1}
+                  fill="none"
+                />
                 {/* shroud lines to the payload */}
-                <path d="M3 15 L23 25 M15 17 L23 25 M31 17 L23 25 M43 15 L23 25" stroke="rgba(216,212,240,0.7)" strokeWidth={0.8} fill="none" />
+                <path
+                  d="M3 15 L23 25 M15 17 L23 25 M31 17 L23 25 M43 15 L23 25"
+                  stroke="rgba(216,212,240,0.7)"
+                  strokeWidth={0.8}
+                  fill="none"
+                />
               </svg>
               {/* Hanging player + winnings */}
               <div className="-mt-0.5 flex items-center gap-1">
@@ -562,18 +591,11 @@ function MultiplierRuler({
           // Map multiplier value to y-position (bottom=0x, top=maxLabel)
           const pct = (v / maxLabel) * 85;
           return (
-            <div
-              key={v}
-              className="absolute left-0 right-16"
-              style={{ bottom: `${5 + pct}%` }}
-            >
+            <div key={v} className="absolute left-0 right-16" style={{ bottom: `${5 + pct}%` }}>
               <div
                 className="w-full h-px"
                 style={{
-                  background:
-                    v === 1
-                      ? 'rgba(100,100,180,0.2)'
-                      : 'rgba(100,100,180,0.07)',
+                  background: v === 1 ? 'rgba(100,100,180,0.2)' : 'rgba(100,100,180,0.07)',
                 }}
               />
             </div>

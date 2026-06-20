@@ -1,16 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Mail, Globe, Send, MessageCircle, Check, Wallet, Star } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UsernameForm } from '@/components/profile/username-form';
-import {
-  useMe,
-  useUpdateProfile,
-  useUpdateConnection,
-  type SocialProvider,
-} from '@/hooks/use-me';
+import { useMe, useUpdateProfile, useUpdateConnection, type SocialProvider } from '@/hooks/use-me';
 import {
   useWallets,
   useLinkWallet,
@@ -37,10 +32,16 @@ export function SettingsContent() {
   const { data: me } = useMe();
   const update = useUpdateProfile();
 
-  const [email, setEmail] = useState('');
-  useEffect(() => {
-    if (me) setEmail(me.email ?? '');
-  }, [me]);
+  // Seed the editable email from the loaded profile — reset during render when
+  // the server value changes rather than via a setState-in-effect, so local
+  // edits aren't clobbered on every render.
+  const serverEmail = me?.email ?? '';
+  const [email, setEmail] = useState(serverEmail);
+  const [syncedEmail, setSyncedEmail] = useState(serverEmail);
+  if (me && serverEmail !== syncedEmail) {
+    setSyncedEmail(serverEmail);
+    setEmail(serverEmail);
+  }
 
   if (!me) return null;
   const emailDirty = email.trim() !== (me.email ?? '');
@@ -277,10 +278,7 @@ function ConnectionRow({
             size="sm"
             disabled={!val.trim() || conn.isPending}
             onClick={() =>
-              conn.mutate(
-                { provider, account: val.trim() },
-                { onSuccess: () => setEditing(false) },
-              )
+              conn.mutate({ provider, account: val.trim() }, { onSuccess: () => setEditing(false) })
             }
           >
             Link

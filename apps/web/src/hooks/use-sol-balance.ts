@@ -16,12 +16,10 @@ export function useSolBalance() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!publicKey) {
-      setLamports(null);
-      return;
-    }
+    if (!publicKey) return;
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- enters the loading state before kicking off the async balance fetch (resolved by the .then/.catch/.finally below); standard subscribe-to-external-system fetch pattern.
     setLoading(true);
 
     connection
@@ -46,9 +44,13 @@ export function useSolBalance() {
     };
   }, [connection, publicKey]);
 
+  // Derive null when no wallet is connected rather than resetting state in the
+  // effect — keeps the disconnect path setState-free and avoids a stale balance.
+  const effectiveLamports = publicKey ? lamports : null;
+
   return {
-    lamports,
-    sol: lamports !== null ? lamports / LAMPORTS_PER_SOL : null,
+    lamports: effectiveLamports,
+    sol: effectiveLamports !== null ? effectiveLamports / LAMPORTS_PER_SOL : null,
     loading,
   };
 }
