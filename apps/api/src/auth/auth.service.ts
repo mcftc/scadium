@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SiwsService } from './siws.service';
@@ -300,9 +305,24 @@ export class AuthService {
     if (existing) return existing;
 
     const walletAddress = identity.solanaAddress ?? `privy:${identity.privyUserId}`;
+
+    // Mirror the SIWS path: if the Privy user's linked Solana address is a
+    // NON-PRIMARY linked wallet of an existing user, resolve to its owner instead
+    // of trying to create a second account (which would 500 on the @unique race
+    // or orphan the link).
+    if (identity.solanaAddress) {
+      const linked = await this.prisma.linkedWallet.findUnique({
+        where: { address: identity.solanaAddress },
+        include: { user: true },
+      });
+      if (linked) return linked.user;
+    }
+
     const signupIpHash = this.hashIp(opts.ipAddress ?? null);
     const referredById = await this.resolveReferrer(opts.ref, {
       excludePrivyUserId: identity.privyUserId,
+      // A Privy user must not self-refer via the refCode of their own SIWS wallet.
+      excludeWalletAddress: identity.solanaAddress ?? undefined,
     });
 
     try {
@@ -325,6 +345,19 @@ export class AuthService {
         where: { privyUserId: identity.privyUserId },
       });
       if (retry) return retry;
+
+      // Not a privyUserId race: the most likely remaining unique violation is the
+      // user's linked Solana address already being some other user's primary
+      // `walletAddress` (they previously signed in via SIWS). Surface a clear
+      // 409 instead of a generic 500.
+      if (identity.solanaAddress) {
+        const walletOwner = await this.prisma.user.findUnique({
+          where: { walletAddress: identity.solanaAddress },
+        });
+        if (walletOwner) {
+          throw new ConflictException('This wallet is already registered via wallet sign-in');
+        }
+      }
       throw new Error('Failed to provision Privy user');
     }
   }

@@ -130,9 +130,15 @@ export class PrivyService {
         if (solana && solana.type === 'wallet') solanaAddress = solana.address;
       }
     } catch (err) {
-      // The token is valid; we just couldn't enrich. Proceed with id-only — the
-      // user can still be provisioned and sign in.
-      this.logger.warn(`Privy getUser failed for verified token: ${(err as Error).message}`);
+      // FAIL CLOSED: the token is valid, but we could not resolve the user from
+      // Privy. Proceeding id-only would silently de-enrich the account (null
+      // email/wallet) on every Privy outage AND could resolve a stale/wrong
+      // `walletAddress` — so we refuse rather than provision a degraded identity.
+      // Do NOT log the token or any secret — only that resolution failed.
+      this.logger.warn(
+        `Privy user resolution failed for verified token: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException('Privy user resolution unavailable; please retry');
     }
 
     return { privyUserId: claims.userId, email, emailProvider, solanaAddress };
