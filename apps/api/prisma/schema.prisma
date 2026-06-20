@@ -164,6 +164,11 @@ model User {
   // Moved out of scadiumBalance on stake, back on unstake (after the lock).
   scadiumStaked             BigInt        @default(0)
   stakeLockedUntil          DateTime?
+  // SCAD Engine auto-stake preference (bc.game parity). When true, earned $SCAD
+  // is swept into the locked staked balance on the next staking touch (summary/
+  // claim path) once it clears ENGINE.MIN_STAKE_SCAD_BASE — see StakingService
+  // `autoStakeSweep`. Defaults to ENGINE.AUTO_STAKE_DEFAULT (true).
+  autoStakeEnabled          Boolean       @default(true)
   // USDS (USD-pegged dividend stablecoin, 6 decimals) earned from staking.
   // `usdsReserved` mirrors scadiumReserved: USDS locked by a PENDING on-chain
   // dividend claim, finalized on confirm or restored on permanent failure.

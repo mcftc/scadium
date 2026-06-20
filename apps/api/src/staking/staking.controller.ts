@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsString, Matches, MaxLength } from 'class-validator';
+import { IsBoolean, IsString, Matches, MaxLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthContext } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ProofOfWagerService } from '../proof-of-wager/proof-of-wager.service';
 import { StakingService } from './staking.service';
 
 export class StakeDto {
@@ -22,17 +23,46 @@ export class UnstakeDto {
   amount!: string;
 }
 
+class AutoStakeDto {
+  /** Whether earned $SCAD should be auto-staked on the next staking touch. */
+  @IsBoolean()
+  enabled!: boolean;
+}
+
 @ApiTags('staking')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('staking')
 export class StakingController {
-  constructor(private readonly staking: StakingService) {}
+  constructor(
+    private readonly staking: StakingService,
+    private readonly proofOfWager: ProofOfWagerService,
+  ) {}
 
   @Get('summary')
   @ApiOperation({ summary: 'Staked balance, lock state, USDS earned + est. APY' })
   summary(@CurrentUser() ctx: AuthContext) {
     return this.staking.summary(ctx.userId);
+  }
+
+  @Get('auto-stake')
+  @ApiOperation({ summary: 'Read the auto-stake-earned-$SCAD preference' })
+  async getAutoStake(@CurrentUser() ctx: AuthContext) {
+    return { enabled: await this.staking.getAutoStake(ctx.userId) };
+  }
+
+  @Patch('auto-stake')
+  @ApiOperation({ summary: 'Toggle auto-staking of earned $SCAD' })
+  async setAutoStake(@CurrentUser() ctx: AuthContext, @Body() dto: AutoStakeDto) {
+    return { enabled: await this.staking.setAutoStake(ctx.userId, dto.enabled) };
+  }
+
+  @Get('earn-rate')
+  @ApiOperation({
+    summary: 'Current $SCAD earn rate: effective multiplier + per-SOL (display only)',
+  })
+  earnRate(@CurrentUser() ctx: AuthContext) {
+    return this.proofOfWager.earnRate(ctx.userId);
   }
 
   @Post('stake')
