@@ -13,7 +13,9 @@ import { prisma } from './engine-harness';
  * no-op (no double pay). Mirrors the airdrop-distribute idempotency style.
  */
 describe('SCAD Engine — stake, distribute, lock', () => {
-  const staking = new StakingService(prisma as never);
+  // StakingService now takes (prisma, chain) — serializeSummary reads chain.enabled
+  // (#208). Stub it disabled; this suite never asserts chainEnabled.
+  const staking = new StakingService(prisma as never, { enabled: false } as never);
   const distribution = new DistributionService(prisma as never);
 
   const period = periodForHour(Date.now() - 60_000);
