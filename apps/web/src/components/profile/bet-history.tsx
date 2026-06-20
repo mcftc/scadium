@@ -1,7 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, TrendingUp, Coins, Spade, Ticket, Trophy, CircleHelp } from 'lucide-react';
+import {
+  ChevronDown,
+  TrendingUp,
+  Coins,
+  Spade,
+  Ticket,
+  Trophy,
+  CircleHelp,
+  Dices,
+  Rocket,
+  Circle,
+  Bomb,
+} from 'lucide-react';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useMyBets, type BetRow, type BetGameType } from '@/hooks/use-me';
@@ -15,6 +27,10 @@ const gameIcon: Record<string, typeof TrendingUp> = {
   blackjack: Spade,
   lottery: Ticket,
   jackpot: Trophy,
+  dice: Dices,
+  limbo: Rocket,
+  plinko: Circle,
+  wheel: Bomb,
 };
 
 const FILTERS: [BetGameType | 'all', string][] = [
@@ -24,6 +40,10 @@ const FILTERS: [BetGameType | 'all', string][] = [
   ['blackjack', 'Blackjack'],
   ['jackpot', 'Jackpot'],
   ['lottery', 'Lottery'],
+  ['dice', 'Dice'],
+  ['limbo', 'Limbo'],
+  ['plinko', 'Plinko'],
+  ['wheel', 'Wheel'],
 ];
 
 /**

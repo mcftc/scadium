@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsInt, IsNumberString, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { BlackjackService } from './blackjack.service';
@@ -12,16 +12,22 @@ class TakeSeatDto {
   seatIndex!: number;
 }
 
-class PlaceTableBetDto {
-  @IsNumberString()
+export class PlaceTableBetDto {
+  @IsString()
+  @Matches(/^[1-9]\d*$/)
+  @MaxLength(20)
   mainLamports!: string;
 
   @IsOptional()
-  @IsNumberString()
+  @IsString()
+  @Matches(/^(0|[1-9]\d*)$/)
+  @MaxLength(20)
   side21p3Lamports?: string;
 
   @IsOptional()
-  @IsNumberString()
+  @IsString()
+  @Matches(/^(0|[1-9]\d*)$/)
+  @MaxLength(20)
   sidePerfectPairsLamports?: string;
 }
 

@@ -11,12 +11,45 @@ import {
   reproduceRound,
   lotteryDraw,
   jackpotRoll,
+  diceRoll,
+  limboResult,
+  wheelSpin,
+  plinkoDrop,
   verifyCommit,
   type DealLogEntry,
 } from '@/lib/fair-browser';
-import type { Card } from '@scadium/shared';
+import {
+  DICE,
+  LIMBO,
+  WHEEL_SEGMENTS,
+  PLINKO,
+  diceMultiplier,
+  wheelMultiplier,
+  type Card,
+} from '@scadium/shared';
 
-type Game = 'crash' | 'coinflip' | 'blackjack' | 'lottery' | 'jackpot';
+type Game =
+  | 'crash'
+  | 'coinflip'
+  | 'blackjack'
+  | 'lottery'
+  | 'jackpot'
+  | 'dice'
+  | 'limbo'
+  | 'plinko'
+  | 'wheel';
+
+const GAMES: Game[] = [
+  'crash',
+  'coinflip',
+  'blackjack',
+  'lottery',
+  'jackpot',
+  'dice',
+  'limbo',
+  'plinko',
+  'wheel',
+];
 
 interface Result {
   game: Game;
@@ -37,6 +70,8 @@ export function VerifierForm() {
   const [commitHash, setCommitHash] = useState('');
   const [slotHash, setSlotHash] = useState(''); // lottery only — draw-time entropy
   const [dealLog, setDealLog] = useState(''); // blackjack only — round deal order / seat deck indices
+  const [target, setTarget] = useState(''); // dice / limbo only — chosen target (optional)
+  const [rows, setRows] = useState('16'); // plinko only — peg rows
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,18 +81,21 @@ export function VerifierForm() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const g = q.get('game');
-    if (g === 'crash' || g === 'coinflip' || g === 'blackjack' || g === 'lottery' || g === 'jackpot')
-      setGame(g);
+    if (g && (GAMES as string[]).includes(g)) setGame(g as Game);
     const ss = q.get('serverSeed');
     const cs = q.get('clientSeed');
     const n = q.get('nonce');
     const commit = q.get('commit');
     const sh = q.get('slotHash');
+    const tg = q.get('target');
+    const rw = q.get('rows');
     if (ss) setServerSeed(ss);
     if (cs) setClientSeed(cs);
     if (n) setNonce(n);
     if (commit) setCommitHash(commit);
     if (sh) setSlotHash(sh);
+    if (tg) setTarget(tg);
+    if (rw) setRows(rw);
   }, []);
 
   async function compute() {
@@ -89,6 +127,33 @@ export function VerifierForm() {
       } else if (game === 'jackpot') {
         const roll = await jackpotRoll(serverSeed, clientSeed, nonceNum);
         output = `roll ${roll}  (winner = roll mod pot)`;
+      } else if (game === 'dice') {
+        const roll = await diceRoll(serverSeed, clientSeed, nonceNum);
+        const t = target.trim() ? Number(target) : null;
+        output =
+          t !== null && Number.isFinite(t)
+            ? `roll ${roll.toFixed(2)}  ·  target <${t}  →  ${roll < t ? `WIN ${diceMultiplier(t).toFixed(2)}×` : 'LOSS'}`
+            : `roll ${roll.toFixed(2)}  (roll-under: win when roll < target)`;
+      } else if (game === 'limbo') {
+        const result = await limboResult(serverSeed, clientSeed, nonceNum, LIMBO.HOUSE_EDGE);
+        const t = target.trim() ? Math.floor(Number(target) * 100) / 100 : null;
+        output =
+          t !== null && Number.isFinite(t)
+            ? `result ${result.toFixed(2)}×  ·  target ${t.toFixed(2)}×  →  ${result >= t ? `WIN ${t.toFixed(2)}×` : 'LOSS'}`
+            : `result ${result.toFixed(2)}×  (win when result ≥ target)`;
+      } else if (game === 'wheel') {
+        const index = await wheelSpin(serverSeed, clientSeed, nonceNum, WHEEL_SEGMENTS);
+        const mult = wheelMultiplier(index);
+        output = `segment ${index} / ${WHEEL_SEGMENTS}  →  ${mult}×`;
+      } else if (game === 'plinko') {
+        const r = parseInt(rows, 10);
+        if (!PLINKO.PAYOUTS[r]) {
+          throw new Error(`Plinko rows must be one of ${PLINKO.ROWS.join(', ')}`);
+        }
+        const { path, bin } = await plinkoDrop(serverSeed, clientSeed, nonceNum, r);
+        const mult = PLINKO.PAYOUTS[r]![bin] ?? 0;
+        const dirs = path.map((d) => (d ? 'R' : 'L')).join('');
+        output = `bin ${bin} / ${r}  →  ${mult}×\npath ${dirs}`;
       } else {
         output = await verifyBlackjack(serverSeed, clientSeed, nonceNum, dealLog);
       }
@@ -109,8 +174,8 @@ export function VerifierForm() {
     <div className="space-y-5">
       <div>
         <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">Game</div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {(['crash', 'coinflip', 'blackjack', 'lottery', 'jackpot'] as const).map((g) => (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {GAMES.map((g) => (
             <button
               key={g}
               type="button"
@@ -189,6 +254,55 @@ export function VerifierForm() {
             verifier maps each deck index to the exact card you received.
           </p>
         </div>
+      )}
+      {(game === 'dice' || game === 'limbo') && (
+        <TextField
+          label={
+            game === 'dice'
+              ? `Roll-under target (optional — your bet's target, [${DICE.MIN_TARGET}, ${DICE.MAX_TARGET}])`
+              : `Target multiplier (optional — your bet's target, [${LIMBO.MIN_TARGET}, ${LIMBO.MAX_TARGET}])`
+          }
+          value={target}
+          onChange={setTarget}
+          placeholder={game === 'dice' ? 'e.g. 50' : 'e.g. 2.00'}
+          mono
+        />
+      )}
+      {game === 'limbo' && (
+        <p className="-mt-2 text-[11px] text-foreground-muted">
+          The result is computed from the seeds alone (house edge {(LIMBO.HOUSE_EDGE * 100).toFixed(0)}
+          % baked in). Enter your target to see whether the round would have won.
+        </p>
+      )}
+      {game === 'plinko' && (
+        <div>
+          <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">
+            Rows (the board size of your bet)
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {PLINKO.ROWS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRows(String(r))}
+                className={cn(
+                  'py-2 rounded-lg border text-sm font-semibold transition-colors',
+                  rows === String(r)
+                    ? 'border-primary-400 bg-primary-400/10 text-primary-400'
+                    : 'border-border bg-surface-elevated text-foreground-muted hover:border-primary-400/30',
+                )}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {game === 'wheel' && (
+        <p className="text-[11px] text-foreground-muted">
+          The spin lands on one of {WHEEL_SEGMENTS} weighted segments; the verifier maps the index to
+          its payout multiplier (from the shared bucket table, EV ≈ 0.965).
+        </p>
       )}
       <TextField
         label="Server seed hash (optional — verifies the commitment)"

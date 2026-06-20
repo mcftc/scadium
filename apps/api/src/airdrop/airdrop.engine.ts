@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { periodForHour } from '../queue/queue.constants';
@@ -181,19 +180,24 @@ export class AirdropEngine implements OnModuleInit {
       if (eligible.length === 0) {
         // Nobody qualified — roll the pool into the next hour instead of burning it.
         const nextPeriod = this.periodFor(Date.now() + 3_600_000 - 60_000);
-        const ops: Prisma.PrismaPromise<unknown>[] = [
-          this.prisma.airdropPool.update({ where: { period }, data: { distributed: true } }),
-          this.prisma.airdropPool.upsert({
+        await this.prisma.$transaction(async (tx) => {
+          // Same guarded claim (#216): only the run that flips this period
+          // distributed false→true rolls it over, so two concurrent no-eligible
+          // runs can't double-increment the next pool.
+          const claimed = await tx.airdropPool.updateMany({
+            where: { period, distributed: false },
+            data: { distributed: true },
+          });
+          if (claimed.count === 0) return; // a concurrent run already rolled it over
+          await tx.airdropPool.upsert({
             where: { period: nextPeriod },
             update: { baseLamports: { increment: total } },
             create: { period: nextPeriod, baseLamports: this.baseLamports + total },
-          }),
-        ];
-        // Forced run still records the privileged action even though it rolled
-        // over (no eligible users) — atomic with the rollover.
-        if (forcedByUserId) {
-          ops.push(
-            this.prisma.auditLog.create({
+          });
+          // Forced run still records the privileged action even though it rolled
+          // over (no eligible users) — atomic with the rollover.
+          if (forcedByUserId) {
+            await tx.auditLog.create({
               data: {
                 actorUserId: forcedByUserId,
                 action: 'forced_airdrop',
@@ -205,17 +209,25 @@ export class AirdropEngine implements OnModuleInit {
                   rolledOver: true,
                 },
               },
-            }),
-          );
-        }
-        await this.prisma.$transaction(ops);
+            });
+          }
+        });
         this.logger.log(`airdrop ${period}: no eligible users — ${total} rolled over`);
         return result;
       }
 
       const share = total / BigInt(eligible.length);
       await this.prisma.$transaction(async (tx) => {
-        await tx.airdropPool.update({ where: { period }, data: { distributed: true } });
+        // Claim the pool atomically (#216): a guarded flip so two concurrent
+        // distribute() runs can't both credit. Only the run that transitions
+        // distributed false→true proceeds; a peer that already did sees count 0
+        // and returns before any credit (the pre-tx check at the top is racy on
+        // its own — correctness must not depend solely on the BullMQ jobId).
+        const claimed = await tx.airdropPool.updateMany({
+          where: { period, distributed: false },
+          data: { distributed: true },
+        });
+        if (claimed.count === 0) return; // a concurrent run already distributed
         const event = await tx.airdropEvent.create({
           data: { totalLamports: total, participantCount: eligible.length },
         });
