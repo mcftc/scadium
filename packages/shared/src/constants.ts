@@ -174,7 +174,10 @@ export function lotteryBracket(matchLen: number): LotteryBracket | null {
 }
 
 /** Per-round ticket price in $SCAD base units (9 decimals) for a USD target. */
-export function ticketPriceScadBase(usd = LOTTERY.TICKET_PRICE_USD, usdPerScad = USD_PER_SCAD): bigint {
+export function ticketPriceScadBase(
+  usd = LOTTERY.TICKET_PRICE_USD,
+  usdPerScad = USD_PER_SCAD,
+): bigint {
   return BigInt(Math.round((usd / usdPerScad) * 10 ** LOTTERY.SCAD_DECIMALS));
 }
 
@@ -210,9 +213,7 @@ export function bulkDiscountTotal(priceBase: bigint, n: number): bigint {
 export function lotteryPoolSplit(totalPool: bigint): { brackets: bigint[]; burn: bigint } {
   const burn = (totalPool * BigInt(LOTTERY.TREASURY_FEE_BPS)) / 10_000n;
   const toWinners = totalPool - burn;
-  const brackets = LOTTERY.REWARDS_BREAKDOWN_BPS.map(
-    (bps) => (toWinners * BigInt(bps)) / 10_000n,
-  );
+  const brackets = LOTTERY.REWARDS_BREAKDOWN_BPS.map((bps) => (toWinners * BigInt(bps)) / 10_000n);
   return { brackets, burn };
 }
 
@@ -256,20 +257,59 @@ export const REWARDS = {
   SCADIUM_PER_SOL_WAGERED: 128,
 } as const;
 
-// ---------- $SCAD token (whitepaper-modeled) ----------
+// ---------- $SCAD token (finalized tokenomics) ----------
 // All SCAD amounts in code are BASE UNITS (9 decimals) unless noted.
 // Conversions stay lamport-friendly: 1 SOL wagered (1e9 lamports) earns
-// 128 SCAD (128e9 base units) → base units = lamports × PER_LAMPORT rates.
+// 128 SCAD (128e9 base units) at phase 1 → base units = lamports × PER_LAMPORT.
+//
+// Fixed max supply 1,000,000,000 (1B) $SCAD, distributed:
+//   Play-to-Earn 50% (500M) · Community/Airdrop 10% (100M) · Liquidity 10%
+//   (100M) · Treasury/Ecosystem/MM 15% (150M) · Team 10% (100M) · Strategic
+//   5% (50M). The 500M P2E pool is emitted by proof-of-wager HALVING: the
+//   per-SOL-wagered rate halves each time emission crosses a phase pool cap
+//   (128→64→32→16→8→4→2), the seven pools sizing 75/75/75/75/75/75/50M SCAD
+//   (cumulative 75/150/225/300/375/450/500M).
 export const SCAD = {
   DECIMALS: 9,
-  TOTAL_SUPPLY: 217_755_972, // whole tokens
-  ALLOC_TEAM: 0.1,
-  ALLOC_REWARDS: 0.4,
-  ALLOC_USERS: 0.5,
-  /** SCAD base units earned per lamport wagered (= 128 SCAD / SOL). */
+  TOTAL_SUPPLY: 1_000_000_000, // whole tokens (fixed max supply)
+  // 6-way distribution (fractions of TOTAL_SUPPLY; sum = 1.0).
+  ALLOC_P2E: 0.5, // Play-to-Earn emission pool (500M)
+  ALLOC_COMMUNITY: 0.1, // Community / Airdrop (100M)
+  ALLOC_LIQUIDITY: 0.1, // Liquidity (100M)
+  ALLOC_TREASURY: 0.15, // Treasury / Ecosystem / MM (150M)
+  ALLOC_TEAM: 0.1, // Team (100M)
+  ALLOC_STRATEGIC: 0.05, // Strategic (50M)
+  /**
+   * SCAD base units earned per lamport wagered at PHASE 1 (= 128 SCAD / SOL).
+   * Halving phases below override this once emission crosses a phase cap; kept
+   * as the phase-1 alias so legacy call sites read the opening rate. Always
+   * equals `EMISSION_PHASES[0].ratePerLamport`.
+   */
   WAGER_REWARD_PER_LAMPORT: 128,
   /** SCAD base units of cashback per lamport NET lost (= 32 SCAD / SOL). */
   CASHBACK_PER_LAMPORT_LOST: 32,
+  /**
+   * Play-to-Earn emission pool, in SCAD BASE units (500M × 1e9). The total
+   * $SCAD that proof-of-wager may ever mint; `accrue()` clamps cumulative
+   * emission to this and stops minting once it is exhausted.
+   */
+  P2E_POOL_BASE: 500_000_000n * 1_000_000_000n, // 500M × 1e9 = 5e17
+  /**
+   * Halving schedule for the P2E pool. Ordered by ascending cumulative cap.
+   * `ratePerLamport` is the SCAD base units minted per lamport wagered while
+   * cumulative emission sits below `cumulativeCapBase` (SCAD base units). The
+   * active phase is the FIRST whose cap strictly exceeds current cumulative
+   * emission. Pools: 75/75/75/75/75/75/50M (cumulative 75/150/…/500M).
+   */
+  EMISSION_PHASES: [
+    { ratePerLamport: 128, cumulativeCapBase: 75_000_000n * 1_000_000_000n },
+    { ratePerLamport: 64, cumulativeCapBase: 150_000_000n * 1_000_000_000n },
+    { ratePerLamport: 32, cumulativeCapBase: 225_000_000n * 1_000_000_000n },
+    { ratePerLamport: 16, cumulativeCapBase: 300_000_000n * 1_000_000_000n },
+    { ratePerLamport: 8, cumulativeCapBase: 375_000_000n * 1_000_000_000n },
+    { ratePerLamport: 4, cumulativeCapBase: 450_000_000n * 1_000_000_000n },
+    { ratePerLamport: 2, cumulativeCapBase: 500_000_000n * 1_000_000_000n },
+  ],
   /** Daily case prize table — SCAD base units, weighted roll. */
   CASE_TIERS: [
     { tier: 'legendary', chance: 0.001, scadBase: 100_000_000_000_000 }, // 100k SCAD
@@ -278,6 +318,32 @@ export const SCAD = {
     { tier: 'common', chance: 1, scadBase: 100_000_000_000 }, // 100
   ],
 } as const;
+
+/**
+ * Resolve the active emission phase for a cumulative-emitted total (SCAD base
+ * units). Returns the 1-based phase index, the rate per lamport, and the SCAD
+ * base units remaining until the next halving (0 once the pool is exhausted).
+ * The active phase is the FIRST whose cap strictly exceeds `totalEmittedBase`;
+ * when emission has reached the final cap, the last phase is returned with a
+ * zero `toNextHalvingBase`.
+ */
+export function emissionPhaseFor(totalEmittedBase: bigint): {
+  phase: number; // 1..EMISSION_PHASES.length
+  ratePerLamport: number;
+  toNextHalvingBase: bigint;
+} {
+  const phases = SCAD.EMISSION_PHASES;
+  for (let i = 0; i < phases.length; i += 1) {
+    const p = phases[i]!;
+    if (totalEmittedBase < p.cumulativeCapBase) {
+      const toNext = p.cumulativeCapBase - totalEmittedBase;
+      return { phase: i + 1, ratePerLamport: p.ratePerLamport, toNextHalvingBase: toNext };
+    }
+  }
+  // Pool exhausted (or beyond final cap): pin to the final phase, nothing left.
+  const last = phases[phases.length - 1]!;
+  return { phase: phases.length, ratePerLamport: last.ratePerLamport, toNextHalvingBase: 0n };
+}
 
 // ---------- Jeton (bought, NON-redeemable wagering currency) ----------
 // Jeton shares the lamport unit of `User.playBalanceLamports`. It is a CLOSED
