@@ -10,17 +10,25 @@ import { ProofOfWagerService, periodKeys } from './proof-of-wager.service';
 function makeTx(opts: { totalWagered: bigint; campaigns?: unknown[]; scadAfter?: bigint }) {
   const userUpdate = vi.fn().mockResolvedValue({});
   const upsert = vi.fn().mockResolvedValue({});
+  const ledgerCreate = vi.fn().mockResolvedValue({});
+  // `applyBalanceDelta` (the $SCAD credit path, #229) reads the post-credit
+  // balance to stamp `balanceAfter` and writes a BalanceLedger row in-tx.
+  const scadAfter = opts.scadAfter ?? 0n;
   return {
     tx: {
       user: {
+        // `accrue` reads totalWagered; `applyBalanceDelta` reads scadiumBalance.
         findUnique: vi.fn().mockResolvedValue({ totalWagered: opts.totalWagered }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ scadiumBalance: scadAfter }),
         update: userUpdate,
       },
       wagerCampaign: { findMany: vi.fn().mockResolvedValue(opts.campaigns ?? []) },
       wagerLeaderboard: { upsert },
+      balanceLedger: { create: ledgerCreate },
     },
     userUpdate,
     upsert,
+    ledgerCreate,
   };
 }
 
@@ -32,19 +40,34 @@ describe('ProofOfWagerService.accrue (unit)', () => {
   });
 
   it('base tier (no campaign): credits stake × 128 SCAD and upserts 2 leaderboard buckets', async () => {
-    const { tx, userUpdate, upsert } = makeTx({ totalWagered: 0n });
+    const { tx, userUpdate, upsert, ledgerCreate } = makeTx({ totalWagered: 0n });
     const stake = 1_000_000n; // 0.001 SOL
     const amount = await svc.accrue(tx as never, {
       userId: 'u1',
       gameType: 'dice',
       stakeLamports: stake,
+      betId: 'bet-1',
     });
 
     expect(amount).toBe(stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT));
+    // The $SCAD credit now flows through applyBalanceDelta (#229): a guarded
+    // increment of scadiumBalance + a `scad` BalanceLedger row in the same tx.
     expect(userUpdate).toHaveBeenCalledWith({
       where: { id: 'u1' },
       data: { scadiumBalance: { increment: amount } },
     });
+    expect(ledgerCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'u1',
+          currency: 'scad',
+          delta: amount,
+          reason: 'wager_reward',
+          refType: 'Bet',
+          refId: 'bet-1',
+        }),
+      }),
+    );
     expect(upsert).toHaveBeenCalledTimes(2); // daily + weekly
   });
 

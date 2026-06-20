@@ -69,7 +69,8 @@ async function bootstrap(): Promise<void> {
       async () => {
         await reconciliation.reconcileAll();
         await reconciliation.houseSolvency();
-        // SCAD Engine: staked-balance drift + USDS dividend solvency.
+        // SCAD Engine: spendable + staked $SCAD ledger drift + USDS solvency.
+        await reconciliation.scadLedgerDrift();
         await reconciliation.stakeLedgerDrift();
         await reconciliation.usdsSolvency();
       },
@@ -104,7 +105,9 @@ async function bootstrap(): Promise<void> {
     ),
   ];
   for (const c of consumers) {
-    c.on('failed', (job, err) => logger.error(`${c.name} job ${job?.id ?? '?'} failed: ${err.message}`));
+    c.on('failed', (job, err) =>
+      logger.error(`${c.name} job ${job?.id ?? '?'} failed: ${err.message}`),
+    );
     c.on('completed', (job) => logger.log(`${c.name} job ${job.id} done`));
   }
 
@@ -119,15 +122,39 @@ async function bootstrap(): Promise<void> {
   const lotteryPayoutsQueue = new Queue(QUEUE_NAMES.lotteryPayouts, { connection });
   const distributionQueue = new Queue(QUEUE_NAMES.distribution, { connection });
 
-  await airdropQueue.upsertJobScheduler('airdrop-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
+  await airdropQueue.upsertJobScheduler(
+    'airdrop-hourly',
+    { every: 5 * 60_000 },
+    { name: 'distribute' },
+  );
   await burnQueue.upsertJobScheduler('burn-10min', { every: 10 * 60_000 }, { name: 'burn' });
-  await leaderboardQueue.upsertJobScheduler('leaderboard-hourly', { every: 60 * 60_000 }, { name: 'snapshot' });
-  await reconcileQueue.upsertJobScheduler('reconcile-hourly', { every: 60 * 60_000 }, { name: 'reconcile' });
-  await rewardClaimsQueue.upsertJobScheduler('reward-claims-5min', { every: 5 * 60_000 }, { name: 'sweep' });
-  await lotteryPayoutsQueue.upsertJobScheduler('lottery-payouts-5min', { every: 5 * 60_000 }, { name: 'sweep' });
+  await leaderboardQueue.upsertJobScheduler(
+    'leaderboard-hourly',
+    { every: 60 * 60_000 },
+    { name: 'snapshot' },
+  );
+  await reconcileQueue.upsertJobScheduler(
+    'reconcile-hourly',
+    { every: 60 * 60_000 },
+    { name: 'reconcile' },
+  );
+  await rewardClaimsQueue.upsertJobScheduler(
+    'reward-claims-5min',
+    { every: 5 * 60_000 },
+    { name: 'sweep' },
+  );
+  await lotteryPayoutsQueue.upsertJobScheduler(
+    'lottery-payouts-5min',
+    { every: 5 * 60_000 },
+    { name: 'sweep' },
+  );
   // Run every 5 min to catch the top-of-hour boundary promptly; distribute() is
   // a no-op until an unsettled hour exists, so over-firing is cheap.
-  await distributionQueue.upsertJobScheduler('distribution-hourly', { every: 5 * 60_000 }, { name: 'distribute' });
+  await distributionQueue.upsertJobScheduler(
+    'distribution-hourly',
+    { every: 5 * 60_000 },
+    { name: 'distribute' },
+  );
 
   logger.log('worker up — 7 queues, schedulers registered');
 

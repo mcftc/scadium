@@ -4,6 +4,7 @@ import { CrashEngine } from '../src/games/crash/crash.engine';
 import { JackpotEngine } from '../src/games/jackpot/jackpot.engine';
 import { LotteryEngine } from '../src/games/lottery/lottery.engine';
 import { BlackjackEngine } from '../src/games/blackjack/blackjack.engine';
+import { ProofOfWagerService } from '../src/proof-of-wager/proof-of-wager.service';
 
 /**
  * Shared bootstrap for direct-engine integration specs (settlement-atomicity,
@@ -46,7 +47,12 @@ export async function makeUser(balance: bigint) {
 export async function makeSeed() {
   const id = randomUUID();
   return prisma.seed.create({
-    data: { serverSeed: `srv-${id}`, serverSeedHash: `hash-${id}`, clientSeed: `cli-${id}`, nonce: 0 },
+    data: {
+      serverSeed: `srv-${id}`,
+      serverSeedHash: `hash-${id}`,
+      clientSeed: `cli-${id}`,
+      nonce: 0,
+    },
   });
 }
 
@@ -54,6 +60,15 @@ export async function makeSeed() {
 // (proof-of-wager); the optional Redis arg is omitted (single-writer specs pass
 // their own).
 export const makeCrashEngine = () => new CrashEngine(prisma as never, gw(), offChain, pow());
+
+/** REAL ProofOfWagerService over the test DB — for specs that assert $SCAD
+ *  accrual + the `scad` BalanceLedger (#229, #182), not the no-op stub. */
+export const realPow = () => new ProofOfWagerService(prisma as never);
+/** Crash engine wired with the real proof-of-wager service (so settle/recovery
+ *  actually mints $SCAD + ledgers it). */
+export const makeCrashEngineWithPow = () =>
+  new CrashEngine(prisma as never, gw(), offChain, realPow());
 export const makeJackpotEngine = () => new JackpotEngine(prisma as never, gw(), offChain, pow());
 export const makeLotteryEngine = () => new LotteryEngine(prisma as never, gw(), offChain, pow());
-export const makeBlackjackEngine = () => new BlackjackEngine(prisma as never, gw(), offChain, pow());
+export const makeBlackjackEngine = () =>
+  new BlackjackEngine(prisma as never, gw(), offChain, pow());
