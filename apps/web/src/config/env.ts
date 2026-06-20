@@ -26,4 +26,8 @@ export const env = {
   solanaNetwork: network.network as SolanaNetwork,
   solanaRpc: network.rpcUrl,
   appName: process.env.NEXT_PUBLIC_APP_NAME ?? 'Scadium',
+  // Privy social login (#203). Empty string = Privy disabled (the provider tree
+  // renders without it, and the Google/Apple buttons are hidden) — SIWS wallet
+  // auth is unaffected.
+  privyAppId: process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? '',
 } as const;

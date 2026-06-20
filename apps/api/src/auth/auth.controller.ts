@@ -6,6 +6,7 @@ import { AUTH_THROTTLE } from '../common/throttle.constants';
 import { AuthService } from './auth.service';
 import { NonceRequestDto } from './dto/nonce-request.dto';
 import { VerifyDto } from './dto/verify.dto';
+import { PrivyLoginDto } from './dto/privy-login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from './current-user.decorator';
@@ -33,6 +34,15 @@ export class AuthController {
   @ApiOperation({ summary: 'Verify SIWS signature and issue an access + refresh token pair' })
   verify(@Body() dto: VerifyDto, @Req() req: Request) {
     return this.auth.verifyAndIssueToken(dto, sessionCtx(req));
+  }
+
+  @Post('privy')
+  @Throttle({ default: AUTH_THROTTLE }) // token-spam cap, same as SIWS verify (#34)
+  @ApiOperation({
+    summary: 'Exchange a verified Privy (Google/Apple) access token for a Scadium token pair',
+  })
+  privy(@Body() dto: PrivyLoginDto, @Req() req: Request) {
+    return this.auth.verifyPrivyAndIssueToken(dto, sessionCtx(req));
   }
 
   @Post('refresh')
