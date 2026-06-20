@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type GameType, type WagerCampaign } from '@prisma/client';
-import { LAMPORTS_PER_SOL, SCAD, WAGER } from '@scadium/shared';
+import { LAMPORTS_PER_SOL, SCAD, WAGER, emissionPhaseFor } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+
+/** The fixed id of the singleton EmissionState row (see schema). */
+const EMISSION_SINGLETON_ID = 'singleton';
 
 export interface AccrueParams {
   userId: string;
@@ -36,7 +39,109 @@ export class ProofOfWagerService {
   private campaignCacheAt = 0;
   private static readonly CACHE_TTL_MS = 60_000;
 
+  // --- Emission counter: cache + write-buffer (mirrors campaignCache) ---------
+  // accrue() runs in EVERY game settlement. Touching the singleton EmissionState
+  // row per bet (a read + an upsert on `this.prisma`, separate connections from
+  // the settle tx) exhausts the Prisma connection pool under load — 50 concurrent
+  // crash bets then can't get a connection (chaos/balance-race). So emission is
+  // NEVER touched per bet:
+  //   • cachedEmitted — the persisted total, refreshed from ONE read at most once
+  //     per CACHE_TTL_MS.
+  //   • pendingEmitted — in-memory sum of mints since the last flush. accrue adds
+  //     to this with NO DB write.
+  // The phase/cap each use `cachedEmitted + pendingEmitted`. On the next refresh
+  // (TTL elapsed) we FLUSH pendingEmitted to the DB in a single upsert, reset it,
+  // and re-read the persisted total. So emission hits the DB ~once per TTL window,
+  // never per bet. The counter is an APPROXIMATE phase cursor (buffered/flushed);
+  // the exact issued $SCAD is the in-tx applyBalanceDelta('scad') ledger credit,
+  // which stays the source of truth and keeps scadLedgerDrift zero.
+  private cachedEmitted = 0n;
+  private cachedEmittedAt = 0;
+  private pendingEmitted = 0n;
+  // Coalesces concurrent cache refreshes into ONE DB round-trip: a cold-cache
+  // burst (e.g. 50 bets settling at once) would otherwise each fire its own
+  // `this.prisma` read and exhaust the connection pool — the exact regression.
+  // While a refresh is in flight, every other accrue awaits the same promise.
+  private emissionRefresh: Promise<void> | null = null;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Effective cumulative emission = persisted (cached) total + the unflushed
+   * in-memory buffer. Refreshes the cache (single read + buffer flush) when the
+   * TTL has elapsed, or on first use (`cachedEmittedAt === 0`). Returns the value
+   * accrue() uses to pick the halving phase and the remaining-pool cap — with NO
+   * per-bet DB op once the cache is warm.
+   */
+  private async effectiveEmitted(): Promise<bigint> {
+    const now = Date.now();
+    const stale =
+      this.cachedEmittedAt === 0 || now - this.cachedEmittedAt > ProofOfWagerService.CACHE_TTL_MS;
+    if (stale) {
+      // Coalesce: only the FIRST caller starts the refresh; concurrent callers
+      // (a cold-cache settlement burst) await the same in-flight promise, so the
+      // pool sees ONE connection acquisition, never one-per-bet.
+      if (!this.emissionRefresh) {
+        this.emissionRefresh = this.refreshEmission(now).finally(() => {
+          this.emissionRefresh = null;
+        });
+      }
+      await this.emissionRefresh;
+    }
+    return this.cachedEmitted + this.pendingEmitted;
+  }
+
+  /** Single DB round-trip: flush the buffer, then re-read the persisted total. */
+  private async refreshEmission(now: number): Promise<void> {
+    try {
+      // FLUSH the buffered increments in a single upsert (atomic increment, READ
+      // COMMITTED) — decoupled from any serializable settle so it never makes
+      // concurrent settles abort. Upsert so a fresh DB self-heals the singleton.
+      if (this.pendingEmitted > 0n) {
+        const flush = this.pendingEmitted;
+        await this.prisma.emissionState.upsert({
+          where: { id: EMISSION_SINGLETON_ID },
+          create: { id: EMISSION_SINGLETON_ID, totalEmittedScad: flush },
+          update: { totalEmittedScad: { increment: flush } },
+        });
+        // Only clear what we flushed; concurrent accrues may have added more.
+        this.pendingEmitted -= flush;
+      }
+      // Re-read the persisted total into the cache (single read).
+      const row = await this.prisma.emissionState.findUnique({
+        where: { id: EMISSION_SINGLETON_ID },
+      });
+      this.cachedEmitted = row?.totalEmittedScad ?? 0n;
+      this.cachedEmittedAt = now;
+    } catch (e) {
+      this.logger.warn(
+        `emission cache refresh/flush failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * Test seam: force the next emission read to be fresh (used after seeding
+   * EmissionState directly). Clears the cache timestamp AND the in-memory buffer
+   * so the seeded persisted value is read immediately and no stale mint leaks
+   * across tests. No-op in production paths.
+   */
+  __resetEmissionCacheForTest(): void {
+    this.cachedEmitted = 0n;
+    this.cachedEmittedAt = 0;
+    this.pendingEmitted = 0n;
+  }
+
+  /**
+   * Test seam: force the buffered emission to flush to EmissionState NOW (the
+   * production path flushes lazily, once per TTL). Expires the cache timestamp
+   * WITHOUT dropping the buffer, then runs the refresh — so the persisted row
+   * reflects every buffered mint and a subsequent direct DB read is exact.
+   */
+  async __flushEmissionForTest(): Promise<bigint> {
+    this.cachedEmittedAt = 0; // expire only; keep pendingEmitted so it flushes
+    return this.effectiveEmitted();
+  }
 
   /**
    * Accrue $SCAD for one settled wager. MUST be called on the caller's
@@ -48,7 +153,22 @@ export class ProofOfWagerService {
     const { userId, gameType, stakeLamports, betId } = params;
     if (stakeLamports <= 0n) return 0n;
 
-    const base = stakeLamports * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT);
+    // Resolve the active halving phase from the CACHED emission total + the
+    // unflushed in-memory buffer — NO per-bet DB op (the cache refreshes at most
+    // once per TTL; see effectiveEmitted). Touching the singleton EmissionState
+    // row per bet (read + upsert on separate connections) exhausts the Prisma
+    // pool under load, so a 50-way concurrent bet round can't get connections and
+    // fails entirely (chaos/balance-race). The phase rate is taken at the START
+    // of accrue; boundary-spanning imprecision is bounded by one bet's $SCAD and
+    // accepted. The counter is an approximate phase cursor (buffered/flushed).
+    const effectiveTotal = await this.effectiveEmitted();
+
+    // Emission pool exhausted → nothing more to mint, ever.
+    const remaining = SCAD.P2E_POOL_BASE - effectiveTotal;
+    if (remaining <= 0n) return 0n;
+
+    const { ratePerLamport } = emissionPhaseFor(effectiveTotal);
+    const base = stakeLamports * BigInt(ratePerLamport);
 
     // Lifetime-wager tier multiplier. Read inside the tx; the engine bumps
     // totalWagered before calling accrue, so this reflects the post-wager total
@@ -62,7 +182,12 @@ export class ProofOfWagerService {
 
     // BigInt-safe: scale the float multiplier to an integer (3 dp) then divide.
     const scaled = BigInt(Math.round(multiplier * 1000));
-    const amount = (base * scaled) / 1000n;
+    let amount = (base * scaled) / 1000n;
+    if (amount <= 0n) return 0n;
+
+    // CAP: never emit beyond the 500M P2E pool. Clamp this accrual to what is
+    // left; if exhausted by the clamp, return without crediting.
+    if (amount > remaining) amount = remaining;
     if (amount <= 0n) return 0n;
 
     // Credit the REDEEMABLE $SCAD through the single mutation point so a
@@ -77,6 +202,14 @@ export class ProofOfWagerService {
       refType: 'Bet',
       refId: betId ?? null,
     });
+
+    // Advance the emission counter IN MEMORY (no per-bet DB op). The buffer is
+    // flushed to EmissionState in a single upsert on the next cache refresh
+    // (effectiveEmitted, ~once per TTL). The exact $SCAD issued is the in-tx
+    // `applyBalanceDelta('scad')` credit above (the ledger is the source of
+    // truth); this counter is an approximate phase cursor that may over-count by
+    // at most the mints of a few rolled-back accruals between flushes.
+    this.pendingEmitted += amount;
 
     // Roll the wager into the daily + weekly leaderboard buckets.
     const { daily, weekly } = periodKeys(new Date());
@@ -117,20 +250,36 @@ export class ProofOfWagerService {
     const tierMult = this.tierMultiplier(lifetimeWagered);
     const multiplier = this.effectiveMultiplier(lifetimeWagered, campaignMult);
 
+    // Use the CURRENT halving phase's rate so the readout matches what accrue()
+    // would actually mint right now (not the fixed phase-1 alias).
+    const emitted = await this.totalEmitted();
+    const { ratePerLamport } = emissionPhaseFor(emitted);
+
     // $SCAD base units earned per 1 SOL (1e9 lamports) wagered at this multiplier.
-    // base = LAMPORTS_PER_SOL × WAGER_REWARD_PER_LAMPORT; scale the float
-    // multiplier to an integer (3 dp) then divide — BigInt-safe, matches accrue.
-    const base = BigInt(LAMPORTS_PER_SOL) * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT);
+    // base = LAMPORTS_PER_SOL × ratePerLamport; scale the float multiplier to an
+    // integer (3 dp) then divide — BigInt-safe, matches accrue.
+    const base = BigInt(LAMPORTS_PER_SOL) * BigInt(ratePerLamport);
     const scaled = BigInt(Math.round(multiplier * 1000));
     const scadPerSol = (base * scaled) / 1000n;
 
     return {
-      baseRewardPerLamport: SCAD.WAGER_REWARD_PER_LAMPORT,
+      baseRewardPerLamport: ratePerLamport,
       tierMultiplier: tierMult,
       campaignMultiplier: campaignMult,
       effectiveMultiplier: multiplier,
       scadPerSolWagered: scadPerSol.toString(),
     };
+  }
+
+  /**
+   * Cumulative $SCAD (base units) emitted by proof-of-wager so far: persisted
+   * (cached) total + the unflushed in-memory buffer, so /token/stats and the
+   * earn-rate readout reflect mints not yet flushed to EmissionState. Read-only;
+   * refreshes the cache when stale (flushing the buffer) but never mints. Returns
+   * 0n on a fresh DB with no accruals yet.
+   */
+  async totalEmitted(): Promise<bigint> {
+    return this.effectiveEmitted();
   }
 
   /** Lifetime-wager → permanent accrual multiplier (WAGER tiers). */

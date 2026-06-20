@@ -848,6 +848,19 @@ model DistributionClaim {
 
 // ==================== PROOF-OF-WAGER ====================
 
+// Singleton persistent counter of cumulative $SCAD emitted by proof-of-wager.
+// The halving schedule (SCAD.EMISSION_PHASES) reads this on the hot accrue path
+// to pick the active rate, and `accrue()` atomically increments it (upsert) in
+// the SAME tx as the $SCAD credit — so the emission cap (SCAD.P2E_POOL_BASE) is
+// enforced concurrency-safely without reconstructing the figure from the ledger
+// on every settled bet. Exactly one row exists, id = 'singleton'.
+model EmissionState {
+  id               String   @id @default("singleton")
+  // Cumulative SCAD base units minted by proof-of-wager (≤ SCAD.P2E_POOL_BASE).
+  totalEmittedScad BigInt   @default(0)
+  updatedAt        DateTime @updatedAt
+}
+
 // Time-boxed campaign that layers a MULTIPLIER on top of the base $SCAD wager
 // accrual (SCAD.WAGER_REWARD_PER_LAMPORT). `gameType` null = applies to all
 // games. ProofOfWagerService caches the active set and combines campaign ×

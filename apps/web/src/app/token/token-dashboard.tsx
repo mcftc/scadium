@@ -2,7 +2,17 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Flame, Coins, TrendingUp, Droplets, ExternalLink, ArrowRight } from 'lucide-react';
+import {
+  Flame,
+  Coins,
+  TrendingUp,
+  Droplets,
+  ExternalLink,
+  ArrowRight,
+  Gem,
+  PieChart,
+  Sparkles,
+} from 'lucide-react';
 import { SCAD } from '@scadium/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api-client';
@@ -27,6 +37,35 @@ interface BurnsResponse {
   totalBurned: string;
   burns: BurnRow[];
 }
+interface AllocSlice {
+  key: string;
+  label: string;
+  fraction: number;
+  whole: number;
+}
+interface TokenStats {
+  totalSupply: number;
+  decimals: number;
+  totalEmittedScad: string;
+  p2ePoolBase: string;
+  currentPhase: number;
+  phaseCount: number;
+  currentRatePerLamport: number;
+  toNextHalvingBase: string;
+  totalBurnedScad: string;
+  totalDistributedUsds: string;
+  allocation: AllocSlice[];
+}
+
+// Distinct tints for the six allocation slices (dark-theme friendly).
+const ALLOC_COLORS: Record<string, string> = {
+  p2e: '#22c55e',
+  community: '#38bdf8',
+  liquidity: '#a78bfa',
+  treasury: '#f59e0b',
+  team: '#f472b6',
+  strategic: '#64748b',
+};
 
 const toWhole = (base: string | bigint) => Number(BigInt(base)) / 10 ** SCAD.DECIMALS;
 const fmtNum = (n: number, max = 2) => n.toLocaleString(undefined, { maximumFractionDigits: max });
@@ -50,6 +89,11 @@ export function TokenDashboard() {
     queryKey: ['swap', 'burns'],
     queryFn: () => api<BurnsResponse>('/swap/burns?limit=100'),
     refetchInterval: 60_000,
+  });
+  const stats = useQuery({
+    queryKey: ['token', 'stats'],
+    queryFn: () => api<TokenStats>('/token/stats'),
+    refetchInterval: 30_000, // matches the engine dashboard poll
   });
 
   const enabled = pool.data?.enabled ?? false;
@@ -147,10 +191,15 @@ export function TokenDashboard() {
             </div>
             <BurnChart points={cumulative} />
             <p className="text-[11px] text-foreground-muted text-center">
-              20% of net gaming revenue buys $SCAD from the pool and burns it.
+              10% of net gaming revenue buys $SCAD from the pool and burns it.
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="max-w-4xl mx-auto mt-4 grid gap-4 lg:grid-cols-2">
+        <EmissionCard stats={stats.data} burnedWhole={burnedWhole} />
+        <DistributionCard alloc={stats.data?.allocation} />
       </div>
 
       <Card className="max-w-4xl mx-auto mt-4">
@@ -211,6 +260,137 @@ export function TokenDashboard() {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+/** P2E emission halving progress + current phase/rate + value flows. */
+function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole: number | null }) {
+  const emittedWhole = stats ? toWhole(stats.totalEmittedScad) : null;
+  const poolWhole = stats ? toWhole(stats.p2ePoolBase) : 500_000_000;
+  const toNextWhole = stats ? toWhole(stats.toNextHalvingBase) : null;
+  const distributedUsds = stats ? Number(BigInt(stats.totalDistributedUsds)) / 1e6 : null;
+  const pct = emittedWhole != null && poolWhole > 0 ? (emittedWhole / poolWhole) * 100 : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary-400" />
+          Play-to-Earn emission
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-end justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-foreground-muted">
+              Emitted of 500M pool
+            </div>
+            <div className="text-2xl font-bold font-mono">
+              {emittedWhole != null ? fmtNum(emittedWhole, 0) : '…'}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wider text-foreground-muted">Phase</div>
+            <div className="font-mono font-semibold">
+              {stats ? `${stats.currentPhase} / ${stats.phaseCount}` : '…'}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-background border border-border/60">
+            <div
+              className="h-full bg-gradient-primary transition-[width] duration-500"
+              style={{ width: `${Math.min(100, Math.max(0, pct)).toFixed(2)}%` }}
+            />
+          </div>
+          <div className="mt-1 flex justify-between text-[11px] text-foreground-muted">
+            <span>{fmtNum(pct, 1)}% emitted</span>
+            <span>{fmtNum(poolWhole, 0)} max</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 text-center">
+          <MiniStat
+            label="Current rate"
+            value={stats ? `${stats.currentRatePerLamport} / SOL` : '…'}
+          />
+          <MiniStat
+            label="To next halving"
+            value={toNextWhole != null ? (toNextWhole > 0 ? fmtNum(toNextWhole, 0) : 'ended') : '…'}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 text-center">
+          <MiniStat
+            label="Bought & burned"
+            value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'}
+          />
+          <MiniStat
+            label="USDS distributed"
+            value={distributedUsds != null ? `$${fmtNum(distributedUsds, 0)}` : '…'}
+          />
+        </div>
+        <p className="text-[11px] text-foreground-muted text-center">
+          {stats
+            ? `Earning ${stats.currentRatePerLamport} $SCAD per 1 SOL wagered — the rate halves at each phase cap.`
+            : 'Proof-of-wager mints $SCAD on every bet; the rate halves by phase.'}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Static 6-way distribution as a stacked bar + legend. */
+function DistributionCard({ alloc }: { alloc?: AllocSlice[] }) {
+  const slices = alloc ?? [];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <PieChart className="h-4 w-4 text-primary-400" />
+          Distribution
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex h-3 w-full overflow-hidden rounded-full border border-border/60">
+          {slices.length === 0 ? (
+            <div className="h-full w-full bg-background" />
+          ) : (
+            slices.map((s) => (
+              <div
+                key={s.key}
+                className="h-full"
+                style={{
+                  width: `${(s.fraction * 100).toFixed(2)}%`,
+                  backgroundColor: ALLOC_COLORS[s.key] ?? '#64748b',
+                }}
+                title={`${s.label} — ${fmtNum(s.fraction * 100, 0)}%`}
+              />
+            ))
+          )}
+        </div>
+        <ul className="space-y-1.5">
+          {slices.map((s) => (
+            <li key={s.key} className="flex items-center justify-between text-xs">
+              <span className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: ALLOC_COLORS[s.key] ?? '#64748b' }}
+                />
+                <span className="text-foreground-muted">{s.label}</span>
+              </span>
+              <span className="font-mono font-semibold">
+                {fmtNum(s.fraction * 100, 0)}% · {fmtNum(s.whole, 0)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="flex items-center justify-center gap-1.5 text-[11px] text-foreground-muted">
+          <Gem className="h-3 w-3" /> Fixed max supply 1,000,000,000 $SCAD
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

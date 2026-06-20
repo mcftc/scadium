@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SCAD, WAGER, LAMPORTS_PER_SOL } from '@scadium/shared';
+import { SCAD, WAGER, LAMPORTS_PER_SOL, emissionPhaseFor } from '@scadium/shared';
 import { ProofOfWagerService, periodKeys } from './proof-of-wager.service';
 
 /**
  * Locks the central accrual math the 6 game engines now delegate to:
  *   amount = stake × SCAD.WAGER_REWARD_PER_LAMPORT × tierMult × campaignMult
  * and that the daily + weekly leaderboard buckets are upserted in-tx.
+ *
+ * Emission is NOT touched per bet (that exhausted the connection pool under load
+ * — chaos/balance-race). accrue() reads the halving phase from a CACHE on
+ * `this.prisma` (refreshed at most once per TTL) and BUFFERS the mint in memory;
+ * the buffer is flushed on the next cache refresh. So the tx mock has NO
+ * emissionState ops; the seeded cumulative total lives behind `this.prisma`.
  */
 function makeTx(opts: { totalWagered: bigint; campaigns?: unknown[]; scadAfter?: bigint }) {
   const userUpdate = vi.fn().mockResolvedValue({});
@@ -32,11 +38,30 @@ function makeTx(opts: { totalWagered: bigint; campaigns?: unknown[]; scadAfter?:
   };
 }
 
+/**
+ * Fake PrismaService exposing only `emissionState.findUnique`/`upsert` — the off-
+ * tx connection accrue()'s emission cache uses. `findUnique` returns the seeded
+ * cumulative total; `upsert` records the flushed buffer. The returned `svc` has
+ * its emission cache reset so the seeded value is read on the next accrue.
+ */
+function makeSvc(totalEmitted = 0n) {
+  const upsert = vi.fn().mockResolvedValue({});
+  const findUnique = vi.fn().mockResolvedValue({
+    id: 'singleton',
+    totalEmittedScad: totalEmitted,
+  });
+  const prisma = { emissionState: { findUnique, upsert } };
+  const svc = new ProofOfWagerService(prisma as never);
+  svc.__resetEmissionCacheForTest();
+  return { svc, emissionFindUnique: findUnique, emissionUpsert: upsert };
+}
+
 describe('ProofOfWagerService.accrue (unit)', () => {
   let svc: ProofOfWagerService;
   beforeEach(() => {
-    // PrismaService is only used by the read-only leaderboard() helper, not accrue.
-    svc = new ProofOfWagerService({} as never);
+    // Emission cache reads off `this.prisma` (seeded at 0 here); the tx mock has
+    // no emissionState ops — accrue buffers the mint in memory, no per-bet DB op.
+    ({ svc } = makeSvc(0n));
   });
 
   it('base tier (no campaign): credits stake × 128 SCAD and upserts 2 leaderboard buckets', async () => {
@@ -49,7 +74,10 @@ describe('ProofOfWagerService.accrue (unit)', () => {
       betId: 'bet-1',
     });
 
+    // Phase 1 rate is the legacy 128/lamport → amounts unchanged at emission start.
     expect(amount).toBe(stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT));
+    // The buffered emission counter advances in memory (no per-bet DB write).
+    expect(await svc.totalEmitted()).toBe(amount);
     // The $SCAD credit now flows through applyBalanceDelta (#229): a guarded
     // increment of scadiumBalance + a `scad` BalanceLedger row in the same tx.
     expect(userUpdate).toHaveBeenCalledWith({
@@ -111,6 +139,86 @@ describe('ProofOfWagerService.accrue (unit)', () => {
       await svc.accrue(tx as never, { userId: 'u1', gameType: 'dice', stakeLamports: 0n }),
     ).toBe(0n);
     expect(userUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProofOfWagerService.accrue — emission halving + cap (unit)', () => {
+  const oneSol = BigInt(LAMPORTS_PER_SOL);
+
+  it('uses the phase rate at the START of accrue (crossing a cap halves the rate)', async () => {
+    // Seed cumulative emission to exactly phase-1's cap (75M × 1e9): the active
+    // phase is now phase 2 → rate 64/lamport (halved from 128).
+    const atCap1 = SCAD.EMISSION_PHASES[0]!.cumulativeCapBase;
+    expect(emissionPhaseFor(atCap1).ratePerLamport).toBe(64);
+
+    const { svc } = makeSvc(atCap1);
+    const { tx } = makeTx({ totalWagered: 0n });
+    const amount = await svc.accrue(tx as never, {
+      userId: 'u1',
+      gameType: 'dice',
+      stakeLamports: oneSol,
+    });
+    // 1 SOL × 64/lamport = 64e9 base units (NOT 128e9).
+    expect(amount).toBe(oneSol * 64n);
+    // Buffer reflects the seeded total + this mint (no per-bet DB write).
+    expect(await svc.totalEmitted()).toBe(atCap1 + amount);
+  });
+
+  it('halves again at the phase-3 boundary (32/lamport)', async () => {
+    const atCap2 = SCAD.EMISSION_PHASES[1]!.cumulativeCapBase; // 150M × 1e9
+    const { svc } = makeSvc(atCap2);
+    const { tx } = makeTx({ totalWagered: 0n });
+    const amount = await svc.accrue(tx as never, {
+      userId: 'u1',
+      gameType: 'dice',
+      stakeLamports: oneSol,
+    });
+    expect(amount).toBe(oneSol * 32n);
+  });
+
+  it('CAP: clamps an accrual that would overshoot the 500M pool', async () => {
+    // 100 base units below the pool ceiling; a 1-SOL wager at phase-7 rate (2)
+    // would mint 2e9 but only 100 remain → clamp to 100.
+    const nearCap = SCAD.P2E_POOL_BASE - 100n;
+    const { svc } = makeSvc(nearCap);
+    const { tx } = makeTx({ totalWagered: 0n });
+    const amount = await svc.accrue(tx as never, {
+      userId: 'u1',
+      gameType: 'dice',
+      stakeLamports: oneSol,
+    });
+    expect(amount).toBe(100n);
+    // Buffered counter never lets effective emission exceed the pool.
+    expect(await svc.totalEmitted()).toBe(SCAD.P2E_POOL_BASE);
+    expect(nearCap + amount).toBe(SCAD.P2E_POOL_BASE);
+  });
+
+  it('returns 0n once the pool is exhausted (emission ended)', async () => {
+    const { svc } = makeSvc(SCAD.P2E_POOL_BASE);
+    const { tx, userUpdate } = makeTx({ totalWagered: 0n });
+    const amount = await svc.accrue(tx as never, {
+      userId: 'u1',
+      gameType: 'dice',
+      stakeLamports: oneSol,
+    });
+    expect(amount).toBe(0n);
+    expect(userUpdate).not.toHaveBeenCalled(); // no credit
+    expect(await svc.totalEmitted()).toBe(SCAD.P2E_POOL_BASE); // counter unchanged
+  });
+
+  it('effectiveMultiplier still composes on top of the phase rate', async () => {
+    // Phase 2 (rate 64) + tier-2 lifetime wager (×1.25), no campaign.
+    const atCap1 = SCAD.EMISSION_PHASES[0]!.cumulativeCapBase;
+    const { svc } = makeSvc(atCap1);
+    const { tx } = makeTx({ totalWagered: BigInt(100 * LAMPORTS_PER_SOL) });
+    const amount = await svc.accrue(tx as never, {
+      userId: 'u1',
+      gameType: 'dice',
+      stakeLamports: oneSol,
+    });
+    const base = oneSol * 64n;
+    const expected = (base * BigInt(Math.round(1.25 * 1000))) / 1000n;
+    expect(amount).toBe(expected);
   });
 });
 
