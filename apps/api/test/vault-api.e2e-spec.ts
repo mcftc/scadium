@@ -18,6 +18,13 @@ describe('SCAD Vault API (V6)', () => {
   });
 
   afterAll(async () => {
+    // Leave the shared test DB clean for other vault suites: resetDb truncates
+    // User CASCADE (clears VaultPositions + scadiumVault), then reset the pools.
+    await resetDb(prisma);
+    await prisma.vaultEvent.deleteMany({});
+    await prisma.vaultPool.updateMany({
+      data: { totalAssets: 0n, totalShares: 0n, indexRay: VAULT.INITIAL_INDEX_RAY, aprBps: 0 },
+    });
     await harness.app.close();
     await prisma.$disconnect();
   });
