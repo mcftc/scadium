@@ -11,9 +11,11 @@ const BALANCE_COLUMN = {
   scad: 'scadiumBalance',
   scad_staked: 'scadiumStaked',
   usds: 'usdsBalance',
+  // SCAD Vault: principal locked into term-staking vault positions.
+  scad_vault: 'scadiumVault',
 } as const satisfies Record<
   Currency,
-  'playBalanceLamports' | 'scadiumBalance' | 'scadiumStaked' | 'usdsBalance'
+  'playBalanceLamports' | 'scadiumBalance' | 'scadiumStaked' | 'usdsBalance' | 'scadiumVault'
 >;
 
 /**
