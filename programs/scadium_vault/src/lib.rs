@@ -16,6 +16,16 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer as SplTransfer
 
 declare_id!("DSQJ8FX8JGhB2nKPGVM2ptWZydskNmp8629C8HXTvrqr");
 
+// ---- SCAD Vault (term staking) constants — mirror @scadium/shared `VAULT`. ----
+/// Share-price fixed-point scalar (1e18). Mirrors `VAULT.RAY`.
+pub const RAY: u128 = 1_000_000_000_000_000_000;
+/// Shares permanently locked on a pool's first deposit (first-depositor index
+/// inflation guard, à la Uniswap MINIMUM_LIQUIDITY).
+pub const MINIMUM_LIQUIDITY: u128 = 1_000;
+/// Early-exit penalty in bps of withdrawn assets. Mirrors `VAULT.EARLY_EXIT_PENALTY_BPS`.
+pub const EARLY_EXIT_PENALTY_BPS: u64 = 1_000;
+const SECONDS_PER_DAY: i64 = 86_400;
+
 #[program]
 pub mod scadium_vault {
     use super::*;
@@ -284,10 +294,235 @@ pub mod scadium_vault {
         Ok(())
     }
 
+    // ---------------------------------------------------------- SCAD Vault
+    // Term-staking pools (the on-chain twin of the off-chain VaultPool). Share/
+    // index accounting mirrors `@scadium/shared`: deposits mint shares at the
+    // pool index; yield (`vault_accrue`) and early-exit penalties RAISE the
+    // index, so holders appreciate pro-rata. Custody is real SPL $SCAD held in a
+    // per-pool token account owned by the pool PDA.
+
+    /// Authority-signed: create a term pool + its $SCAD vault token account.
+    pub fn init_vault_pool(ctx: Context<InitVaultPool>, term_days: u32, weight_bps: u16) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.scad_mint = ctx.accounts.scad_mint.key();
+        pool.term_days = term_days;
+        pool.weight_bps = weight_bps;
+        pool.total_assets = 0;
+        pool.total_shares = 0;
+        pool.index_ray = RAY;
+        pool.bump = ctx.bumps.pool;
+        emit!(VaultPoolInitialized {
+            pool: pool.key(),
+            term_days,
+            weight_bps,
+        });
+        Ok(())
+    }
+
+    /// User-signed: lock $SCAD into a term pool, minting shares at the current
+    /// index. First deposit locks MINIMUM_LIQUIDITY shares in the pool.
+    pub fn vault_deposit(ctx: Context<VaultDeposit>, amount: u64) -> Result<()> {
+        require!(amount > 0, VaultError::ZeroAmount);
+        let index_ray = ctx.accounts.pool.index_ray;
+        let first = ctx.accounts.pool.total_shares == 0;
+        let shares = shares_for_deposit(amount, index_ray);
+        require!(shares > 0, VaultError::ZeroAmount);
+
+        let minted = if first {
+            require!(shares > MINIMUM_LIQUIDITY, VaultError::InsufficientFunds);
+            shares - MINIMUM_LIQUIDITY
+        } else {
+            shares
+        };
+
+        // user $SCAD → pool vault.
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.key(),
+                SplTransfer {
+                    from: ctx.accounts.user_ata.to_account_info(),
+                    to: ctx.accounts.pool_vault.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let term_days = ctx.accounts.pool.term_days;
+        let pool = &mut ctx.accounts.pool;
+        pool.total_shares += shares; // first deposit also banks the locked minimum
+        pool.total_assets += amount;
+
+        let position = &mut ctx.accounts.position;
+        if position.owner == Pubkey::default() {
+            position.owner = ctx.accounts.user.key();
+            position.pool = pool.key();
+            position.bump = ctx.bumps.position;
+        }
+        require_keys_eq!(position.owner, ctx.accounts.user.key(), VaultError::NotVaultOwner);
+        position.shares += minted;
+        position.principal += amount;
+        position.matures_at = Clock::get()?.unix_timestamp + (term_days as i64) * SECONDS_PER_DAY;
+
+        emit!(VaultDeposited {
+            pool: pool.key(),
+            user: position.owner,
+            amount,
+            shares: minted,
+            matures_at: position.matures_at,
+        });
+        Ok(())
+    }
+
+    /// User-signed: withdraw `shares` from the caller's position. Before maturity
+    /// an EARLY_EXIT_PENALTY_BPS cut is kept in the pool (raising the index).
+    pub fn vault_withdraw(ctx: Context<VaultWithdraw>, shares: u64) -> Result<()> {
+        require!(shares > 0, VaultError::ZeroAmount);
+        let shares = shares as u128;
+        require_keys_eq!(
+            ctx.accounts.position.owner,
+            ctx.accounts.user.key(),
+            VaultError::NotVaultOwner
+        );
+        require!(shares <= ctx.accounts.position.shares, VaultError::InsufficientFunds);
+
+        let index_ray = ctx.accounts.pool.index_ray;
+        let gross = assets_for_shares(shares, index_ray);
+        let now = Clock::get()?.unix_timestamp;
+        let penalty = if now < ctx.accounts.position.matures_at {
+            early_exit_penalty(gross)
+        } else {
+            0
+        };
+        let net = gross - penalty;
+
+        let pos_shares = ctx.accounts.position.shares;
+        let pos_principal = ctx.accounts.position.principal;
+        let principal_portion = if shares == pos_shares {
+            pos_principal
+        } else {
+            ((pos_principal as u128) * shares / pos_shares) as u64
+        };
+
+        // Pool: remove shares + net assets; the penalty stays and lifts the index.
+        let new_total_shares = ctx.accounts.pool.total_shares - shares;
+        let scad_mint = ctx.accounts.pool.scad_mint;
+        let term_le = ctx.accounts.pool.term_days.to_le_bytes();
+        let pool_bump = ctx.accounts.pool.bump;
+        {
+            let pool = &mut ctx.accounts.pool;
+            pool.index_ray = apply_accrual(pool.index_ray, new_total_shares, penalty);
+            pool.total_shares = new_total_shares;
+            pool.total_assets = pool.total_assets.saturating_sub(net);
+        }
+        {
+            let position = &mut ctx.accounts.position;
+            position.shares -= shares;
+            position.principal -= principal_portion;
+        }
+
+        if net > 0 {
+            let seeds: &[&[u8]] = &[b"vault_pool", scad_mint.as_ref(), &term_le, &[pool_bump]];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.key(),
+                    SplTransfer {
+                        from: ctx.accounts.pool_vault.to_account_info(),
+                        to: ctx.accounts.user_ata.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                net,
+            )?;
+        }
+
+        emit!(VaultWithdrawn {
+            pool: ctx.accounts.pool.key(),
+            user: ctx.accounts.user.key(),
+            shares,
+            gross,
+            penalty,
+            net,
+        });
+        Ok(())
+    }
+
+    /// Cosigner-signed: add `amount` $SCAD yield to a pool, raising its index for
+    /// all current stakers. Funds come from the house treasury ATA.
+    pub fn vault_accrue(ctx: Context<VaultAccrue>, amount: u64) -> Result<()> {
+        require!(!ctx.accounts.house.paused, VaultError::Paused);
+        require_keys_eq!(
+            ctx.accounts.cosigner.key(),
+            ctx.accounts.house.cosigner,
+            VaultError::NotCosigner
+        );
+        require!(amount > 0, VaultError::ZeroAmount);
+        require!(ctx.accounts.pool.total_shares > 0, VaultError::InsufficientFunds);
+
+        let house_bump = ctx.accounts.house.bump;
+        let seeds: &[&[u8]] = &[b"house", &[house_bump]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                SplTransfer {
+                    from: ctx.accounts.treasury_ata.to_account_info(),
+                    to: ctx.accounts.pool_vault.to_account_info(),
+                    authority: ctx.accounts.house.to_account_info(),
+                },
+                &[seeds],
+            ),
+            amount,
+        )?;
+
+        let pool = &mut ctx.accounts.pool;
+        pool.index_ray = apply_accrual(pool.index_ray, pool.total_shares, amount);
+        pool.total_assets += amount;
+        emit!(VaultAccrued {
+            pool: pool.key(),
+            amount,
+            index_ray: pool.index_ray,
+        });
+        Ok(())
+    }
+
     pub fn set_paused(ctx: Context<AdminOnly>, paused: bool) -> Result<()> {
         ctx.accounts.house.paused = paused;
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------- vault math
+// Pure share/index helpers — bit-for-bit the @scadium/shared formulas, in u128.
+
+pub fn shares_for_deposit(assets: u64, index_ray: u128) -> u128 {
+    if assets == 0 || index_ray == 0 {
+        return 0;
+    }
+    (assets as u128) * RAY / index_ray
+}
+
+pub fn assets_for_shares(shares: u128, index_ray: u128) -> u64 {
+    if shares == 0 || index_ray == 0 {
+        return 0;
+    }
+    let a = shares * index_ray / RAY;
+    if a > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        a as u64
+    }
+}
+
+pub fn apply_accrual(index_ray: u128, total_shares: u128, yield_assets: u64) -> u128 {
+    if total_shares == 0 || yield_assets == 0 {
+        return index_ray;
+    }
+    index_ray + (yield_assets as u128) * RAY / total_shares
+}
+
+pub fn early_exit_penalty(assets: u64) -> u64 {
+    ((assets as u128) * (EARLY_EXIT_PENALTY_BPS as u128) / 10_000) as u64
 }
 
 // ---------------------------------------------------------------- accounts
@@ -324,6 +559,36 @@ pub struct ClaimRecord {
 }
 impl ClaimRecord {
     pub const SIZE: usize = 8 + 32 + 1 + 8 + 8;
+}
+
+/// A SCAD Vault term pool — share/index accounting + a $SCAD vault token account
+/// (the on-chain twin of the off-chain `VaultPool`).
+#[account]
+pub struct VaultPool {
+    pub scad_mint: Pubkey,
+    pub term_days: u32,
+    pub weight_bps: u16,
+    pub total_assets: u64,
+    pub total_shares: u128,
+    pub index_ray: u128,
+    pub bump: u8,
+}
+impl VaultPool {
+    pub const SIZE: usize = 8 + 32 + 4 + 2 + 8 + 16 + 16 + 1;
+}
+
+/// A user's stake in one term pool (aggregated; one position per pool).
+#[account]
+pub struct UserVaultPosition {
+    pub owner: Pubkey,
+    pub pool: Pubkey,
+    pub shares: u128,
+    pub principal: u64,
+    pub matures_at: i64,
+    pub bump: u8,
+}
+impl UserVaultPosition {
+    pub const SIZE: usize = 8 + 32 + 32 + 16 + 8 + 8 + 1;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -514,6 +779,109 @@ pub struct AdminOnly<'info> {
     pub authority: Signer<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(term_days: u32)]
+pub struct InitVaultPool<'info> {
+    #[account(seeds = [b"house"], bump = house.bump, has_one = authority)]
+    pub house: Account<'info, House>,
+    #[account(
+        init,
+        payer = authority,
+        space = VaultPool::SIZE,
+        seeds = [b"vault_pool", scad_mint.key().as_ref(), &term_days.to_le_bytes()],
+        bump
+    )]
+    pub pool: Account<'info, VaultPool>,
+    #[account(
+        init,
+        payer = authority,
+        associated_token::mint = scad_mint,
+        associated_token::authority = pool
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+    #[account(address = house.scad_mint)]
+    pub scad_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct VaultDeposit<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_pool", pool.scad_mint.as_ref(), &pool.term_days.to_le_bytes()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, VaultPool>,
+    #[account(
+        init_if_needed,
+        payer = user,
+        space = UserVaultPosition::SIZE,
+        seeds = [b"vault_pos", user.key().as_ref(), pool.key().as_ref()],
+        bump
+    )]
+    pub position: Account<'info, UserVaultPosition>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = pool)]
+    pub pool_vault: Account<'info, TokenAccount>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = user)]
+    pub user_ata: Account<'info, TokenAccount>,
+    #[account(address = pool.scad_mint)]
+    pub scad_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct VaultWithdraw<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_pool", pool.scad_mint.as_ref(), &pool.term_days.to_le_bytes()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, VaultPool>,
+    #[account(
+        mut,
+        seeds = [b"vault_pos", user.key().as_ref(), pool.key().as_ref()],
+        bump = position.bump
+    )]
+    pub position: Account<'info, UserVaultPosition>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = pool)]
+    pub pool_vault: Account<'info, TokenAccount>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = user)]
+    pub user_ata: Account<'info, TokenAccount>,
+    #[account(address = pool.scad_mint)]
+    pub scad_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct VaultAccrue<'info> {
+    #[account(seeds = [b"house"], bump = house.bump)]
+    pub house: Account<'info, House>,
+    #[account(
+        mut,
+        seeds = [b"vault_pool", pool.scad_mint.as_ref(), &pool.term_days.to_le_bytes()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, VaultPool>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = house)]
+    pub treasury_ata: Account<'info, TokenAccount>,
+    #[account(mut, associated_token::mint = scad_mint, associated_token::authority = pool)]
+    pub pool_vault: Account<'info, TokenAccount>,
+    #[account(address = house.scad_mint)]
+    pub scad_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub cosigner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
 // ---------------------------------------------------------------- events
 
 #[event]
@@ -558,6 +926,39 @@ pub struct RewardClaimed {
     pub amount: u64,
 }
 
+#[event]
+pub struct VaultPoolInitialized {
+    pub pool: Pubkey,
+    pub term_days: u32,
+    pub weight_bps: u16,
+}
+
+#[event]
+pub struct VaultDeposited {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub shares: u128,
+    pub matures_at: i64,
+}
+
+#[event]
+pub struct VaultWithdrawn {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub shares: u128,
+    pub gross: u64,
+    pub penalty: u64,
+    pub net: u64,
+}
+
+#[event]
+pub struct VaultAccrued {
+    pub pool: Pubkey,
+    pub amount: u64,
+    pub index_ray: u128,
+}
+
 // ---------------------------------------------------------------- errors
 
 #[error_code]
@@ -572,4 +973,59 @@ pub enum VaultError {
     InsufficientFunds,
     #[msg("Program is paused")]
     Paused,
+}
+
+// ---------------------------------------------------------------- tests
+#[cfg(test)]
+mod vault_math_tests {
+    use super::*;
+
+    #[test]
+    fn mints_one_to_one_at_genesis() {
+        let d: u64 = 5_000_000_000;
+        assert_eq!(shares_for_deposit(d, RAY), d as u128);
+        assert_eq!(assets_for_shares(d as u128, RAY), d);
+    }
+
+    #[test]
+    fn round_trip_never_returns_more_than_principal() {
+        let index = RAY * 3;
+        for d in [1_000_000_000u64, 7_777_777_777, 123_456_789_012] {
+            let shares = shares_for_deposit(d, index);
+            let back = assets_for_shares(shares, index);
+            assert!(back <= d);
+            assert!(d - back <= 1);
+        }
+    }
+
+    #[test]
+    fn accrual_raises_index_and_conserves_value() {
+        let d: u64 = 100_000_000_000;
+        let shares = shares_for_deposit(d, RAY);
+        let yield_assets: u64 = 10_000_000_000;
+        let i2 = apply_accrual(RAY, shares, yield_assets);
+        assert!(i2 > RAY);
+        let value = assets_for_shares(shares, i2);
+        assert!(value >= d + yield_assets - 1 && value <= d + yield_assets);
+    }
+
+    #[test]
+    fn accrual_is_noop_on_empty_or_zero() {
+        assert_eq!(apply_accrual(RAY, 0, 5), RAY);
+        assert_eq!(apply_accrual(RAY, 100, 0), RAY);
+    }
+
+    #[test]
+    fn early_exit_penalty_is_ten_percent() {
+        let a: u64 = 100_000_000_000;
+        assert_eq!(early_exit_penalty(a), a / 10);
+        assert_eq!(early_exit_penalty(0), 0);
+    }
+
+    #[test]
+    fn zero_inputs_yield_zero() {
+        assert_eq!(shares_for_deposit(0, RAY), 0);
+        assert_eq!(shares_for_deposit(100, 0), 0);
+        assert_eq!(assets_for_shares(0, RAY), 0);
+    }
 }
