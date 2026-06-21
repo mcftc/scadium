@@ -403,10 +403,14 @@ export const USDS = {
 // to their staked balance, in USDS. Staking auto-engages on reward claim and is
 // time-locked. Buy-and-burn keeps a parallel (smaller) NGR slice.
 export const ENGINE = {
-  /** Share of NGR routed to the staker dividend pool, in bps (= 10%). */
-  DIVIDEND_NGR_BPS: 1000,
-  /** Share of NGR routed to buy-and-burn, in bps (= 10%, was 20%). */
-  BUYBACK_NGR_BPS: 1000,
+  /**
+   * Share of NGR routed to the (liquid) Engine staker dividend pool, in bps
+   * (= 6%, was 10%). Rebalanced when the SCAD Vault took its own NGR slice so
+   * the total redistribution stays ≤ 20% — see `VAULT` / `ngrRedistributionBps`.
+   */
+  DIVIDEND_NGR_BPS: 600,
+  /** Share of NGR routed to buy-and-burn, in bps (= 6%, was 10% → 20%). */
+  BUYBACK_NGR_BPS: 600,
   /** Distribution round cadence — one round per hour. */
   DISTRIBUTION_INTERVAL_MS: 60 * 60 * 1000,
   /** Lock applied to staked $SCAD; unstake is rejected until it elapses. */
@@ -441,6 +445,95 @@ export function dividendPoolUsdsBase(ngrLamports: bigint): bigint {
 export function buybackBudgetLamports(ngrLamports: bigint): bigint {
   if (ngrLamports <= 0n) return 0n;
   return (ngrLamports * BigInt(ENGINE.BUYBACK_NGR_BPS)) / 10_000n;
+}
+
+// ---------- SCAD Vault (term staking — "vadeli mevduat") ----------
+// The Vault complements the (liquid) Engine: users lock $SCAD for a chosen TERM
+// into one of several pools; longer terms get a larger share of the Vault yield
+// slice (higher effective APR). Early withdrawal is allowed but charged
+// EARLY_EXIT_PENALTY_BPS, which stays in the pool (raising the index) to reward
+// stakers who hold to maturity. Accounting is share/index based (ERC-4626-style):
+// a pool tracks an `indexRay` (share price); yield raises the index, so every
+// position appreciates pro-rata in O(1). All $SCAD amounts are BASE units (9 dp).
+export const VAULT = {
+  /** Faz 1 vault asset — denominated in $SCAD. */
+  ASSET: 'scad',
+  /** Fixed-point scalar for the share price index ("ray", 1e18). */
+  RAY: 1_000_000_000_000_000_000n,
+  /** Share price at pool genesis: 1 share = 1 asset. */
+  INITIAL_INDEX_RAY: 1_000_000_000_000_000_000n,
+  /** Share of NGR routed to the Vault yield pool, in bps (= 8%). */
+  YIELD_NGR_BPS: 800,
+  /** Penalty on early (pre-maturity) withdrawal, in bps of withdrawn assets (= 10%). */
+  EARLY_EXIT_PENALTY_BPS: 1000,
+  /** Minimum $SCAD base units per deposit (anti-dust). 1 SCAD. */
+  MIN_DEPOSIT_SCAD_BASE: 1_000_000_000,
+  /**
+   * Term pools (one pool per term). `weightBps` is the RELATIVE weight used to
+   * split the Vault yield slice across pools (longer term → larger weight →
+   * higher effective APR). Weights are relative — they need not sum to 10000.
+   */
+  TERMS: [
+    { days: 30, weightBps: 1000 },
+    { days: 90, weightBps: 2000 },
+    { days: 180, weightBps: 3000 },
+    { days: 365, weightBps: 4000 },
+  ],
+} as const;
+
+/**
+ * Total NGR redistribution slice (bps): Engine dividend + buy-and-burn + Vault
+ * yield. Hard product invariant: this must stay ≤ 2000 bps (≤ 20% of NGR), so
+ * the casino keeps ≥ 80% of net revenue. The vault-math test asserts it.
+ */
+export function ngrRedistributionBps(): number {
+  return ENGINE.DIVIDEND_NGR_BPS + ENGINE.BUYBACK_NGR_BPS + VAULT.YIELD_NGR_BPS;
+}
+
+/** NGR (lamports) → Vault yield slice (lamports), applying VAULT.YIELD_NGR_BPS. */
+export function vaultYieldSliceLamports(ngrLamports: bigint): bigint {
+  if (ngrLamports <= 0n) return 0n;
+  return (ngrLamports * BigInt(VAULT.YIELD_NGR_BPS)) / 10_000n;
+}
+
+/**
+ * Shares minted for an `assets` deposit at the pool's current `indexRay`.
+ * shares = assets · RAY / indexRay. At genesis (index = RAY) this is 1:1.
+ */
+export function sharesForDeposit(assets: bigint, indexRay: bigint): bigint {
+  if (assets <= 0n || indexRay <= 0n) return 0n;
+  return (assets * VAULT.RAY) / indexRay;
+}
+
+/**
+ * Asset value of `shares` at the pool's current `indexRay`.
+ * assets = shares · indexRay / RAY. Rounds DOWN (in the pool's favour), so a
+ * deposit→withdraw round-trip at an unchanged index never returns more than the
+ * principal.
+ */
+export function assetsForShares(shares: bigint, indexRay: bigint): bigint {
+  if (shares <= 0n || indexRay <= 0n) return 0n;
+  return (shares * indexRay) / VAULT.RAY;
+}
+
+/**
+ * New pool index after adding `yieldAssets` to a pool with `totalShares`
+ * outstanding: index' = index + yieldAssets · RAY / totalShares. Monotonic
+ * non-decreasing for non-negative yield; a no-op when the pool is empty.
+ */
+export function applyAccrual(indexRay: bigint, totalShares: bigint, yieldAssets: bigint): bigint {
+  if (totalShares <= 0n || yieldAssets <= 0n) return indexRay;
+  return indexRay + (yieldAssets * VAULT.RAY) / totalShares;
+}
+
+/**
+ * Penalty (in asset base units) charged on an early, pre-maturity withdrawal of
+ * `assets`. The penalty stays in the pool (credited to the index), rewarding the
+ * stakers who hold to maturity. Zero for non-positive input.
+ */
+export function earlyExitPenalty(assets: bigint): bigint {
+  if (assets <= 0n) return 0n;
+  return (assets * BigInt(VAULT.EARLY_EXIT_PENALTY_BPS)) / 10_000n;
 }
 
 // ---------- Instant provably-fair games (dual-currency expansion) ----------
