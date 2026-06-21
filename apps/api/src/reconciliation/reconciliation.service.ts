@@ -127,6 +127,56 @@ export class ReconciliationService {
   }
 
   /**
+   * SCAD Vault OFF-CHAIN ledger drift (V8): asserts the bookkeeping invariants
+   * that must always hold regardless of chain state —
+   *   (1) per pool: `VaultPool.totalShares` == Σ position shares, and
+   *   (2) per user: `User.scadiumVault` == Σ position principal.
+   * Both are maintained leg-by-leg by VaultService through `applyBalanceDelta`,
+   * so a non-zero result means a bug, not chain lag. Flag-only; returns the
+   * number of violated invariants (0 = healthy).
+   */
+  async vaultLedgerDrift(): Promise<number> {
+    let drift = 0;
+
+    const pools = await this.prisma.vaultPool.findMany({
+      select: { id: true, termDays: true, totalShares: true },
+    });
+    for (const p of pools) {
+      const agg = await this.prisma.vaultPosition.aggregate({
+        where: { poolId: p.id },
+        _sum: { shares: true },
+      });
+      const sum = agg._sum.shares ?? 0n;
+      if (sum !== p.totalShares) {
+        drift += 1;
+        this.logger.error(
+          `vault ledger drift: pool ${p.termDays}d totalShares=${p.totalShares} Σpositions=${sum}`,
+        );
+      }
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { scadiumVault: { gt: 0n } },
+      select: { id: true, scadiumVault: true },
+    });
+    for (const u of users) {
+      const agg = await this.prisma.vaultPosition.aggregate({
+        where: { userId: u.id },
+        _sum: { principal: true },
+      });
+      const sum = agg._sum.principal ?? 0n;
+      if (sum !== u.scadiumVault) {
+        drift += 1;
+        this.logger.error(
+          `vault ledger drift: user ${u.id} scadiumVault=${u.scadiumVault} Σprincipal=${sum}`,
+        );
+      }
+    }
+
+    return drift;
+  }
+
+  /**
    * House solvency monitor (#30): publishes the live bankroll gauge and alerts
    * when `house_vault` falls under rent floor + MIN_BANKROLL_BUFFER — see
    * docs/bankroll-model.md. Flag-only; the on-chain rent-floor check in

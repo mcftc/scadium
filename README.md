@@ -10,6 +10,7 @@ A Solana-based decentralized casino and gaming platform — non-custodial, prova
 - **Real-time chat** (airdrop eligibility)
 - **Hourly SOL airdrops** + Daily Case
 - **$SCADIUM token** dashboard with buy-and-burn
+- **SCAD Engine** (liquid staking → hourly USDS dividends) + **SCAD Vault** (term staking → yield, live earnings)
 - **Leaderboards** + **Affiliate** program
 - **On-chain bet settlement** via Anchor programs
 

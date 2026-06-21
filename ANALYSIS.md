@@ -40,6 +40,7 @@ The path to real money is **7 sequenced phases (G→M)**. Do **not** flip on rea
 - **SIWS auth done right** (the verify side): correct `tweetnacl` ed25519 verification, canonical message re-derivation from stored `issuedAt`, one-time nonce consumption.
 - **Money typed as `BigInt` lamports end-to-end**; clean, sequenced Prisma migrations; replay/idempotency unique constraints on the on-chain paths (lottery `txSignature+txIndex`, reward claims, airdrop claims).
 - **Full, polished web surface.** All 24 routes built and wired to API + Socket.io — **no live "coming soon" stubs** (the `ComingSoonPage` component is dead code). Mobile-responsive, optimistic cache patching, reels/charts.
+- **SCAD Vault (term staking) — Faz 1+2 built.** Share/index (ERC-4626-style) term pools with hourly NGR-funded yield, early-exit penalty, REST API + `/vault` UI (live earnings counter), and a Rust on-chain twin (`init_vault_pool`/`vault_deposit`/`vault_withdraw`/`vault_accrue`, math bit-for-bit `@scadium/shared`). The Engine was made **liquid** (instant unstake) so the Vault is the locked tier. NGR redistribution rebalanced to ≤ 20% (Engine 6% + burn 6% + Vault 8%). Off-chain-first: `ChainService.vault*` is cosigner-gated/decorative until deploy; `vaultLedgerDrift()` proves the off-chain invariants. Remaining: real DeFi yield (jitoSOL/Kamino — Faz 3) needs mainnet + audit + a resolved deploy (devnet-SOL blocker, see `docs/runbooks/vault-onchain.md`).
 
 ---
 
