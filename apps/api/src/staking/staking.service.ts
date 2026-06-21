@@ -6,19 +6,22 @@ import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { withSerializable } from '../prisma/with-serializable';
 
 /**
- * SCAD Engine — staking (bc.game parity).
+ * SCAD Engine — staking (the LIQUID "vadesiz" tier).
  *
- * Earned $SCAD (`User.scadiumBalance`, redeemable) is moved into a LOCKED staked
+ * Earned $SCAD (`User.scadiumBalance`, redeemable) is moved into the staked
  * balance (`User.scadiumStaked`). Stakers earn a pro-rata USDS dividend every
  * distribution round (see DistributionService). Staking is a purely OFF-CHAIN
  * ledger move — independent of `ChainService.enabled` — so it works in the
  * current play-money phase; the USDS payout is what's later bridged on-chain.
  *
+ * The Engine is LIQUID: unstake is instant — there is no lock. (`stakeLockedUntil`
+ * is retired; it is cleared to null on every stake and never enforced.) The
+ * time-locked, term-based product with an early-exit penalty is the separate
+ * SCAD Vault — see the Vault module.
+ *
  * Every move goes through `applyBalanceDelta` so a `scad` debit + `scad_staked`
  * credit (or the reverse on unstake) are written with their ledger rows in ONE
- * transaction. A single `stakeLockedUntil` per user governs the whole staked
- * balance; staking more RESETS the lock on the full balance (simplest faithful
- * model — no per-deposit lock bookkeeping).
+ * transaction.
  */
 @Injectable()
 export class StakingService {
@@ -57,19 +60,15 @@ export class StakingService {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { scadiumStaked: true, stakeLockedUntil: true },
+        select: { scadiumStaked: true },
       });
       if (!user) throw new NotFoundException('User not found');
       if (amount > user.scadiumStaked) {
         throw new BadRequestException('Amount exceeds staked balance');
       }
-      const now = new Date();
-      if (user.stakeLockedUntil && user.stakeLockedUntil > now) {
-        throw new BadRequestException(
-          `Staked SCAD is locked until ${user.stakeLockedUntil.toISOString()}`,
-        );
-      }
 
+      // Engine is liquid ("vadesiz"): unstake is instant — no lock check. The
+      // time-locked, term-based product is the separate SCAD Vault.
       // staked → spendable, both legs ledgered atomically.
       const stakedAfter = await applyBalanceDelta(tx, userId, -amount, {
         currency: 'scad_staked',
@@ -137,7 +136,7 @@ export class StakingService {
     return withSerializable(this.prisma, async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { autoStakeEnabled: true, scadiumBalance: true, stakeLockedUntil: true },
+        select: { autoStakeEnabled: true, scadiumBalance: true },
       });
       if (!user || !user.autoStakeEnabled) return 0n;
       if (user.scadiumBalance < BigInt(ENGINE.MIN_STAKE_SCAD_BASE)) return 0n;
@@ -155,19 +154,11 @@ export class StakingService {
         reason: 'auto_stake',
         refType: 'StakeEvent',
       });
-      // Unlike a MANUAL stake (a deliberate action that resets the whole-balance
-      // lock), an automatic sweep must NOT perpetually extend the lock — otherwise
-      // an active player whose earnings sweep every 30s could never reach an
-      // unstake window. Preserve any existing unexpired lock; only start a fresh
-      // 7-day lock when the stake is currently unlocked.
-      const now = Date.now();
-      const lockedUntil =
-        user.stakeLockedUntil && user.stakeLockedUntil.getTime() > now
-          ? user.stakeLockedUntil
-          : new Date(now + ENGINE.LOCK_PERIOD_MS);
-      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: lockedUntil } });
+      // Engine is liquid — auto-stake never locks; clear any legacy lock so the
+      // swept balance stays instantly withdrawable.
+      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: null } });
       await tx.stakeEvent.create({
-        data: { userId, kind: 'auto_stake', amountScad: amount, stakedAfter, lockedUntil },
+        data: { userId, kind: 'auto_stake', amountScad: amount, stakedAfter, lockedUntil: null },
       });
       return amount;
     });
@@ -190,10 +181,11 @@ export class StakingService {
         reason: kind,
         refType: 'StakeEvent',
       });
-      const lockedUntil = new Date(Date.now() + ENGINE.LOCK_PERIOD_MS);
-      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: lockedUntil } });
+      // Engine is liquid: staking no longer locks. Clear any legacy lock so a
+      // pre-existing locked stake becomes instantly withdrawable.
+      await tx.user.update({ where: { id: userId }, data: { stakeLockedUntil: null } });
       await tx.stakeEvent.create({
-        data: { userId, kind, amountScad: amount, stakedAfter, lockedUntil },
+        data: { userId, kind, amountScad: amount, stakedAfter, lockedUntil: null },
       });
       return this.serializeSummary(tx, userId);
     });
@@ -213,7 +205,6 @@ export class StakingService {
       select: {
         scadiumBalance: true,
         scadiumStaked: true,
-        stakeLockedUntil: true,
         usdsBalance: true,
         usdsReserved: true,
         autoStakeEnabled: true,
@@ -232,19 +223,18 @@ export class StakingService {
       select: { poolUsds: true, totalStakedSnapshot: true },
     });
 
-    const now = Date.now();
-    const locked = !!user.stakeLockedUntil && user.stakeLockedUntil.getTime() > now;
-
     return {
       spendableScad: user.scadiumBalance.toString(),
       stakedScad: user.scadiumStaked.toString(),
-      locked,
-      lockedUntil: user.stakeLockedUntil ? user.stakeLockedUntil.toISOString() : null,
+      // Engine is liquid ("vadesiz"): stake is always instantly withdrawable.
+      // The locked, term-based product is the separate SCAD Vault.
+      locked: false,
+      lockedUntil: null,
       usdsBalance: user.usdsBalance.toString(),
       usdsReserved: user.usdsReserved.toString(),
       totalUsdsEarned: (earned._sum.shareUsds ?? 0n).toString(),
       estApyPct: estimateApyPct(lastRound),
-      lockPeriodMs: ENGINE.LOCK_PERIOD_MS,
+      lockPeriodMs: 0,
       autoStakeEnabled: user.autoStakeEnabled,
       minStakeScad: ENGINE.MIN_STAKE_SCAD_BASE.toString(),
       // #208: the on-chain USDS claim (withdraw) leg only works when the chain is

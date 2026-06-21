@@ -413,8 +413,12 @@ export const ENGINE = {
   BUYBACK_NGR_BPS: 600,
   /** Distribution round cadence — one round per hour. */
   DISTRIBUTION_INTERVAL_MS: 60 * 60 * 1000,
-  /** Lock applied to staked $SCAD; unstake is rejected until it elapses. */
-  LOCK_PERIOD_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
+  /**
+   * @deprecated The Engine is now LIQUID — staking does not lock and unstake is
+   * instant. Retained only so legacy references resolve; the time-locked,
+   * term-based product is the SCAD Vault (see `VAULT.TERMS`). Not enforced.
+   */
+  LOCK_PERIOD_MS: 0,
   /** Minimum $SCAD base units that may be staked in one call (anti-dust). */
   MIN_STAKE_SCAD_BASE: 1_000_000_000, // 1 SCAD
   /** Skip a distribution round whose USDS pool is below this (anti-dust). */
