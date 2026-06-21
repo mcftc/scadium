@@ -10,6 +10,7 @@ import {
   ReconciliationService,
   RewardsService,
   DistributionService,
+  VaultAccrualService,
   RedisService,
   queueConnection,
   withRedisLock,
@@ -38,6 +39,7 @@ async function bootstrap(): Promise<void> {
   const reconciliation = app.get(ReconciliationService, { strict: false });
   const rewards = app.get(RewardsService, { strict: false });
   const distribution = app.get(DistributionService, { strict: false });
+  const vaultAccrual = app.get(VaultAccrualService, { strict: false });
   const redis = app.get(RedisService, { strict: false });
 
   // Plain options object — each Queue/Worker spins its own BullMQ connection.
@@ -103,6 +105,18 @@ async function bootstrap(): Promise<void> {
       },
       { connection },
     ),
+    new Worker(
+      QUEUE_NAMES.vaultAccrual,
+      // SCAD Vault: hourly NGR→$SCAD term-pool yield. Idempotent per hour
+      // (VaultAccrualRound.period unique + distributed flag); a Redis lock still
+      // serializes the per-pool index updates so two replicas don't both walk it.
+      async () => {
+        await withRedisLock(redis.client, 'lock:vault-accrual', 9 * 60_000, () =>
+          vaultAccrual.accrue(),
+        );
+      },
+      { connection },
+    ),
   ];
   for (const c of consumers) {
     c.on('failed', (job, err) =>
@@ -121,6 +135,7 @@ async function bootstrap(): Promise<void> {
   const rewardClaimsQueue = new Queue(QUEUE_NAMES.rewardClaims, { connection });
   const lotteryPayoutsQueue = new Queue(QUEUE_NAMES.lotteryPayouts, { connection });
   const distributionQueue = new Queue(QUEUE_NAMES.distribution, { connection });
+  const vaultAccrualQueue = new Queue(QUEUE_NAMES.vaultAccrual, { connection });
 
   await airdropQueue.upsertJobScheduler(
     'airdrop-hourly',
@@ -155,8 +170,15 @@ async function bootstrap(): Promise<void> {
     { every: 5 * 60_000 },
     { name: 'distribute' },
   );
+  // Same cadence/rationale as distribution: accrue() is a no-op until an
+  // unsettled hour exists, so over-firing every 5 min is cheap.
+  await vaultAccrualQueue.upsertJobScheduler(
+    'vault-accrual-hourly',
+    { every: 5 * 60_000 },
+    { name: 'accrue' },
+  );
 
-  logger.log('worker up — 7 queues, schedulers registered');
+  logger.log('worker up — 8 queues, schedulers registered');
 
   const shutdown = async () => {
     logger.log('shutting down…');

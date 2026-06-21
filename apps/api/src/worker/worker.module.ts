@@ -10,6 +10,7 @@ import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { ReconciliationModule } from '../reconciliation/reconciliation.module';
 import { RewardsModule } from '../rewards/rewards.module';
 import { EngineModule } from '../engine/engine.module';
+import { VaultModule } from '../vault/vault.module';
 import { ResponsibleGamblingModule } from '../responsible-gambling/rg.module';
 import { MaintenanceModule } from '../maintenance/maintenance.module';
 import { KycModule } from '../kyc/kyc.module';
@@ -47,6 +48,7 @@ import { AffiliatesModule } from '../affiliates/affiliates.module';
     ReconciliationModule,
     RewardsModule,
     EngineModule,
+    VaultModule,
   ],
 })
 export class WorkerModule {}

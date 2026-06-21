@@ -20,6 +20,8 @@ export const QUEUE_NAMES = {
   lotteryPayouts: 'lottery-payouts',
   /** SCAD Engine: hourly GGR→USDS staker dividend distribution round. */
   distribution: 'distribution',
+  /** SCAD Vault: hourly NGR→$SCAD term-pool yield accrual round. */
+  vaultAccrual: 'vault-accrual',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -46,3 +48,4 @@ export const leaderboardJobId = (period: string, bucketTs: number): string =>
   `leaderboard:${period}:${bucketTs}`;
 export const reconcileJobId = (bucketTs: number): string => `reconcile:${bucketTs}`;
 export const distributionRoundJobId = (period: string): string => `distribution:${period}`;
+export const vaultAccrualJobId = (period: string): string => `vault-accrual:${period}`;

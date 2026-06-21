@@ -28,3 +28,4 @@ export { LeaderboardService } from './leaderboard/leaderboard.service';
 export { ReconciliationService } from './reconciliation/reconciliation.service';
 export { RewardsService } from './rewards/rewards.service';
 export { DistributionService } from './engine/distribution.service';
+export { VaultAccrualService } from './vault/vault-accrual.service';
