@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Trophy,
   Users,
+  Vault,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -79,6 +80,7 @@ const allGames = [...statefulGames, ...instantGames];
 
 const engineLinks = [
   { href: '/engine', label: 'Engine', icon: Zap },
+  { href: '/vault', label: 'Vault', icon: Vault },
   { href: '/token', label: 'Token', icon: Coins },
   { href: '/pools', label: 'Pools', icon: Layers },
 ];
@@ -169,9 +171,7 @@ export function Header() {
               </NavDropdown>
 
               <NavDropdown label="Affiliates" active={onAffiliates} width="w-56">
-                {(close) => (
-                  <LinkMenu links={affiliateLinks} pathname={pathname} onClick={close} />
-                )}
+                {(close) => <LinkMenu links={affiliateLinks} pathname={pathname} onClick={close} />}
               </NavDropdown>
             </nav>
 

@@ -44,16 +44,13 @@ describe('SCAD Vault API (V6)', () => {
     return p.id;
   }
 
-  it('requires auth: GET /api/v1/vault/pools is 401 without a token', async () => {
-    const res = await request(harness.server).get('/api/v1/vault/pools');
+  it('requires auth: GET /api/v1/vault/positions is 401 without a token', async () => {
+    const res = await request(harness.server).get('/api/v1/vault/positions');
     expect(res.status).toBe(401);
   });
 
-  it('lists the seeded term pools', async () => {
-    const { token } = await fundedUser(0n);
-    const res = await request(harness.server)
-      .get('/api/v1/vault/pools')
-      .set('Authorization', `Bearer ${token}`);
+  it('lists the seeded term pools publicly (no auth)', async () => {
+    const res = await request(harness.server).get('/api/v1/vault/pools');
     expect(res.status).toBe(200);
     const terms = res.body.map((p: { termDays: number }) => p.termDays).sort((a, b) => a - b);
     expect(terms).toEqual([30, 90, 180, 365]);
