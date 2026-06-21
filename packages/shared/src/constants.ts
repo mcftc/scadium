@@ -472,6 +472,8 @@ export const VAULT = {
   EARLY_EXIT_PENALTY_BPS: 1000,
   /** Minimum $SCAD base units per deposit (anti-dust). 1 SCAD. */
   MIN_DEPOSIT_SCAD_BASE: 1_000_000_000,
+  /** Skip an accrual round whose total $SCAD yield is below this (anti-dust). */
+  MIN_ACCRUAL_SCAD_BASE: 1_000_000,
   /**
    * Term pools (one pool per term). `weightBps` is the RELATIVE weight used to
    * split the Vault yield slice across pools (longer term → larger weight →
@@ -498,6 +500,19 @@ export function ngrRedistributionBps(): number {
 export function vaultYieldSliceLamports(ngrLamports: bigint): bigint {
   if (ngrLamports <= 0n) return 0n;
   return (ngrLamports * BigInt(VAULT.YIELD_NGR_BPS)) / 10_000n;
+}
+
+/**
+ * Convert a lamport amount to $SCAD base units (9 decimals) at the fixed
+ * internal rates: Jeton→USD via JETON.LAMPORTS_PER_USD, USD→SCAD via
+ * USD_PER_SCAD. Integer math (BigInt-safe) — the Vault yield slice is taken from
+ * NGR (Jeton lamports) and credited to the pools in SCAD. Mirrors
+ * `lamportsToUsdsBase`, but targets SCAD instead of USDS.
+ */
+export function lamportsToScadBase(lamports: bigint): bigint {
+  if (lamports <= 0n) return 0n;
+  const scadBasePerUsd = BigInt(Math.round(10 ** LOTTERY.SCAD_DECIMALS / USD_PER_SCAD));
+  return (lamports * scadBasePerUsd) / BigInt(JETON.LAMPORTS_PER_USD);
 }
 
 /**

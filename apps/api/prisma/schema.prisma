@@ -1057,3 +1057,18 @@ model VaultEvent {
   @@index([userId])
   @@index([poolId])
 }
+
+/// One Vault yield-accrual round per UTC hour (mirrors DistributionRound).
+/// Idempotent via `period` unique + the `distributed` flag, so a re-fire of the
+/// same hour credits no yield twice. `yieldScad` is the total $SCAD the Vault's
+/// NGR slice added across pools that round.
+model VaultAccrualRound {
+  id            String    @id @default(cuid())
+  period        String    @unique
+  ngrLamports   BigInt    @default(0)
+  yieldScad     BigInt    @default(0)
+  poolCount     Int       @default(0)
+  distributed   Boolean   @default(false)
+  distributedAt DateTime?
+  createdAt     DateTime  @default(now())
+}
