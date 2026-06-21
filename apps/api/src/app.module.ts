@@ -36,6 +36,7 @@ import { SolanaModule } from './solana/solana.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { StakingModule } from './staking/staking.module';
 import { EngineModule } from './engine/engine.module';
+import { VaultModule } from './vault/vault.module';
 import { TokenModule } from './token/token.module';
 import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
@@ -91,6 +92,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     RewardsModule,
     StakingModule,
     EngineModule,
+    VaultModule,
     TokenModule,
     SwapModule,
     AffiliatesModule,
