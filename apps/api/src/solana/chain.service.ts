@@ -911,6 +911,93 @@ export class ChainService implements OnModuleInit {
   get usdsMintBase58(): string | null {
     return this.usdsMint?.toBase58() ?? null;
   }
+
+  // ------------------------------------------------------------ SCAD Vault
+  // Server-driveable bridge for the on-chain term vault (V10). NOTE: vault
+  // deposit/withdraw are USER-signed (built by the player's wallet client-side),
+  // so the server never signs them — it only mirrors the cosigner-signed yield
+  // accrual on-chain and reads pool state for reconciliation. Everything no-ops
+  // (returns null) until the chain is live (VAULT_PROGRAM_ID + cosigner).
+
+  /** VaultPool PDA for a term (seeds [b"vault_pool", scad_mint, term_days_le]). */
+  vaultPoolPda(termDays: number): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from('vault_pool'), this.scadMint!.toBuffer(), u32le(termDays)],
+      this.programId!,
+    )[0];
+  }
+
+  /**
+   * Cosigner-signed: add `amountScadBase` $SCAD yield to a term pool on-chain,
+   * mirroring the off-chain accrual. Returns the tx signature or null
+   * (disabled/error). Funds move house treasury ATA → pool vault ATA.
+   */
+  async vaultAccrue(params: { termDays: number; amountScadBase: bigint }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner || !this.scadMint || params.amountScadBase <= 0n) {
+      return null;
+    }
+    try {
+      const house = this.housePda();
+      const pool = this.vaultPoolPda(params.termDays);
+      const treasuryAta = ata(this.scadMint, house);
+      const poolVault = ata(this.scadMint, pool);
+
+      const data = Buffer.concat([
+        anchorDiscriminator('vault_accrue'),
+        u64le(params.amountScadBase),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.programId!,
+        keys: [
+          { pubkey: house, isSigner: false, isWritable: false },
+          { pubkey: pool, isSigner: false, isWritable: true },
+          { pubkey: treasuryAta, isSigner: false, isWritable: true },
+          { pubkey: poolVault, isSigner: false, isWritable: true },
+          { pubkey: this.scadMint, isSigner: false, isWritable: false },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      const tx = new Transaction().add(ix);
+      return await sendAndConfirmTransaction(this.connection, tx, [this.cosigner], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+    } catch (e) {
+      this.logger.error(`vault_accrue failed for term ${params.termDays}: ${(e as Error).message}`);
+      payoutFailedTotal.inc({ kind: 'vault_accrue' });
+      return null;
+    }
+  }
+
+  /**
+   * Read the on-chain VaultPool totals for reconciliation against the off-chain
+   * projection. Returns null when disabled or the pool account doesn't exist.
+   */
+  async readVaultPoolOnChain(
+    termDays: number,
+  ): Promise<{ totalAssets: bigint; totalShares: bigint; indexRay: bigint } | null> {
+    if (!this.enabled || !this.scadMint) return null;
+    try {
+      const info = await this.connection.getAccountInfo(this.vaultPoolPda(termDays));
+      if (!info) return null;
+      const b = info.data;
+      // layout: 8 disc + scad_mint(32) + term_days(4) + weight_bps(2) +
+      // total_assets(u64) + total_shares(u128) + index_ray(u128) + bump(1).
+      const u128 = (off: number) => b.readBigUInt64LE(off) + (b.readBigUInt64LE(off + 8) << 64n);
+      return {
+        totalAssets: b.readBigUInt64LE(46),
+        totalShares: u128(54),
+        indexRay: u128(70),
+      };
+    } catch (e) {
+      this.logger.error(
+        `readVaultPoolOnChain failed for term ${termDays}: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
 }
 
 // ------------------------------------------------------------------ utils

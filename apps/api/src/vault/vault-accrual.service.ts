@@ -8,6 +8,7 @@ import {
   applyAccrual,
 } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChainService } from '../solana/chain.service';
 import { periodForHour } from '../queue/queue.constants';
 
 /**
@@ -31,7 +32,10 @@ import { periodForHour } from '../queue/queue.constants';
 export class VaultAccrualService {
   private readonly logger = new Logger(VaultAccrualService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chain: ChainService,
+  ) {}
 
   /** Hour window [start, end) for a `YYYYMMDDHH` period key. */
   private hourWindow(period: string): { start: Date; end: Date } {
@@ -87,6 +91,10 @@ export class VaultAccrualService {
 
     const roundsPerYear = Math.round((365 * 24 * 60 * 60 * 1000) / ENGINE.DISTRIBUTION_INTERVAL_MS);
 
+    // Pools credited this round — used after commit to mirror the yield on-chain
+    // (best-effort) when the chain is live.
+    const mirror: { eventId: string; termDays: number; amount: bigint }[] = [];
+
     await this.prisma.$transaction(async (tx) => {
       const round = await tx.vaultAccrualRound.upsert({
         where: { period },
@@ -118,7 +126,7 @@ export class VaultAccrualService {
             aprBps,
           },
         });
-        await tx.vaultEvent.create({
+        const event = await tx.vaultEvent.create({
           data: {
             poolId: p.id,
             kind: 'accrue',
@@ -128,6 +136,7 @@ export class VaultAccrualService {
             indexRayAfter: newIndex,
           },
         });
+        mirror.push({ eventId: event.id, termDays: p.termDays, amount: poolYield });
         allocated += poolYield;
         credited += 1;
       }
@@ -143,6 +152,24 @@ export class VaultAccrualService {
         },
       });
     });
+
+    // Off-chain ledger is the source of truth; when the chain is live, mirror the
+    // per-pool yield on-chain (cosigner-signed) and stamp the event's tx sig.
+    // No-op while disabled (play-money) — vaultAccrue returns null immediately.
+    if (this.chain.enabled) {
+      for (const m of mirror) {
+        const sig = await this.chain.vaultAccrue({
+          termDays: m.termDays,
+          amountScadBase: m.amount,
+        });
+        if (sig) {
+          await this.prisma.vaultEvent.update({
+            where: { id: m.eventId },
+            data: { txSignature: sig },
+          });
+        }
+      }
+    }
 
     this.logger.log(
       `vault accrual ${period}: ${totalYield} SCAD across ${pools.length} pools (ngr=${ngr})`,
