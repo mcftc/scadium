@@ -95,6 +95,38 @@ export class ReconciliationService {
   }
 
   /**
+   * SCAD Vault drift (#259): for each active term pool, compares the off-chain
+   * projection (`VaultPool.totalAssets`) with the on-chain pool's `total_assets`.
+   * Flag-only; no-op while the chain is disabled (the on-chain pool doesn't exist
+   * yet). Returns the number of pools whose |off − on| exceeds the tolerance.
+   */
+  async vaultDrift(toleranceBase = 0n): Promise<number> {
+    if (!this.chain.enabled) return 0;
+    const pools = await this.prisma.vaultPool.findMany({ where: { active: true } });
+    let drift = 0;
+    for (const p of pools) {
+      try {
+        const onChain = await this.chain.readVaultPoolOnChain(p.termDays);
+        if (!onChain) continue; // pool not yet created on-chain — nothing to compare
+        const delta =
+          p.totalAssets > onChain.totalAssets
+            ? p.totalAssets - onChain.totalAssets
+            : onChain.totalAssets - p.totalAssets;
+        if (delta > toleranceBase) {
+          drift += 1;
+          this.logger.error(
+            `vault drift: pool ${p.termDays}d off-chain=${p.totalAssets} on-chain=${onChain.totalAssets}`,
+          );
+        }
+      } catch (e) {
+        drift += 1;
+        this.logger.error(`vault drift: pool ${p.termDays}d unverifiable: ${String(e)}`);
+      }
+    }
+    return drift;
+  }
+
+  /**
    * House solvency monitor (#30): publishes the live bankroll gauge and alerts
    * when `house_vault` falls under rent floor + MIN_BANKROLL_BUFFER — see
    * docs/bankroll-model.md. Flag-only; the on-chain rent-floor check in

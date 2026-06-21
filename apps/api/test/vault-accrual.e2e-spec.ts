@@ -20,7 +20,7 @@ import { prisma } from './engine-harness';
  */
 describe('SCAD Vault — yield accrual (V5)', () => {
   const vault = new VaultService(prisma as never);
-  const accrual = new VaultAccrualService(prisma as never);
+  const accrual = new VaultAccrualService(prisma as never, { enabled: false } as never);
   const userIds: string[] = [];
 
   // The accrual window is the hour containing (now − 60s); place NGR bets there.
