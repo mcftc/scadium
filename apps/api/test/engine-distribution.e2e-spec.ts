@@ -86,7 +86,7 @@ describe('SCAD Engine — stake, distribute, lock', () => {
     const hourEnd = new Date(hourStart.getTime() + 3_600_000);
     await prisma.bet.deleteMany({ where: { createdAt: { gte: hourStart, lt: hourEnd } } });
 
-    // 1 SOL-equivalent NGR in this round's hour → 10% dividend = $10 USDS.
+    // 1 SOL-equivalent NGR in this round's hour → 6% dividend = $6 USDS.
     await prisma.bet.create({
       data: {
         userId,
@@ -125,7 +125,9 @@ describe('SCAD Engine — stake, distribute, lock', () => {
     expect(claims).toBe(1);
   });
 
-  it('uses the configured 10% dividend slice', () => {
-    expect(ENGINE.DIVIDEND_NGR_BPS).toBe(1000);
+  it('uses the configured 6% dividend slice (Vault NGR rebalance)', () => {
+    // Rebalanced 10%→6% when the SCAD Vault took its own NGR slice; total
+    // redistribution (dividend + buyback + vault) stays ≤ 20% — see VAULT.
+    expect(ENGINE.DIVIDEND_NGR_BPS).toBe(600);
   });
 });
