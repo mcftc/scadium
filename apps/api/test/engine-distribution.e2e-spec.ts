@@ -64,18 +64,22 @@ describe('SCAD Engine — stake, distribute, lock', () => {
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it('stakes $SCAD: spendable → staked, lock set', async () => {
+  it('stakes $SCAD: spendable → staked, no lock (Engine is liquid)', async () => {
     const amount = 500_000_000_000n; // 500 SCAD
     await staking.stake(userId, amount);
     const u = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(u.scadiumStaked).toBe(amount);
     expect(u.scadiumBalance).toBe(500_000_000_000n);
-    expect(u.stakeLockedUntil).not.toBeNull();
-    expect(u.stakeLockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    // Liquid Engine: staking never sets a lock.
+    expect(u.stakeLockedUntil).toBeNull();
   });
 
-  it('rejects unstake while locked', async () => {
-    await expect(staking.unstake(userId, 1_000_000_000n)).rejects.toThrow(/locked/i);
+  it('allows instant unstake (liquid — no lock)', async () => {
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    await staking.unstake(userId, 1_000_000_000n);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(after.scadiumStaked).toBe(before.scadiumStaked - 1_000_000_000n);
+    expect(after.scadiumBalance).toBe(before.scadiumBalance + 1_000_000_000n);
   });
 
   it('distributes a USDS dividend pro-rata to the staker', async () => {

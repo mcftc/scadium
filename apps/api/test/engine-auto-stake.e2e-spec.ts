@@ -7,11 +7,12 @@ import { prisma } from './engine-harness';
 
 /**
  * SCAD Engine auto-stake (#206) integration against real Postgres. Proves the
- * lazy `autoStakeSweep` money path: earned $SCAD sweeps into the LOCKED staked
- * balance via the exact stake semantics (applyBalanceDelta scad→scad_staked,
- * StakeEvent kind:'auto_stake', lock set) atomically, never double-credits,
- * conserves total scad + scad_staked, respects MIN_STAKE, rejects an early
- * unstake, and leaves `stakeLedgerDrift()` at ZERO. Toggle OFF = no sweep.
+ * lazy `autoStakeSweep` money path: earned $SCAD sweeps into the staked balance
+ * via the exact stake semantics (applyBalanceDelta scad→scad_staked,
+ * StakeEvent kind:'auto_stake') atomically, never double-credits, conserves
+ * total scad + scad_staked, respects MIN_STAKE, and leaves `stakeLedgerDrift()`
+ * at ZERO. The Engine is LIQUID: auto-stake never locks and unstake is instant.
+ * Toggle OFF = no sweep.
  */
 describe('SCAD Engine — auto-stake on earn (#206)', () => {
   const staking = new StakingService(prisma as never, { enabled: false } as never);
@@ -47,7 +48,7 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   });
 
-  it('ON: earned $SCAD ends up staked + locked via the auto_stake path', async () => {
+  it('ON: earned $SCAD ends up staked (no lock — Engine is liquid) via auto_stake', async () => {
     const earned = 500_000_000_000n; // 500 SCAD (≥ MIN_STAKE)
     const userId = await makeStaker(true, earned);
 
@@ -57,8 +58,7 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
     const u = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(u.scadiumStaked).toBe(earned); // credited to staked
     expect(u.scadiumBalance).toBe(0n); // debited from spendable
-    expect(u.stakeLockedUntil).not.toBeNull();
-    expect(u.stakeLockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect(u.stakeLockedUntil).toBeNull(); // liquid: auto-stake never locks
 
     // StakeEvent kind:'auto_stake' written.
     const ev = await prisma.stakeEvent.findFirst({ where: { userId, kind: 'auto_stake' } });
@@ -75,15 +75,14 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
     expect(stakedLedger!.balanceAfter).toBe(earned);
   });
 
-  it('a second auto-sweep does NOT extend the existing lock (no perpetual-lock trap)', async () => {
-    // #2 (review): an automatic 30s sweep must not perpetually renew the whole-
-    // balance lock, or an active player could never reach an unstake window.
+  it('repeated auto-sweeps never set a lock (Engine is liquid)', async () => {
     const userId = await makeStaker(true, 500_000_000_000n);
     await staking.autoStakeSweep(userId);
-    const lock1 = (await prisma.user.findUniqueOrThrow({ where: { id: userId } })).stakeLockedUntil;
-    expect(lock1).not.toBeNull();
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: userId } })).stakeLockedUntil,
+    ).toBeNull();
 
-    // Earn more $SCAD (still under the original lock), then sweep again.
+    // Earn more $SCAD, then sweep again — still no lock.
     await prisma.user.update({
       where: { id: userId },
       data: { scadiumBalance: 200_000_000_000n },
@@ -92,7 +91,7 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
 
     const after = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(after.scadiumStaked).toBe(700_000_000_000n); // both tranches swept
-    expect(after.stakeLockedUntil!.getTime()).toBe(lock1!.getTime()); // lock UNCHANGED, not renewed
+    expect(after.stakeLockedUntil).toBeNull(); // liquid: never locked
   });
 
   it('conserves total scad + scad_staked and never double-credits', async () => {
@@ -113,10 +112,13 @@ describe('SCAD Engine — auto-stake on earn (#206)', () => {
     expect(count).toBe(1);
   });
 
-  it('rejects an immediate unstake (lock enforced)', async () => {
+  it('allows an immediate unstake (Engine is liquid — no lock)', async () => {
     const userId = await makeStaker(true, 500_000_000_000n);
     await staking.autoStakeSweep(userId);
-    await expect(staking.unstake(userId, 1_000_000_000n)).rejects.toThrow(/locked/i);
+    await staking.unstake(userId, 1_000_000_000n);
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(u.scadiumStaked).toBe(499_000_000_000n);
+    expect(u.scadiumBalance).toBe(1_000_000_000n);
   });
 
   it('respects MIN_STAKE: below-minimum spendable is NOT swept', async () => {
