@@ -52,6 +52,10 @@ enum Currency {
   // with bought Jeton.
   scad_staked
   usds
+  // SCAD Vault: `scad_vault` is $SCAD locked into a term-staking vault position
+  // (sum of the user's VaultPosition principals). Tagged like scad_staked so the
+  // ledger never conflates vault-locked SCAD with spendable or Engine-staked SCAD.
+  scad_vault
 }
 
 // Where money entered to buy Jeton. App-store rails (google_play/apple_iap) and
@@ -168,6 +172,11 @@ model User {
   // Moved out of scadiumBalance on stake, back on unstake (after the lock).
   scadiumStaked             BigInt        @default(0)
   stakeLockedUntil          DateTime?
+  // SCAD Vault: $SCAD locked into term-staking vault positions — the running
+  // total of this user's VaultPosition principals (the ledger aggregate for the
+  // `scad_vault` currency). The position's CURRENT value is shares × pool index;
+  // this column is the principal mirror, kept by applyBalanceDelta like staked.
+  scadiumVault              BigInt        @default(0)
   // SCAD Engine auto-stake preference (bc.game parity). When true, earned $SCAD
   // is swept into the locked staked balance on the next staking touch (summary/
   // claim path) once it clears ENGINE.MIN_STAKE_SCAD_BASE — see StakingService
@@ -233,6 +242,7 @@ model User {
 
   sessions             Session[]
   vaultTransfers       VaultTransfer[]
+  vaultPositions       VaultPosition[]
   bets                 Bet[]
   chatMessages         ChatMessage[]
   crashBets            CrashBet[]
@@ -966,4 +976,84 @@ model GeoCheck {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// SCAD Vault asset. Faz 1 ships `scad` only; the rest are reserved for the
+/// on-chain custody phase (real SOL/USDC + liquid-staking/lending yield).
+enum VaultAsset {
+  scad
+  usds
+  sol
+  usdc
+}
+
+/// SCAD Vault term pool — one row per (asset, termDays). The Vault is the LOCKED,
+/// term-based tier (the Engine is the liquid one). Accounting is share/index
+/// based (ERC-4626-style): `indexRay` is the share price (1e18 fixed-point);
+/// yield raises the index so every position appreciates pro-rata in O(1).
+/// `weightBps` is the pool's RELATIVE weight when the Vault NGR yield slice is
+/// split across pools (longer term → larger weight → higher effective APR).
+/// Off-chain-first: this is the source of truth today; once the chain is live it
+/// becomes a cache of the on-chain pool (mirrors VaultTransfer / dividends).
+model VaultPool {
+  id            String     @id @default(cuid())
+  asset         VaultAsset
+  termDays      Int
+  totalAssets   BigInt     @default(0)
+  totalShares   BigInt     @default(0)
+  indexRay      BigInt     @default(1000000000000000000)
+  weightBps     Int
+  aprBps        Int        @default(0)
+  active        Boolean    @default(true)
+  lastAccrualAt DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  positions VaultPosition[]
+  events    VaultEvent[]
+
+  @@unique([asset, termDays])
+}
+
+/// A user's stake in one term pool. `shares` track the ERC-4626 claim; `principal`
+/// is the net asset deposited (earned = currentValue − principal). `maturesAt` is
+/// the term end — an early (pre-maturity) withdrawal is allowed but charged
+/// VAULT.EARLY_EXIT_PENALTY_BPS, which stays in the pool (raising the index).
+model VaultPosition {
+  id        String    @id @default(cuid())
+  userId    String    @db.Uuid
+  poolId    String
+  shares    BigInt    @default(0)
+  principal BigInt    @default(0)
+  maturesAt DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User      @relation(fields: [userId], references: [id])
+  pool VaultPool @relation(fields: [poolId], references: [id])
+
+  @@index([userId])
+  @@index([poolId])
+}
+
+/// Append-only Vault ledger: one row per deposit / withdraw / early_exit / accrue.
+/// `assetsDelta` / `sharesDelta` are signed; `penaltyAssets` records an early-exit
+/// cut; `indexRayAfter` snapshots the post-event share price. `txSignature` is the
+/// on-chain bridge handle (null off-chain; @unique so a confirmed tx credits once).
+model VaultEvent {
+  id            String   @id @default(cuid())
+  userId        String?  @db.Uuid
+  poolId        String
+  kind          String
+  assetsDelta   BigInt
+  sharesDelta   BigInt
+  penaltyAssets BigInt   @default(0)
+  indexRayAfter BigInt
+  txSignature   String?  @unique
+  createdAt     DateTime @default(now())
+
+  pool VaultPool @relation(fields: [poolId], references: [id])
+
+  @@index([userId])
+  @@index([poolId])
 }
