@@ -19,6 +19,7 @@ import {
   type JackpotPlayer,
 } from '@/hooks/use-jackpot';
 import { JackpotReel, type JackpotReveal } from './jackpot-reel';
+import { useGameSound } from '@/components/instant/use-game-sound';
 import { cn } from '@/lib/cn';
 
 const QUICK = ['0.05', '0.25', '1', '5'];
@@ -29,6 +30,7 @@ export function JackpotGame() {
   const { data: me } = useMe();
   const token = useAuthStore((s) => s.accessToken);
   const enter = useEnterJackpot();
+  const sound = useGameSound();
   const socket = useSocket('/jackpot');
   const [amount, setAmount] = useState('0.25');
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export function JackpotGame() {
       setError('Enter a valid amount');
       return;
     }
+    sound.bet();
     try {
       await enter.mutateAsync(String(lamports));
     } catch (e) {

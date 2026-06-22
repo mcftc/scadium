@@ -6,6 +6,7 @@ import { Ticket, Shuffle, Trophy } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ConnectButton } from '@/components/wallet/connect-button';
+import { useGameSound } from '@/components/instant/use-game-sound';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/cn';
 import {
@@ -88,6 +89,7 @@ function TabButton({
 function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
   const token = useAuthStore((s) => s.accessToken);
   const buyBulk = useBuyBulkTickets(snap);
+  const sound = useGameSound();
   const scadBalance = useScadBalance(snap);
   const faucet = useScadFaucet();
   const freeTickets = useFreeTickets();
@@ -187,6 +189,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     }
     let progressDone = 0;
     setBulkProgress({ done: 0, total: quantity });
+    sound.bet();
     try {
       await buyBulk.mutateAsync({
         tickets: picks,

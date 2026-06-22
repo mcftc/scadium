@@ -7,6 +7,7 @@ import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe } from '@/hooks/use-me';
+import { useGameSound } from '@/components/instant/use-game-sound';
 import { ApiError } from '@/lib/api-client';
 import { formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -19,6 +20,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   const { open: openWallet } = useWalletModal();
   const { data: me } = useMe();
   const { placeBet, cashOut, scheduleBet, cancelSchedule } = useCrashActions();
+  const sound = useGameSound();
   const [sol, setSol] = useState('0.1');
   const [autoCashout, setAutoCashout] = useState('2.0');
   const [cashoutPct, setCashoutPct] = useState(100);
@@ -78,6 +80,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
     try {
       const lamports = String(Math.floor(Number(sol) * 1e9));
       const target = autoCashout ? Number(autoCashout) : null;
+      sound.bet();
       await placeBet({ amountLamports: lamports, autoCashout: target });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
@@ -125,6 +128,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
     setBusy(true);
     try {
       await cashOut(cashoutPct);
+      sound.cashout();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Cashout failed');
     } finally {
