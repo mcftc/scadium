@@ -652,7 +652,44 @@ export const HILO = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
   HOUSE_EDGE: 0.02,
+  // Card ranks 0 (Ace) … 12 (King). Infinite-deck model (rank = card % 13).
+  RANKS: 13,
+  // Max guesses in a round before it auto-cashes-out (the committed card
+  // sequence has MAX_STEPS + 1 cards: a base card + one per guess).
+  MAX_STEPS: 25,
 } as const;
+
+export type HiloDirection = 'higher' | 'lower';
+
+/**
+ * Probability that the NEXT card satisfies the guess given the current rank,
+ * infinite-deck with ties counting as a win for the chosen direction:
+ *  - `higher` = higher-or-same → (RANKS - rank) / RANKS
+ *  - `lower`  = lower-or-same  → (rank + 1) / RANKS
+ * So the extremes (Ace / King) always have a guaranteed-win option.
+ */
+export function hiloWinProbability(
+  rank: number,
+  direction: HiloDirection,
+  ranks = HILO.RANKS,
+): number {
+  return direction === 'higher' ? (ranks - rank) / ranks : (rank + 1) / ranks;
+}
+
+/**
+ * Hi-Lo per-step multiplier: the inverse of the win probability with the house
+ * edge applied, floored to 2 dp (matching `minesMultiplier`/`towerMultiplier`).
+ * The round multiplier is the running product of these step multipliers.
+ */
+export function hiloStepMultiplier(
+  rank: number,
+  direction: HiloDirection,
+  edge = HILO.HOUSE_EDGE,
+): number {
+  const p = hiloWinProbability(rank, direction);
+  if (p <= 0) return 0;
+  return Math.floor(((1 - edge) / p) * 100) / 100;
+}
 
 export const TOWER = {
   MIN_BET_LAMPORTS: 1_000_000,
