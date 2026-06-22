@@ -64,7 +64,7 @@ export function MinesBoard3D({
   onReveal?: (index: number) => void;
 }) {
   return (
-    <div className="relative mx-auto aspect-video w-full">
+    <div className="relative mx-auto aspect-square w-full sm:aspect-video">
       <GameStage
         className="h-full w-full"
         interactive

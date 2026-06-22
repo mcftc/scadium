@@ -22,5 +22,10 @@ test.describe('hilo page', () => {
     await expect(page.getByRole('button', { name: 'Connect wallet', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Provably Fair' })).toBeVisible();
     await expect(page.getByTestId('hilo-card')).toBeVisible();
+
+    // mobile viewport (C4): controls stay reachable.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('button', { name: 'Connect wallet', exact: true })).toBeVisible();
+
   });
 });
