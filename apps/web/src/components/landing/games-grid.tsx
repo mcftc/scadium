@@ -128,9 +128,9 @@ export function GamesGrid() {
             const Icon = game.icon;
             return (
               <Link key={game.id} href={game.href}>
-                <Card className="group h-full p-8 transition-all hover:border-primary-400/50 hover:shadow-glow-sm hover:-translate-y-1 cursor-pointer">
+                <Card className="group hover-glow h-full p-8 transition-all hover:border-primary-400/50 hover:shadow-glow-sm hover:-translate-y-1 cursor-pointer">
                   <div
-                    className={`mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${game.accent}`}
+                    className={`mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${game.accent} transition-transform duration-200 group-hover:scale-110`}
                   >
                     <Icon className="h-7 w-7 text-white" />
                   </div>
