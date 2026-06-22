@@ -41,6 +41,7 @@ export function LimboGame() {
     }
     setError(null);
     const t = Math.min(LIMBO.MAX_TARGET, Math.max(LIMBO.MIN_TARGET, targetNum));
+    sound.bet();
     try {
       const res = await play.mutateAsync({
         amountLamports: solToLamportsClamped(sol, LIMBO.MIN_BET_LAMPORTS, LIMBO.MAX_BET_LAMPORTS),

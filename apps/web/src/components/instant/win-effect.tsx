@@ -29,7 +29,10 @@ export function WinEffect({
   useEffect(() => {
     if (!last || last.betId === lastBetId.current) return;
     lastBetId.current = last.betId;
-    if (!last.won) return;
+    if (!last.won) {
+      sound?.lose();
+      return;
+    }
     sound?.win(last.multiplier);
     if (reduce) return;
     void fireConfetti(last.multiplier);
