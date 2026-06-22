@@ -8,6 +8,7 @@ import {
   Coins,
   Dices,
   Gamepad2,
+  Gem,
   Gift,
   Layers,
   Link2,
@@ -74,6 +75,7 @@ const instantGames: GameItem[] = [
   { key: 'limbo', href: '/limbo', label: 'Limbo', icon: Rocket },
   { key: 'plinko', href: '/plinko', label: 'Plinko', icon: Circle },
   { key: 'wheel', href: '/wheel', label: 'Wheel', icon: Bomb },
+  { key: 'mines', href: '/mines', label: 'Mines', icon: Gem },
 ];
 
 const allGames = [...statefulGames, ...instantGames];
