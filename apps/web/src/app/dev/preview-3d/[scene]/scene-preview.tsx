@@ -6,6 +6,7 @@ import { CoinflipPreview } from '../scenes/coinflip-preview';
 import { CrashPreview } from '../scenes/crash-preview';
 import { JackpotPreview } from '../scenes/jackpot-preview';
 import { MinesPreview } from '../scenes/mines-preview';
+import { TowerPreview } from '../scenes/tower-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
@@ -29,6 +30,11 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
     title:
       'Mines — 5×5 neon tile grid: lids bob idle, lift to reveal a glowing gem (safe) or a fused bomb (bust); confetti on a clean clear',
     Component: MinesPreview,
+  },
+  tower: {
+    title:
+      'Tower — flat dead-on climb: pick a tile in the lit row, safe = gem + climb, trap = bust; multiplier rises each row, confetti at the top',
+    Component: TowerPreview,
   },
 };
 
