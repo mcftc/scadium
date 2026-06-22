@@ -63,6 +63,20 @@
   [role='button']:not([aria-disabled='true']):active {
     filter: brightness(0.94);
   }
+  /* Tactile press — a tiny scale-down on real buttons (not text links). */
+  button:not(:disabled):active,
+  [role='button']:not([aria-disabled='true']):active {
+    transform: scale(0.97);
+  }
+  /* Keyboard-focus ring for raw interactive elements (the Button primitive keeps
+     its own `ring-2` utility, which wins on specificity). */
+  button:not(:disabled):focus-visible,
+  a[href]:focus-visible,
+  [role='button']:not([aria-disabled='true']):focus-visible,
+  summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(238, 134, 255, 0.7);
+  }
 }
 
 @layer utilities {
@@ -115,7 +129,9 @@
   .hover-glow {
     transition: none !important;
   }
-  .hover-lift:hover {
+  .hover-lift:hover,
+  button:not(:disabled):active,
+  [role='button']:not([aria-disabled='true']):active {
     transform: none !important;
   }
 }
