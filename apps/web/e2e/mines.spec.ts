@@ -27,5 +27,10 @@ test.describe('mines page', () => {
     // The 2D fallback board renders its 25 tiles (3D canvas is suppressed under
     // reduced motion).
     await expect(page.getByTestId('mines-tile')).toHaveCount(25);
+
+    // mobile viewport (C4): controls stay reachable.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('button', { name: 'Connect wallet', exact: true })).toBeVisible();
+
   });
 });

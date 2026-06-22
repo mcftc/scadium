@@ -47,7 +47,7 @@ export function HiloBoard3D({
   onGuess?: (d: HiloDirection) => void;
 }) {
   return (
-    <div className="relative mx-auto aspect-video w-full">
+    <div className="relative mx-auto aspect-[4/3] w-full sm:aspect-video">
       <GameStage className="h-full w-full" interactive fallback={<Fallback card={card} />}>
         <HiloStage card={card} busted={busted} celebrate={celebrate} locked={locked} onGuess={onGuess} />
       </GameStage>

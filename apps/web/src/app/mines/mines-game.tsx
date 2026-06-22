@@ -143,9 +143,9 @@ export function MinesGame() {
             locked={locked}
             onReveal={onReveal}
           />
-          <SoundToggle sound={sound} className="absolute right-4 top-4 z-10" />
-          <div className="pointer-events-none absolute left-4 top-4 rounded-xl border border-border bg-background/70 px-4 py-2 backdrop-blur">
-            <div className="text-2xl font-bold text-cyan-300">{currentMult.toFixed(2)}×</div>
+          <SoundToggle sound={sound} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
+          <div className="pointer-events-none absolute left-2 top-2 rounded-xl border border-border bg-background/70 px-3 py-1.5 backdrop-blur sm:left-4 sm:top-4 sm:px-4 sm:py-2">
+            <div className="text-xl font-bold text-cyan-300 sm:text-2xl">{currentMult.toFixed(2)}×</div>
             <div className="text-xs text-foreground-muted">
               {settle
                 ? settle.won

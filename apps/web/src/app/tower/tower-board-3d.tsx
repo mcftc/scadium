@@ -74,7 +74,7 @@ export function TowerBoard3D({
   onPick?: (row: number, col: number) => void;
 }) {
   return (
-    <div className="relative mx-auto aspect-video w-full">
+    <div className="relative mx-auto aspect-[3/4] w-full sm:aspect-video">
       <GameStage
         className="h-full w-full"
         interactive

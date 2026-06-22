@@ -23,5 +23,10 @@ test.describe('tower page', () => {
     await expect(page.getByRole('heading', { name: 'Provably Fair' })).toBeVisible();
     // The 2D fallback renders ROWS×COLUMNS tiles (8×3 = 24).
     await expect(page.getByTestId('tower-tile')).toHaveCount(24);
+
+    // mobile viewport (C4): controls stay reachable.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('button', { name: 'Connect wallet', exact: true })).toBeVisible();
+
   });
 });
