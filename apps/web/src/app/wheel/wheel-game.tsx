@@ -47,6 +47,7 @@ export function WheelGame() {
       return;
     }
     setError(null);
+    sound.bet();
     try {
       const res = await play.mutateAsync({
         amountLamports: solToLamportsClamped(sol, WHEEL.MIN_BET_LAMPORTS, WHEEL.MAX_BET_LAMPORTS),

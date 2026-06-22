@@ -40,6 +40,7 @@ export function DiceGame() {
       return;
     }
     setError(null);
+    sound.bet();
     try {
       const res = await play.mutateAsync({
         amountLamports: solToLamportsClamped(sol, DICE.MIN_BET_LAMPORTS, DICE.MAX_BET_LAMPORTS),

@@ -67,6 +67,64 @@ export function useGameSound() {
     [ctx],
   );
 
+  /**
+   * One short note at `freq` starting `atMs` from now — the building block for
+   * the composed cues below (bet clink, cash-out jingle).
+   */
+  const note = useCallback(
+    (
+      freq: number,
+      atMs: number,
+      durationMs: number,
+      gain: number,
+      type: OscillatorType = 'triangle',
+    ) => {
+      const ac = ctx();
+      if (!ac) return;
+      const osc = ac.createOscillator();
+      const g = ac.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      const start = ac.currentTime + atMs / 1000;
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(gain, start + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + durationMs / 1000);
+      osc.connect(g).connect(ac.destination);
+      osc.start(start);
+      osc.stop(start + durationMs / 1000 + 0.02);
+    },
+    [ctx],
+  );
+
+  /** Coin/chip "clink" on placing a bet — two quick bright metallic blips. */
+  const bet = useCallback(() => {
+    note(1180, 0, 45, 0.05, 'square');
+    note(1560, 35, 55, 0.04, 'square');
+  }, [note]);
+
+  /** Coin "jingle" (şıkırtı) on cash-out — a quick ascending arpeggio of coins. */
+  const cashout = useCallback(() => {
+    [660, 880, 1100, 1320].forEach((f, i) => note(f, i * 55, 130, 0.055, 'triangle'));
+  }, [note]);
+
+  /** Descending low thud on a loss / bust. */
+  const lose = useCallback(() => {
+    const ac = ctx();
+    if (!ac) return;
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = 'sawtooth';
+    const now = ac.currentTime;
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(70, now + 0.32);
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(0.07, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+    osc.connect(g).connect(ac.destination);
+    osc.start(now);
+    osc.stop(now + 0.42);
+  }, [ctx]);
+
   /** Rising sweep on a win, scaled a touch by multiplier for "bigger = brighter". */
   const win = useCallback(
     (multiplier = 1) => {
@@ -89,7 +147,7 @@ export function useGameSound() {
     [ctx],
   );
 
-  return { enabled, toggle, tick, win };
+  return { enabled, toggle, tick, win, bet, cashout, lose };
 }
 
 export type GameSound = ReturnType<typeof useGameSound>;

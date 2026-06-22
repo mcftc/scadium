@@ -49,6 +49,7 @@ export function PlinkoGame() {
       return;
     }
     setError(null);
+    sound.bet();
     try {
       const res = await play.mutateAsync({
         amountLamports: solToLamportsClamped(sol, PLINKO.MIN_BET_LAMPORTS, PLINKO.MAX_BET_LAMPORTS),
