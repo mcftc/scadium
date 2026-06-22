@@ -28,6 +28,7 @@ import { LimboModule } from './games/limbo/limbo.module';
 import { WheelModule } from './games/wheel/wheel.module';
 import { PlinkoModule } from './games/plinko/plinko.module';
 import { MinesModule } from './games/mines/mines.module';
+import { TowerModule } from './games/tower/tower.module';
 import { ChatModule } from './chat/chat.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AirdropModule } from './airdrop/airdrop.module';
@@ -88,6 +89,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     WheelModule,
     PlinkoModule,
     MinesModule,
+    TowerModule,
     ChatModule,
     LeaderboardModule,
     AirdropModule,
