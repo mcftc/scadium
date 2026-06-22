@@ -10,6 +10,8 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { useGameSound } from '@/components/instant/use-game-sound';
+import { SoundToggle } from '@/components/instant/sound-toggle';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
 import { useTower, isTowerSettled, type TowerRoundView, type TowerSettleResult } from '@/hooks/use-tower';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
@@ -25,6 +27,7 @@ export function TowerGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
   const { start, pick, cashout } = useTower();
+  const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
   const [round, setRound] = useState<TowerRoundView | null>(null);
@@ -66,6 +69,7 @@ export function TowerGame() {
     if (!isAuthenticated) return openWallet();
     setError(null);
     setSettle(null);
+    sound.bet();
     try {
       const res = await start.mutateAsync({
         amountLamports: solToLamportsClamped(sol, TOWER.MIN_BET_LAMPORTS, TOWER.MAX_BET_LAMPORTS),
@@ -84,8 +88,11 @@ export function TowerGame() {
       if (isTowerSettled(res)) {
         setSettle(res);
         setRound(null);
+        if (res.won) sound.cashout();
+        else sound.lose();
       } else {
         setRound(res);
+        sound.tick(560 + res.state.currentRow * 55);
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Pick failed');
@@ -99,6 +106,7 @@ export function TowerGame() {
       const res = await cashout.mutateAsync({ roundId: round.roundId });
       setSettle(res);
       setRound(null);
+      sound.cashout();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Cash out failed');
     }
@@ -120,6 +128,7 @@ export function TowerGame() {
             locked={locked}
             onPick={onPick}
           />
+          <SoundToggle sound={sound} className="absolute right-4 top-4 z-10" />
           <div className="pointer-events-none absolute left-4 top-4 rounded-xl border border-border bg-background/70 px-4 py-2 backdrop-blur">
             <div className="text-2xl font-bold text-emerald-300">{currentMult.toFixed(2)}×</div>
             <div className="text-xs text-foreground-muted">

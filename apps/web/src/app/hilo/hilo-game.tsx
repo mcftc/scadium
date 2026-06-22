@@ -10,6 +10,8 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { useGameSound } from '@/components/instant/use-game-sound';
+import { SoundToggle } from '@/components/instant/sound-toggle';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
 import { useHilo, isHiloSettled, type HiloRoundView, type HiloSettleResult } from '@/hooks/use-hilo';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
@@ -21,6 +23,7 @@ export function HiloGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
   const { start, guess, cashout } = useHilo();
+  const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
   const [round, setRound] = useState<HiloRoundView | null>(null);
@@ -46,6 +49,7 @@ export function HiloGame() {
     if (!isAuthenticated) return openWallet();
     setError(null);
     setSettle(null);
+    sound.bet();
     try {
       const res = await start.mutateAsync({
         amountLamports: solToLamportsClamped(sol, HILO.MIN_BET_LAMPORTS, HILO.MAX_BET_LAMPORTS),
@@ -66,9 +70,12 @@ export function HiloGame() {
         setSettle(res);
         setRound(null);
         if (res.result.nextCard !== undefined) setCard(res.result.nextCard);
+        if (res.won) sound.cashout();
+        else sound.lose();
       } else {
         setRound(res);
         setCard(res.state.card);
+        sound.tick(560 + res.state.steps * 50);
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Guess failed');
@@ -82,6 +89,7 @@ export function HiloGame() {
       const res = await cashout.mutateAsync({ roundId: round.roundId });
       setSettle(res);
       setRound(null);
+      sound.cashout();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Cash out failed');
     }
@@ -102,6 +110,7 @@ export function HiloGame() {
             locked={locked}
             onGuess={onGuess}
           />
+          <SoundToggle sound={sound} className="absolute right-4 top-4 z-10" />
           <div className="pointer-events-none absolute left-4 top-4 rounded-xl border border-border bg-background/70 px-4 py-2 backdrop-blur">
             <div className="text-2xl font-bold text-cyan-300">
               {active && steps > 0 ? cumMult.toFixed(2) : active ? '1.00' : '0.00'}×

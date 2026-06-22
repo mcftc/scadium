@@ -10,6 +10,8 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { useGameSound } from '@/components/instant/use-game-sound';
+import { SoundToggle } from '@/components/instant/sound-toggle';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
 import { useMines, isMinesSettled, type MinesRoundView, type MinesSettleResult } from '@/hooks/use-mines';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
@@ -24,6 +26,7 @@ export function MinesGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
   const { start, pick, cashout } = useMines();
+  const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
   const [mineCount, setMineCount] = useState(3);
@@ -68,6 +71,7 @@ export function MinesGame() {
     if (!isAuthenticated) return openWallet();
     setError(null);
     setSettle(null);
+    sound.bet();
     try {
       const res = await start.mutateAsync({
         amountLamports: solToLamportsClamped(sol, MINES.MIN_BET_LAMPORTS, MINES.MAX_BET_LAMPORTS),
@@ -87,8 +91,12 @@ export function MinesGame() {
       if (isMinesSettled(res)) {
         setSettle(res);
         setRound(null);
+        if (res.won) sound.cashout();
+        else sound.lose();
       } else {
         setRound(res);
+        // rising tick per safe reveal — brighter as the multiplier climbs
+        sound.tick(560 + res.state.revealed.length * 45);
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Pick failed');
@@ -102,6 +110,7 @@ export function MinesGame() {
       const res = await cashout.mutateAsync({ roundId: round.roundId });
       setSettle(res);
       setRound(null);
+      sound.cashout();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Cash out failed');
     }
@@ -124,6 +133,7 @@ export function MinesGame() {
             locked={locked}
             onReveal={onReveal}
           />
+          <SoundToggle sound={sound} className="absolute right-4 top-4 z-10" />
           <div className="pointer-events-none absolute left-4 top-4 rounded-xl border border-border bg-background/70 px-4 py-2 backdrop-blur">
             <div className="text-2xl font-bold text-cyan-300">{currentMult.toFixed(2)}×</div>
             <div className="text-xs text-foreground-muted">
