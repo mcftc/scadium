@@ -11,6 +11,7 @@ import {
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
+import { RecentRounds } from '@/components/instant/recent-rounds';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { SoundToggle } from '@/components/instant/sound-toggle';
 import { useBustShake } from '@/hooks/use-bust-shake';
@@ -155,6 +156,7 @@ export function TowerGame() {
         </div>
         <WinEffect last={fairnessLast} />
         <InstantFairness game="tower" last={fairnessLast} />
+        <RecentRounds game="tower" />
       </div>
 
       <Card className="w-full lg:w-80 shrink-0 space-y-4 p-4">

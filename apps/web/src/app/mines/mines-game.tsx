@@ -11,6 +11,7 @@ import {
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { WinEffect } from '@/components/instant/win-effect';
+import { RecentRounds } from '@/components/instant/recent-rounds';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { SoundToggle } from '@/components/instant/sound-toggle';
 import { useBustShake } from '@/hooks/use-bust-shake';
@@ -160,6 +161,7 @@ export function MinesGame() {
         </div>
         <WinEffect last={fairnessLast} />
         <InstantFairness game="mines" last={fairnessLast} />
+        <RecentRounds game="mines" />
       </div>
 
       {/* SIDE: controls */}

@@ -2,7 +2,23 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-const GAME_TYPES = ['crash', 'coinflip', 'blackjack', 'lottery', 'jackpot'] as const;
+// Mirrors the Prisma GameType enum so the history filter covers every game,
+// including the instant + stateful catalogue (dice/limbo/wheel/plinko, mines/
+// tower/hilo). Kept in sync with `@prisma/client` GameType.
+const GAME_TYPES = [
+  'crash',
+  'coinflip',
+  'blackjack',
+  'lottery',
+  'jackpot',
+  'dice',
+  'limbo',
+  'wheel',
+  'plinko',
+  'mines',
+  'tower',
+  'hilo',
+] as const;
 export type GameTypeFilter = (typeof GAME_TYPES)[number];
 
 export class ListBetsQueryDto {

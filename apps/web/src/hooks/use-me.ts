@@ -61,7 +61,10 @@ export type BetGameType =
   | 'dice'
   | 'limbo'
   | 'plinko'
-  | 'wheel';
+  | 'wheel'
+  | 'mines'
+  | 'tower'
+  | 'hilo';
 
 export interface BetSeed {
   clientSeed: string;
