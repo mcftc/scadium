@@ -76,6 +76,7 @@ const instantGames: GameItem[] = [
   { key: 'plinko', href: '/plinko', label: 'Plinko', icon: Circle },
   { key: 'wheel', href: '/wheel', label: 'Wheel', icon: Bomb },
   { key: 'mines', href: '/mines', label: 'Mines', icon: Gem },
+  { key: 'tower', href: '/tower', label: 'Tower', icon: Layers },
 ];
 
 const allGames = [...statefulGames, ...instantGames];
