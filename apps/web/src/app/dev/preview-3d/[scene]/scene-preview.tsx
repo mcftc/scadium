@@ -7,6 +7,7 @@ import { CrashPreview } from '../scenes/crash-preview';
 import { JackpotPreview } from '../scenes/jackpot-preview';
 import { MinesPreview } from '../scenes/mines-preview';
 import { TowerPreview } from '../scenes/tower-preview';
+import { HiloPreview } from '../scenes/hilo-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
@@ -35,6 +36,11 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
     title:
       'Tower — flat dead-on climb: pick a tile in the lit row, safe = gem + climb, trap = bust; multiplier rises each row, confetti at the top',
     Component: TowerPreview,
+  },
+  hilo: {
+    title:
+      'Hi-Lo — flat dead-on card: guess higher-or-same / lower-or-same (click the chevrons), the card flips in-plane; step odds + streak multiplier in the HUD',
+    Component: HiloPreview,
   },
 };
 
