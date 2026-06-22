@@ -30,7 +30,7 @@ jobs:
       JWT_SECRET: ci-test-secret-not-for-production
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -113,7 +113,7 @@ jobs:
       JWT_SECRET: ci-test-secret-not-for-production
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -141,7 +141,7 @@ jobs:
   anchor-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -221,7 +221,7 @@ jobs:
       contents: read
       pull-requests: read # gitleaks-action lists the PR's commits
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # gitleaks scans commit history, not just the tree
       - name: Gitleaks (#39 — a committed secret blocks the merge)
@@ -232,7 +232,7 @@ jobs:
   container-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build API image
         run: docker build -f apps/api/Dockerfile -t scadium-api:ci .
@@ -260,7 +260,7 @@ jobs:
       contents: read
       issues: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: audit-status gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -272,7 +272,7 @@ jobs:
     # values regressions on every PR.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v4
       - name: helm lint
         run: helm lint infra/helm/scadium
@@ -303,7 +303,7 @@ jobs:
       # the Playwright route mock matches (**/api/v1/vault/config*).
       NEXT_PUBLIC_API_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
