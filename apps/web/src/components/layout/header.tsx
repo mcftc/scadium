@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  ArrowUpDown,
   Bomb,
   Circle,
   Coins,
@@ -77,6 +78,7 @@ const instantGames: GameItem[] = [
   { key: 'wheel', href: '/wheel', label: 'Wheel', icon: Bomb },
   { key: 'mines', href: '/mines', label: 'Mines', icon: Gem },
   { key: 'tower', href: '/tower', label: 'Tower', icon: Layers },
+  { key: 'hilo', href: '/hilo', label: 'Hi-Lo', icon: ArrowUpDown },
 ];
 
 const allGames = [...statefulGames, ...instantGames];
