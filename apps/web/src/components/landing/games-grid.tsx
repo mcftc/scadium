@@ -1,5 +1,16 @@
 import Link from 'next/link';
-import { TrendingUp, Coins, Spade, Dices, Rocket, Circle, Bomb } from 'lucide-react';
+import {
+  TrendingUp,
+  Coins,
+  Spade,
+  Dices,
+  Rocket,
+  Circle,
+  Bomb,
+  Gem,
+  Layers,
+  ArrowUpDown,
+} from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
 import { ChainCopy } from '@/components/chain/chain-copy';
@@ -67,6 +78,33 @@ const games = [
     href: '/wheel',
     accent: 'from-[#6F5FCC] to-[#4D3D99]',
     rtp: '96.5%',
+  },
+  {
+    id: 'mines',
+    title: 'Mines',
+    description: 'Reveal gems, dodge the mines. Cash out any time.',
+    icon: Gem,
+    href: '/mines',
+    accent: 'from-[#EE86FF] to-[#9C4FE0]',
+    rtp: '99%',
+  },
+  {
+    id: 'tower',
+    title: 'Tower',
+    description: 'Climb row by row. One trap each step.',
+    icon: Layers,
+    href: '/tower',
+    accent: 'from-[#C76BFF] to-[#6F5FCC]',
+    rtp: '99%',
+  },
+  {
+    id: 'hilo',
+    title: 'Hi-Lo',
+    description: 'Higher or lower? Compound your streak.',
+    icon: ArrowUpDown,
+    href: '/hilo',
+    accent: 'from-[#9C4FE0] to-[#4D3D99]',
+    rtp: '98%',
   },
 ];
 
