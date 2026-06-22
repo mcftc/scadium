@@ -7,6 +7,7 @@ import { plinkoDrop } from './plinko';
 import { mineField } from './mines';
 import { hiloSequence, cardRank } from './hilo';
 import { towerTraps } from './tower';
+import { hiloStepMultiplier, hiloWinProbability } from '@scadium/shared';
 
 const SS = 'server-seed-abc';
 const CS = 'client-seed-xyz';
@@ -116,6 +117,29 @@ describe('hiloSequence', () => {
       expect(cardRank(c)).toBeGreaterThanOrEqual(0);
       expect(cardRank(c)).toBeLessThan(13);
     }
+  });
+});
+
+describe('hiloStepMultiplier (Hi-Lo odds)', () => {
+  it('win probability: higher-or-same and lower-or-same are complementary at the edges', () => {
+    expect(hiloWinProbability(0, 'higher')).toBeCloseTo(13 / 13); // Ace: any card is ≥ Ace
+    expect(hiloWinProbability(0, 'lower')).toBeCloseTo(1 / 13);
+    expect(hiloWinProbability(12, 'higher')).toBeCloseTo(1 / 13); // King
+    expect(hiloWinProbability(12, 'lower')).toBeCloseTo(13 / 13);
+  });
+
+  it('golden step multipliers (edge 0.02, floored to 2 dp)', () => {
+    // Guaranteed-win option still carries the edge: 0.98 / 1 = 0.98.
+    expect(hiloStepMultiplier(0, 'higher')).toBe(0.98);
+    expect(hiloStepMultiplier(12, 'lower')).toBe(0.98);
+    // Longest-odds option: 0.98 / (1/13) = 12.74 mathematically, 12.73 after the
+    // 2-dp floor catches the float epsilon (conservative — never overpays; same
+    // flooring convention as minesMultiplier/towerMultiplier).
+    expect(hiloStepMultiplier(0, 'lower')).toBe(12.73);
+    expect(hiloStepMultiplier(12, 'higher')).toBe(12.73);
+    // Mid rank: 0.98 / (7/13) = 1.82 either way.
+    expect(hiloStepMultiplier(6, 'higher')).toBe(1.82);
+    expect(hiloStepMultiplier(6, 'lower')).toBe(1.82);
   });
 });
 
