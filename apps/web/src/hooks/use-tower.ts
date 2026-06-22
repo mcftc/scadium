@@ -60,6 +60,7 @@ export function useTower() {
       qc.setQueryData<MeResponse>(['me'], (prev) =>
         prev ? { ...prev, playBalanceLamports: res.balanceLamports } : prev,
       );
+      void qc.invalidateQueries({ queryKey: ['bets'] });
     }
     void qc.invalidateQueries({ queryKey: ['me'] });
   };
