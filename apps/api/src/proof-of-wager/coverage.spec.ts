@@ -24,9 +24,11 @@ const SETTLEMENT_FILE: Record<GameType, string> = {
   limbo: 'src/games/instant/instant-settle.ts',
   wheel: 'src/games/instant/instant-settle.ts',
   plinko: 'src/games/instant/instant-settle.ts',
-  mines: 'src/games/instant/instant-settle.ts',
-  hilo: 'src/games/instant/instant-settle.ts',
-  tower: 'src/games/instant/instant-settle.ts',
+  // The stateful instant games (round-based start/step/cashout) share one
+  // settlement path distinct from the single-shot games above.
+  mines: 'src/games/instant/stateful-round.ts',
+  hilo: 'src/games/instant/stateful-round.ts',
+  tower: 'src/games/instant/stateful-round.ts',
 };
 
 describe('SCAD Engine game coverage', () => {

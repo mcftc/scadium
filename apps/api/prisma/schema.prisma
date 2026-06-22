@@ -244,6 +244,7 @@ model User {
   vaultTransfers       VaultTransfer[]
   vaultPositions       VaultPosition[]
   bets                 Bet[]
+  instantRounds        InstantRound[]
   chatMessages         ChatMessage[]
   crashBets            CrashBet[]
   scheduledCrashBets   ScheduledCrashBet[]
@@ -455,6 +456,57 @@ model Bet {
 
   @@index([userId, createdAt])
   @@index([gameType, createdAt])
+}
+
+// ==================== STATEFUL INSTANT GAMES ====================
+
+// A multi-step, single-player provably-fair round (Mines / Hi-Lo / Tower) that
+// the player drives with start → pick/guess/step → cashout. Unlike the
+// single-shot instant games (dice/limbo/wheel/plinko via `settleInstantBet`),
+// the stake is debited at `start` and the payout + aggregates + Proof-of-Wager
+// accrual + the unified `Bet` row are written only at the terminal event
+// (cashout or bust). Mirrors the persisted-round shape of `BlackjackRound`.
+//
+// `stateJson` carries `{ secret, public }`: `secret` is the committed field
+// (mine cells / trap layout / card sequence) derived from the seed at start and
+// kept server-side until the round ends; `public` is the progress the player is
+// allowed to see (revealed cells, current row, …). The active server seed stays
+// secret per the normal fairness model — the round only stores `serverSeedHash`,
+// `clientSeed` and `nonce`; the player verifies after rotating their seed, and
+// the full committed field is published in the Bet `resultJson` once the round
+// is over.
+model InstantRound {
+  id             String             @id @default(uuid()) @db.Uuid
+  userId         String             @db.Uuid
+  user           User               @relation(fields: [userId], references: [id])
+  gameType       GameType
+  stakeLamports  BigInt
+  status         InstantRoundStatus @default(active)
+  // Provably-fair linkage (no serverSeed stored here; same as the Bet row).
+  serverSeedHash String
+  clientSeed     String
+  nonce          Int
+  // Current cash-out multiplier given the progress so far (0 until the first
+  // successful step for games whose pre-step multiplier is < 1).
+  multiplier     Float              @default(0)
+  stateJson      Json
+  // Set when the round settles (links the round to its terminal Bet row).
+  betId          String?            @db.Uuid
+  endedAt        DateTime?
+  createdAt      DateTime           @default(now())
+
+  @@index([userId, createdAt])
+  // Money-safety: at most ONE active round per (user, game) — the partial unique
+  // index is added in the migration (`WHERE status = 'active'`); Prisma can't
+  // express a partial unique constraint, so a concurrent double-start hits a
+  // P2002 the start helper turns into a clean rejection.
+  @@index([userId, gameType, status])
+}
+
+enum InstantRoundStatus {
+  active
+  won
+  lost
 }
 
 // ==================== CRASH ====================
