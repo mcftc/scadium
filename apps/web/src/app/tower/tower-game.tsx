@@ -10,8 +10,11 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { SoundToggle } from '@/components/instant/sound-toggle';
+import { useBustShake } from '@/hooks/use-bust-shake';
+import { cn } from '@/lib/cn';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
 import { useTower, isTowerSettled, type TowerRoundView, type TowerSettleResult } from '@/hooks/use-tower';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
@@ -115,11 +118,17 @@ export function TowerGame() {
   const fairnessLast: InstantSettleResult | null = settle
     ? { ...settle, amountLamports: settle.stakeLamports }
     : null;
+  const shaking = useBustShake(settle && !settle.won ? settle.betId : null);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
       <div className="flex-1 min-w-0 space-y-3">
-        <div className="relative overflow-hidden rounded-2xl border border-border bg-background">
+        <div
+          className={cn(
+            'relative overflow-hidden rounded-2xl border border-border bg-background',
+            shaking && 'animate-screen-shake',
+          )}
+        >
           <TowerBoard3D
             rows={ROWS}
             columns={COLS}
@@ -144,6 +153,7 @@ export function TowerGame() {
             </div>
           </div>
         </div>
+        <WinEffect last={fairnessLast} />
         <InstantFairness game="tower" last={fairnessLast} />
       </div>
 
