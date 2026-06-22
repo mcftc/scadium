@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Loader2, Plus } from 'lucide-react';
 import { useCreateCoinflip } from '@/hooks/use-coinflip';
+import { useGameSound } from '@/components/instant/use-game-sound';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
 
@@ -18,6 +19,7 @@ export function CreateFlipBar({ onCreated }: { onCreated?: () => void } = {}) {
   const [side, setSide] = useState<'heads' | 'tails'>('heads');
   const [sol, setSol] = useState('0.1');
   const mutation = useCreateCoinflip();
+  const sound = useGameSound();
 
   function amountLamports(): string {
     const n = Number(sol);
@@ -28,6 +30,7 @@ export function CreateFlipBar({ onCreated }: { onCreated?: () => void } = {}) {
   function submit() {
     const lamports = amountLamports();
     if (lamports === '0') return;
+    sound.bet();
     mutation.mutate({ side, amountLamports: lamports }, { onSuccess: () => onCreated?.() });
   }
 

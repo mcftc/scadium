@@ -15,6 +15,7 @@ import {
 import { useMe } from '@/hooks/use-me';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
+import { useGameSound } from '@/components/instant/use-game-sound';
 import { ApiError } from '@/lib/api-client';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -46,6 +47,7 @@ export function BlackjackTable() {
   const tableId = selectedTableId ?? tables.data?.[0]?.id ?? null;
   const { snapshot: state, refetch } = useBlackjackTable(tableId);
   const actions = useBlackjackActions(tableId);
+  const sound = useGameSound();
   const [error, setError] = useState<string | null>(null);
   const [rulebookOpen, setRulebookOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -235,6 +237,7 @@ export function BlackjackTable() {
                   secondsLeft={isTurn ? secondsLeft : null}
                   onTake={async () => {
                     if (!guard()) return;
+                    sound.bet();
                     await run(actions.seat.mutateAsync(i));
                   }}
                 />
