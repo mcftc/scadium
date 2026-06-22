@@ -16,7 +16,7 @@
     "@nestjs/core": "^10.4.15",
     "@scadium/api": "workspace:*",
     "@scadium/shared": "workspace:*",
-    "bullmq": "^5.79.0",
+    "bullmq": "^5.79.1",
     "ioredis": "^5.11.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
