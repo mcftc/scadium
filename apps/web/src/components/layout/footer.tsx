@@ -17,6 +17,9 @@ const footerSections = [
       { href: '/limbo', label: 'Limbo' },
       { href: '/plinko', label: 'Plinko' },
       { href: '/wheel', label: 'Wheel' },
+      { href: '/mines', label: 'Mines' },
+      { href: '/tower', label: 'Tower' },
+      { href: '/hilo', label: 'Hi-Lo' },
     ],
   },
   {
