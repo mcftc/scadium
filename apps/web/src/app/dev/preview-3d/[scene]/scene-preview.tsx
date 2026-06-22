@@ -5,6 +5,7 @@ import type { ComponentType } from 'react';
 import { CoinflipPreview } from '../scenes/coinflip-preview';
 import { CrashPreview } from '../scenes/crash-preview';
 import { JackpotPreview } from '../scenes/jackpot-preview';
+import { MinesPreview } from '../scenes/mines-preview';
 import { TestPreview } from '../scenes/test-preview';
 
 const SCENES: Record<string, { title: string; Component: ComponentType }> = {
@@ -23,6 +24,11 @@ const SCENES: Record<string, { title: string; Component: ComponentType }> = {
     title:
       'Jackpot — solpump/CSGO-style horizontal reel: segments ∝ pot share spin and decelerate onto the winner',
     Component: JackpotPreview,
+  },
+  mines: {
+    title:
+      'Mines — 5×5 neon tile grid: lids bob idle, lift to reveal a glowing gem (safe) or a fused bomb (bust); confetti on a clean clear',
+    Component: MinesPreview,
   },
 };
 
