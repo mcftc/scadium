@@ -14,7 +14,13 @@ import { cn } from '@/lib/cn';
  */
 export function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
-  const { messages, send, error, connected, canPost } = useChat();
+  const { messages, send, error, connected, canPost, gate } = useChat();
+  const gateText =
+    gate === 'connect'
+      ? 'Connect wallet to chat'
+      : gate === 'wager'
+        ? 'Wager 0.01 SOL to unlock chat'
+        : 'Type a message...';
   const { open: openWallet } = useWalletModal();
   const [draft, setDraft] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -103,14 +109,16 @@ export function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submit();
               }}
-              placeholder={canPost ? 'Type a message...' : 'Connect wallet to chat'}
+              disabled={!canPost}
+              placeholder={gateText}
               maxLength={500}
-              className="flex-1 min-w-0 rounded-lg border border-border bg-background px-3 h-9 text-xs focus:outline-none focus:border-primary-400 placeholder:text-foreground-muted/50"
+              className="flex-1 min-w-0 rounded-lg border border-border bg-background px-3 h-9 text-xs focus:outline-none focus:border-primary-400 placeholder:text-foreground-muted/50 disabled:opacity-60 disabled:cursor-not-allowed"
             />
             <button
               type="button"
               onClick={submit}
-              className="shrink-0 h-9 w-9 rounded-lg bg-emerald-500 hover:bg-emerald-400 flex items-center justify-center text-white transition-colors"
+              disabled={!canPost}
+              className="shrink-0 h-9 w-9 rounded-lg bg-emerald-500 hover:bg-emerald-400 flex items-center justify-center text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Send"
             >
               <Send className="h-3.5 w-3.5" />

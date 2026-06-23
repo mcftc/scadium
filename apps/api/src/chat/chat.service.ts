@@ -8,7 +8,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { CHAT } from '@scadium/shared';
+import { CHAT, LAMPORTS_PER_SOL } from '@scadium/shared';
 import { xpInfo } from '../users/users.service';
 
 /**
@@ -60,6 +60,15 @@ export class ChatService {
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('You are banned from chat');
+
+    // Anti-spam gate: you must have wagered ≥ CHAT.MIN_WAGERED_LAMPORTS (0.01 SOL
+    // equiv) to post in general chat. Moderators/admins are exempt.
+    const exempt = user.role === 'admin' || user.role === 'moderator';
+    if (!exempt && user.totalWagered < BigInt(CHAT.MIN_WAGERED_LAMPORTS)) {
+      throw new ForbiddenException(
+        `Wager at least ${CHAT.MIN_WAGERED_LAMPORTS / LAMPORTS_PER_SOL} SOL to unlock chat`,
+      );
+    }
 
     // Minimal profanity redaction — swap for a dedicated lib (bad-words) when
     // we need actual moderation rather than a token filter.
