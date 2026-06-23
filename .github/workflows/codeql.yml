@@ -23,7 +23,7 @@ jobs:
       actions: read # the analyze action reads its own workflow-run metadata
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: github/codeql-action/init@v3
         with:
