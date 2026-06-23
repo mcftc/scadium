@@ -541,7 +541,56 @@ export const VAULT = {
     { days: 180, weightBps: 3000 },
     { days: 365, weightBps: 4000 },
   ],
+  /**
+   * Loyalty APR boost tiers (V13). The more $SCAD a user holds, the higher their
+   * effective APR — a SCAD-denominated multiplier applied to a pool's base APR.
+   * `minScadBase` is the holdings threshold in $SCAD base units (9 dp);
+   * `multiplierBps` scales the base APR (10000 = 1.00×, 20000 = 2.00×). Tiers
+   * are sorted ascending by threshold; a user earns the HIGHEST tier whose
+   * threshold they meet. Single source of truth so the on-chain V11 liquid-
+   * staking layer can mirror the schedule bit-for-bit.
+   */
+  BOOST_TIERS: [
+    { minScadBase: 0n, multiplierBps: 10_000, label: 'Base' },
+    { minScadBase: 10_000_000_000_000n, multiplierBps: 11_000, label: 'Bronze' }, // 10k SCAD → 1.10×
+    { minScadBase: 50_000_000_000_000n, multiplierBps: 12_500, label: 'Silver' }, // 50k SCAD → 1.25×
+    { minScadBase: 250_000_000_000_000n, multiplierBps: 15_000, label: 'Gold' }, // 250k SCAD → 1.50×
+    { minScadBase: 1_000_000_000_000_000n, multiplierBps: 20_000, label: 'Diamond' }, // 1M SCAD → 2.00×
+  ],
 } as const;
+
+/** A single $SCAD-holdings loyalty boost tier (see `VAULT.BOOST_TIERS`). */
+export type ScadBoostTier = (typeof VAULT.BOOST_TIERS)[number];
+
+/**
+ * The loyalty boost tier a user with `holdingsBase` $SCAD (base units, 9 dp)
+ * qualifies for: the highest tier whose `minScadBase` threshold they meet.
+ * Negative/zero holdings fall back to the Base tier. The schedule is non-empty,
+ * so this always returns a tier.
+ */
+export function scadBoostTier(holdingsBase: bigint): ScadBoostTier {
+  let tier: ScadBoostTier = VAULT.BOOST_TIERS[0];
+  for (const t of VAULT.BOOST_TIERS) {
+    if (holdingsBase >= t.minScadBase) tier = t;
+  }
+  return tier;
+}
+
+/**
+ * The next tier up from the user's current holdings, or `null` if they are
+ * already at the top tier — drives the "hold N more $SCAD to reach X" UI.
+ */
+export function nextScadBoostTier(holdingsBase: bigint): ScadBoostTier | null {
+  return VAULT.BOOST_TIERS.find((t) => holdingsBase < t.minScadBase) ?? null;
+}
+
+/**
+ * A pool's base APR (bps) scaled by a holder's loyalty `multiplierBps`
+ * (10000 = 1.00×). Rounded to the nearest bps.
+ */
+export function boostedAprBps(baseAprBps: number, multiplierBps: number): number {
+  return Math.round((baseAprBps * multiplierBps) / 10_000);
+}
 
 /**
  * Total NGR redistribution slice (bps): Engine dividend + buy-and-burn + Vault

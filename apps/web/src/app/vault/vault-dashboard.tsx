@@ -2,23 +2,38 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { VAULT } from '@scadium/shared';
-import { Lock, TrendingUp, Wallet } from 'lucide-react';
+import { VAULT, boostedAprBps, nextScadBoostTier, scadBoostTier } from '@scadium/shared';
+import type { ScadBoostTier } from '@scadium/shared';
+import { Droplets, Info, Lock, Sparkles, TrendingUp, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
+import { useMe } from '@/hooks/use-me';
 
 const SCAD_DECIMALS = 9;
 const SCAD_UNIT = 10 ** SCAD_DECIMALS;
 const SECONDS_PER_YEAR = 365 * 24 * 60 * 60;
 const PENALTY_PCT = VAULT.EARLY_EXIT_PENALTY_BPS / 100;
+const YIELD_PCT = VAULT.YIELD_NGR_BPS / 100;
 const MIN_DEPOSIT_SCAD = VAULT.MIN_DEPOSIT_SCAD_BASE / SCAD_UNIT;
 
 /** base-unit string → whole-SCAD number (display precision only). */
 const toScad = (base: string) => Number(BigInt(base)) / SCAD_UNIT;
+/** base-unit bigint → whole-SCAD number (display precision only). */
+const toScadN = (base: bigint) => Number(base) / SCAD_UNIT;
 const fmtScad = (n: number, dp = 2) =>
   n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+/** Compact whole-SCAD display: 10000 → "10k", 1000000 → "1M". */
+const fmtScadCompact = (n: number) =>
+  n >= 1_000_000
+    ? `${(n / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}M`
+    : n >= 1_000
+      ? `${(n / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}k`
+      : n.toLocaleString();
+const fmtMult = (multiplierBps: number) =>
+  `${(multiplierBps / 10_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}×`;
+const fmtApr = (aprBps: number) => `${(aprBps / 100).toFixed(2)}%`;
 
 interface Pool {
   id: string;
@@ -61,6 +76,11 @@ function liveValue(pos: Position, elapsedSec: number): number {
 export function VaultDashboard() {
   const token = useAuthStore((s) => s.accessToken);
   const qc = useQueryClient();
+  const me = useMe();
+
+  // $SCAD wallet holdings drive the loyalty boost tier (base units, 9 dp).
+  const holdingsBase = me.data ? BigInt(me.data.scadiumBalance) : 0n;
+  const tier = scadBoostTier(holdingsBase);
 
   const pools = useQuery({
     queryKey: ['vault', 'pools'],
@@ -110,7 +130,16 @@ export function VaultDashboard() {
         </CardContent>
       </Card>
 
-      <PoolsPanel pools={pools.data} hasToken={!!token} onDeposited={invalidate} />
+      <BoostPanel tier={tier} holdingsBase={holdingsBase} hasToken={!!token} />
+
+      <PoolsPanel
+        pools={pools.data}
+        hasToken={!!token}
+        tier={tier}
+        onDeposited={invalidate}
+      />
+
+      <RiskPanel pools={pools.data} />
 
       {token ? (
         <PositionsPanel
@@ -126,23 +155,174 @@ export function VaultDashboard() {
           </CardContent>
         </Card>
       )}
-
-      <p className="text-center text-xs text-foreground-muted">
-        Yield is a {(VAULT.YIELD_NGR_BPS / 100).toFixed(0)}% slice of house profit, split across
-        pools by term · early withdrawal keeps a {PENALTY_PCT}% penalty in the pool for stakers who
-        hold to maturity.
-      </p>
     </div>
+  );
+}
+
+/**
+ * Loyalty boost ladder: the more $SCAD a user holds, the higher their effective
+ * APR (a SCAD-denominated multiplier on each pool's base rate). Always renders
+ * the full schedule (transparent to logged-out visitors); when authed it
+ * highlights the active tier and shows progress to the next one.
+ */
+function BoostPanel({
+  tier,
+  holdingsBase,
+  hasToken,
+}: {
+  tier: ScadBoostTier;
+  holdingsBase: bigint;
+  hasToken: boolean;
+}) {
+  const next = nextScadBoostTier(holdingsBase);
+  const holdings = toScadN(holdingsBase);
+
+  // Progress within the current band: from this tier's floor to the next floor.
+  const floor = toScadN(tier.minScadBase);
+  const ceil = next ? toScadN(next.minScadBase) : floor;
+  const progress = next && ceil > floor ? Math.min(1, (holdings - floor) / (ceil - floor)) : 1;
+  const toNext = next ? Math.max(0, toScadN(next.minScadBase) - holdings) : 0;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-2">
+        <Sparkles className="h-4 w-4 text-primary-400" />
+        <CardTitle>Loyalty APR boost</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {hasToken ? (
+          <div className="rounded-xl border border-primary-400/40 bg-surface-elevated px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-foreground-muted">
+                  Your tier
+                </div>
+                <div className="text-lg font-bold">
+                  {tier.label} · <span className="text-primary-400">{fmtMult(tier.multiplierBps)}</span>{' '}
+                  APR
+                </div>
+              </div>
+              <div className="text-right text-xs text-foreground-muted">
+                holding
+                <div className="font-mono text-sm text-foreground">{fmtScad(holdings, 0)} SCAD</div>
+              </div>
+            </div>
+            {next ? (
+              <div className="mt-3">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
+                  <div
+                    className="h-full rounded-full bg-primary-400 transition-all"
+                    style={{ width: `${Math.round(progress * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-1.5 text-xs text-foreground-muted">
+                  Hold {fmtScadCompact(toNext)} more $SCAD to reach{' '}
+                  <span className="text-foreground">{next.label}</span> (
+                  {fmtMult(next.multiplierBps)})
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-success">Top tier reached — max boost active.</div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-foreground-muted">
+            Connect your wallet to see your tier. The more $SCAD you hold, the higher your APR.
+          </p>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {VAULT.BOOST_TIERS.map((t) => {
+            const active = hasToken && t.label === tier.label;
+            return (
+              <div
+                key={t.label}
+                className={`rounded-lg border px-3 py-2 text-center ${
+                  active ? 'border-primary-400 bg-surface-elevated' : 'border-border bg-surface'
+                }`}
+              >
+                <div className="text-sm font-semibold">{fmtMult(t.multiplierBps)}</div>
+                <div className="text-[10px] text-foreground-muted">{t.label}</div>
+                <div className="mt-0.5 text-[10px] text-foreground-muted">
+                  {t.minScadBase === 0n ? '0+' : `${fmtScadCompact(toScadN(t.minScadBase))}+`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Risk & liquidity transparency: where the yield comes from, how much is locked,
+ * the variable-APR caveat, and the early-exit penalty — so a depositor can judge
+ * the trade-off before locking (V13 acceptance: "risk/likidite şeffaf").
+ */
+function RiskPanel({ pools }: { pools: Pool[] | undefined }) {
+  const tvl = (pools ?? []).reduce((sum, p) => sum + toScad(p.totalAssets), 0);
+  const rows: { label: string; value: string; hint: string }[] = [
+    {
+      label: 'Yield source',
+      value: `${YIELD_PCT.toFixed(0)}% of house profit`,
+      hint: 'Funded by net gaming revenue (NGR), not new emissions — APR is variable and tracks house performance.',
+    },
+    {
+      label: 'Total value locked',
+      value: `${fmtScad(tvl, 0)} SCAD`,
+      hint: 'Across all term pools. Yield is split by term weight, so longer locks earn a larger share.',
+    },
+    {
+      label: 'Early-exit penalty',
+      value: `${PENALTY_PCT}%`,
+      hint: 'Withdrawing before maturity keeps this share in the pool, lifting the index for stakers who hold.',
+    },
+    {
+      label: 'Loyalty boost',
+      value: 'up to 2.00×',
+      hint: 'A SCAD-holdings multiplier on the base pool APR. Base rates are paid today; the on-chain boost lands with liquid staking (V11).',
+    },
+  ];
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-2">
+        <Droplets className="h-4 w-4 text-primary-400" />
+        <CardTitle>Risk &amp; liquidity</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">{r.label}</div>
+              <div className="mt-0.5 text-xs text-foreground-muted">{r.hint}</div>
+            </div>
+            <div className="shrink-0 font-mono text-sm font-semibold text-foreground">
+              {r.value}
+            </div>
+          </div>
+        ))}
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Play-money demo. APR figures are estimates, not guarantees — yield depends on house
+            revenue and can fall to zero. Not financial advice.
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 function PoolsPanel({
   pools,
   hasToken,
+  tier,
   onDeposited,
 }: {
   pools: Pool[] | undefined;
   hasToken: boolean;
+  tier: ScadBoostTier;
   onDeposited: () => void;
 }) {
   const token = useAuthStore((s) => s.accessToken);
@@ -175,6 +355,8 @@ function PoolsPanel({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {(pools ?? []).map((p) => {
             const active = selected === p.id;
+            const boosted = boostedAprBps(p.aprBps, tier.multiplierBps);
+            const hasBoost = boosted > p.aprBps;
             return (
               <button
                 key={p.id}
@@ -185,9 +367,18 @@ function PoolsPanel({
                 }`}
               >
                 <div className="text-2xl font-bold">{p.termDays}d</div>
-                <div className="mt-1 text-xs text-foreground-muted">
-                  ~{(p.aprBps / 100).toFixed(2)}% APR
-                </div>
+                {hasBoost ? (
+                  <>
+                    <div className="mt-1 text-xs font-semibold text-primary-400">
+                      ~{fmtApr(boosted)} APR
+                    </div>
+                    <div className="text-[10px] text-foreground-muted line-through">
+                      {fmtApr(p.aprBps)} base
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 text-xs text-foreground-muted">~{fmtApr(p.aprBps)} APR</div>
+                )}
               </button>
             );
           })}
