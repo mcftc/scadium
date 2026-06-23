@@ -32,9 +32,22 @@ async function seqOf(roundId: string): Promise<number[]> {
   return (round.stateJson as unknown as RoundState).secret.sequence as number[];
 }
 const floor2 = (x: number) => Math.floor(x * 100) / 100;
-/** The winning direction for the step from card[index] → card[index+1]. */
-function winningDir(seq: number[], i: number): HiloDirection {
-  return cardRank(seq[i + 1]!) >= cardRank(seq[i]!) ? 'higher' : 'lower';
+/**
+ * A winning direction that pays the most for the step from card[i] → card[i+1].
+ * Non-ties have a single winning direction; a tie wins both ways (the game's
+ * rule is higher-or-same / lower-or-same), so pick the higher-multiplier side —
+ * this lets the happy path bank a genuine >1× win quickly regardless of the
+ * randomly drawn sequence, instead of assuming three guesses always clear the
+ * 2% house edge (they don't: e.g. a guaranteed 'higher' on an Ace pays 0.98×).
+ */
+function bestWinningDir(seq: number[], i: number): HiloDirection {
+  const cur = cardRank(seq[i]!);
+  const nxt = cardRank(seq[i + 1]!);
+  if (nxt > cur) return 'higher';
+  if (nxt < cur) return 'lower';
+  return hiloStepMultiplier(cur, 'higher') >= hiloStepMultiplier(cur, 'lower')
+    ? 'higher'
+    : 'lower';
 }
 
 describe('Hi-Lo backend (integration, real Postgres)', () => {
@@ -46,24 +59,38 @@ describe('Hi-Lo backend (integration, real Postgres)', () => {
     await prisma.$disconnect();
   });
 
-  it('happy path: three correct guesses compound the multiplier, cashout banks it + records wager volume', async () => {
+  it('happy path: correct guesses compound the multiplier, cashout banks it + records wager volume', async () => {
     const user = await makeUser(BAL);
     const start = await hilo.start({ userId: user.id, amountLamports: STAKE });
     expect(start.status).toBe('active');
     expect(start.state).not.toHaveProperty('sequence'); // secret withheld
 
     const seq = await seqOf(start.roundId);
+    // Guess correctly until the banked multiplier clears the 2% house edge
+    // (> 1×, a genuine win), then cash out. Looping makes the outcome
+    // independent of the randomly drawn sequence — a fixed 3 guesses can land
+    // ≤ 1× (status 'lost') on some seeds, which was the historical flake. Cap
+    // below MAX_STEPS so cashout — not the auto-cash-out — ends the round.
     let expCum = 1;
-    for (let i = 0; i < 3; i += 1) {
-      const dir = winningDir(seq, i);
-      expCum = floor2(expCum * hiloStepMultiplier(cardRank(seq[i]!), dir));
+    let steps = 0;
+    while (steps < HILO.MAX_STEPS - 1) {
+      const dir = bestWinningDir(seq, steps);
+      expCum = floor2(expCum * hiloStepMultiplier(cardRank(seq[steps]!), dir));
       await hilo.guess({ userId: user.id, roundId: start.roundId, direction: dir });
+      steps += 1;
+      if (expCum > 1) break;
     }
+    expect(steps).toBeGreaterThanOrEqual(1);
 
     const settle = await hilo.cashout({ userId: user.id, roundId: start.roundId });
     if (!isSettled(settle)) throw new Error('expected settle');
     const expPayout = (STAKE * BigInt(Math.round(expCum * 100))) / 100n;
-    expect(settle.status).toBe('won');
+    // Status is derived from the game's own rule (won iff payout beats the
+    // stake), recomputed with the identical floor2/round math, so it can never
+    // diverge from the engine for any seed. In practice the loop above clears
+    // 1×, so this asserts the 'won' branch.
+    const expWon = expPayout > STAKE;
+    expect(settle.status).toBe(expWon ? 'won' : 'lost');
     expect(settle.multiplier).toBeCloseTo(expCum);
     expect(settle.payoutLamports).toBe(expPayout.toString());
 
