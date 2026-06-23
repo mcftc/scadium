@@ -265,7 +265,7 @@ export function VerifierForm() {
       )}
       {game === 'limbo' && (
         <p className="-mt-2 text-[11px] text-foreground-muted">
-          The result is computed from the seeds alone (house edge{' '}
+          The result is computed from the seeds alone (platform edge{' '}
           {(LIMBO.HOUSE_EDGE * 100).toFixed(0)}% baked in). Enter your target to see whether the
           round would have won.
         </p>

@@ -113,7 +113,7 @@ export function AirdropDashboard() {
                 </div>
               ) : (
                 <div className="text-xs text-foreground-muted text-center pt-2 border-t border-border">
-                  Wager in any game and send a chat message to qualify
+                  Play any game and send a chat message to qualify
                 </div>
               )}
             </div>

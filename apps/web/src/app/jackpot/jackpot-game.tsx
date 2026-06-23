@@ -186,7 +186,7 @@ export function JackpotGame() {
           )}
           <p className="text-[11px] text-foreground-muted text-center">
             Win chance = your stake ÷ total pot. Provably fair ·{' '}
-            {snap ? Math.round(snap.config.houseEdge * 100) : 5}% house edge · needs{' '}
+            {snap ? Math.round(snap.config.houseEdge * 100) : 5}% platform edge · needs{' '}
             {snap?.config.minPlayers ?? 2}+ players or all entries refund.
           </p>
         </Card>

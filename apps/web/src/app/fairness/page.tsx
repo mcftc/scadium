@@ -66,7 +66,7 @@ e = 2^52
 return floor((100 * e - h) / (e - h)) / 100`}
                 </pre>
                 <p className="mt-4 text-sm text-foreground-muted">
-                  RTP 95%, house edge 5%. Identical formula used by the backend round engine and
+                  RTP 95%, platform edge 5%. Identical formula used by the backend round engine and
                   the in-browser verifier — both import from{' '}
                   <code>@scadium/fair</code>.
                 </p>
