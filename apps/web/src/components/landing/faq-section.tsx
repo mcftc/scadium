@@ -7,7 +7,7 @@ const faqs: { q: string; a: ReactNode }[] = [
     q: 'Do I need to deposit SOL?',
     a: (
       <ChainCopy
-        onchain="No. Scadium is fully non-custodial. Connect your Phantom, Backpack, Solflare, or Ledger wallet, and every bet is a transaction you sign — your SOL never leaves your control except when you explicitly approve a wager."
+        onchain="No. Scadium is fully non-custodial. Connect your Phantom, Backpack, Solflare, or Ledger wallet, and every bet is a transaction you sign — your SOL never leaves your control except when you explicitly approve a transaction."
         playMoney="This is a play-money beta: connect your wallet to sign in (SIWS) — no real SOL is wagered yet. Every account starts with a play-money balance you can use across all games."
       />
     ),

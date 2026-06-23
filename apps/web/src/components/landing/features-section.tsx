@@ -30,7 +30,7 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
     icon: Gift,
     title: 'Hourly airdrops',
     description:
-      'Wager and chat to qualify for hourly SOL airdrops, plus a daily case drop with weighted rewards.',
+      'Play and chat to qualify for hourly SOL airdrops, plus a daily case drop with weighted rewards.',
   },
   {
     icon: Users,

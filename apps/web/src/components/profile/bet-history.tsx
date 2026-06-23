@@ -103,7 +103,7 @@ export function BetHistory() {
                 <thead>
                   <tr className="border-b border-border text-xs uppercase tracking-wider text-foreground-muted">
                     <th className="text-left font-medium px-6 py-3">Game</th>
-                    <th className="text-right font-medium px-6 py-3">Wager</th>
+                    <th className="text-right font-medium px-6 py-3">Stake</th>
                     <th className="text-right font-medium px-6 py-3">Multiplier</th>
                     <th className="text-right font-medium px-6 py-3">Payout</th>
                     <th className="text-right font-medium px-6 py-3">Date</th>

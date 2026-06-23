@@ -95,7 +95,7 @@ export function AirdropWidget() {
         open={tipOpen}
         onClose={() => setTipOpen(false)}
         title="Tipping — Airdrop"
-        description="Wager and chat this hour to qualify for the drop."
+        description="Play and chat this hour to qualify for the drop."
       >
         <div className="space-y-3">
           <div className="flex items-center justify-between rounded-xl border border-border bg-surface-elevated px-3 py-2">
