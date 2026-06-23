@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
+import { MiningSection } from './mining-section';
 
 // $SCAD has 9 decimals, USDS has 6 — all amounts arrive as base-unit strings.
 const SCAD_DECIMALS = 9;
@@ -103,6 +104,8 @@ export function EngineDashboard() {
     <div className="max-w-4xl mx-auto space-y-6">
       <FlowDiagram />
 
+      <MiningSection />
+
       <div className="grid sm:grid-cols-3 gap-4">
         <Stat
           label="Total staked"
@@ -146,8 +149,8 @@ export function EngineDashboard() {
 function FlowDiagram() {
   const steps = [
     { label: 'Play any game', icon: Zap },
-    { label: 'Earn $SCAD', icon: Coins },
-    { label: 'Stake (locked)', icon: Lock },
+    { label: 'Mine $SCAD', icon: Coins },
+    { label: 'Stake to keep mining', icon: Lock },
     { label: 'Earn USDS', icon: Wallet },
   ];
   return (
