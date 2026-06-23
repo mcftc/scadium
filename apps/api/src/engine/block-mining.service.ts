@@ -271,16 +271,32 @@ export class BlockMiningService {
     const { start, end } = this.hourWindow(periodForHour(now));
     const { playRates, totalPlayRate } = await this.playRatesForWindow(start, end);
     const myPlayRate = playRates.get(userId) ?? 0n;
+
+    // Split the user's play-rate into ACTIVE (this hour's wager) and PASSIVE
+    // (staked $SCAD), so the dashboard can show "you keep mining while staked".
+    const [wagerAgg, user] = await Promise.all([
+      this.prisma.bet.aggregate({
+        where: { userId, createdAt: { gte: start, lt: end } },
+        _sum: { amountLamports: true },
+      }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { scadiumStaked: true } }),
+    ]);
+    const active = activePlayRate(wagerAgg._sum.amountLamports ?? 0n);
+    const passive = stakePlayRate(user?.scadiumStaked ?? 0n);
+
     const snap = await this.emissionSnapshot();
     const blockReward = blockRewardFor(snap.emitted);
     const splitPool = blockReward - (blockReward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
     const projectedShare = blockShare(myPlayRate, totalPlayRate, splitPool);
     return {
       playRate: myPlayRate.toString(),
+      activePlayRate: active.toString(),
+      stakePlayRate: passive.toString(),
       totalPlayRate: totalPlayRate.toString(),
       shareBps: totalPlayRate > 0n ? Number((myPlayRate * 10_000n) / totalPlayRate) : 0,
       projectedShareScad: projectedShare.toString(),
       mining: myPlayRate > 0n,
+      miningPassively: active === 0n && passive > 0n,
     };
   }
 
