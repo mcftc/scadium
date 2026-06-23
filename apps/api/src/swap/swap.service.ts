@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Connection,
@@ -9,11 +9,14 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
 import { USD_PER_SOL } from '@scadium/shared';
 import { SWAP, buybackBudgetLamports, resolveNetworkConfig } from '@scadium/shared';
 import { expectedSwapOut, minOutWithSlippage } from './swap-math';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  COSIGNER_PROVIDER,
+  type CosignerKeyProvider,
+} from '../solana/cosigner-key.provider';
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
@@ -67,6 +70,7 @@ export class SwapService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    @Inject(COSIGNER_PROVIDER) private readonly cosignerProvider: CosignerKeyProvider,
   ) {}
 
   onModuleInit() {
@@ -80,22 +84,16 @@ export class SwapService implements OnModuleInit {
     this.connection = new Connection(rpc, 'confirmed');
     const programId = this.config.get<string>('SWAP_PROGRAM_ID');
     const scadMint = this.config.get<string>('SCAD_MINT');
-    const cosignerPath = this.config.get<string>('COSIGNER_KEYPAIR_PATH');
     if (!programId || !scadMint) {
       this.logger.warn('SWAP_PROGRAM_ID / SCAD_MINT not set — swap module disabled');
       return;
     }
     this.programId = new PublicKey(programId);
     this.scadMint = new PublicKey(scadMint);
-    if (cosignerPath) {
-      try {
-        this.cosigner = Keypair.fromSecretKey(
-          Uint8Array.from(JSON.parse(readFileSync(cosignerPath, 'utf8')) as number[]),
-        );
-      } catch {
-        /* burn job disabled without the key */
-      }
-    }
+    // Cosigner comes from the shared custody seam (#36), never a direct disk
+    // read — so production fails closed (no plaintext key) and the burn job
+    // is simply disabled when no local signer is available.
+    this.cosigner = this.cosignerProvider.signer;
     this.enabled = true;
     this.logger.log(`Swap module enabled — pool program ${programId}`);
     // Buy-and-burn runs in @scadium/worker now (BullMQ, every 10 min, under a

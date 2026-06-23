@@ -32,6 +32,9 @@ import { COSIGNER_PROVIDER, createCosignerProvider } from './cosigner-key.provid
     ChainService,
     VaultBridgeService,
   ],
-  exports: [ChainService, VaultBridgeService],
+  // COSIGNER_PROVIDER is exported (and the module is @Global) so other modules
+  // that sign privileged txs (e.g. SwapService buy-and-burn) consume the same
+  // fail-closed custody seam instead of readFileSync-ing a plaintext key (#36).
+  exports: [ChainService, VaultBridgeService, COSIGNER_PROVIDER],
 })
 export class SolanaModule {}
