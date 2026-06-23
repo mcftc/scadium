@@ -87,10 +87,10 @@ export function NavDropdown({
         aria-expanded={open}
         aria-haspopup="menu"
         className={cn(
-          'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition-colors',
+          'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold whitespace-nowrap transition-all',
           active || open
-            ? 'bg-surface-elevated text-foreground'
-            : 'text-foreground-muted hover:bg-surface hover:text-foreground',
+            ? 'bg-surface-elevated text-primary-400 ring-1 ring-primary-400/30'
+            : 'text-foreground hover:bg-surface-elevated hover:text-primary-300',
         )}
       >
         {icon}
