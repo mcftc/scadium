@@ -1,28 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { SCAD } from '@scadium/shared';
 import { prisma, makeUser, makeSeed, makeCrashEngineWithPow } from './engine-harness';
-import { ReconciliationService } from '../src/reconciliation/reconciliation.service';
 
 /**
- * #182 — crash crash-recovery (`recoverStrandedRounds`) must mint the
- * wager-mining $SCAD the live-settle path credits. Before the fix recovery
- * credited the play balance + wrote the Bet row but SKIPPED
- * `proofOfWager.accrue()`, so a restart between bet and bust silently dropped
- * the $SCAD the player earned. The Engine coverage contract requires every
- * settlement to accrue.
- *
- * Proves: a recovered stranded crash bet (a) credits $SCAD = stake × rate, (b)
- * writes a `scad` BalanceLedger row, and (c) leaves `scadLedgerDrift()` at ZERO.
+ * #182 — crash crash-recovery (`recoverStrandedRounds`) must run the same
+ * `proofOfWager.accrue()` the live-settle path runs, so a restart between bet
+ * and bust doesn't drop the player out of the engine. Under Engine v2 (E3)
+ * accrue no longer MINTS $SCAD per bet — it records wager VOLUME into the
+ * leaderboard buckets (the play-rate source the hourly block worker splits by) —
+ * so this proves a recovered stranded crash bet (a) settles the round, (b)
+ * writes the Bet row, and (c) records the wager into the leaderboard.
  */
-const reconciliation = new ReconciliationService(
-  prisma as never,
-  { enabled: false, lotteryEnabled: false } as never,
-);
-
 const recover = (engine: unknown) =>
   (engine as Record<string, () => Promise<unknown>>).recoverStrandedRounds!();
 
-describe('#182 — crash recovery mints wager-mining $SCAD', () => {
+describe('#182 — crash recovery records wager volume (Engine v2)', () => {
   beforeAll(async () => {
     await prisma.$connect();
   });
@@ -30,7 +21,7 @@ describe('#182 — crash recovery mints wager-mining $SCAD', () => {
     await prisma.$disconnect();
   });
 
-  it('a recovered stranded crash bet accrues $SCAD with a scad ledger row, zero drift', async () => {
+  it('a recovered stranded crash bet settles and records its wager into the leaderboard', async () => {
     const seed = await makeSeed();
     const round = await prisma.crashRound.create({
       data: { seedId: seed.id, nonce: 0, status: 'running' },
@@ -56,32 +47,20 @@ describe('#182 — crash recovery mints wager-mining $SCAD', () => {
       'busted',
     );
 
-    // $SCAD was minted (the #182 fix) — tier 0, no campaign → stake × base rate.
-    const expectedScad = stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT);
-    const after = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
-    expect(after.scadiumBalance).toBe(expectedScad);
-
-    // A `scad` BalanceLedger row was written by accrue → applyBalanceDelta.
-    const ledger = await prisma.balanceLedger.findFirst({
-      where: { userId: u.id, currency: 'scad', reason: 'wager_reward' },
-      orderBy: { createdAt: 'desc' },
-    });
-    expect(ledger).not.toBeNull();
-    expect(ledger!.delta).toBe(expectedScad);
-    expect(ledger!.balanceAfter).toBe(after.scadiumBalance);
-    // refId references the recovered Bet row.
+    // The Bet row was written (history + the play-rate source the block reads).
     const bet = await prisma.bet.findFirstOrThrow({
       where: { userId: u.id, gameType: 'crash' },
     });
-    expect(ledger!.refId).toBe(bet.id);
+    expect(bet.amountLamports).toBe(stake);
 
-    // scad ledger reconciles cleanly.
-    await prisma.reconciliationDrift.deleteMany({ where: { userId: u.id } });
-    await reconciliation.scadLedgerDrift();
-    expect(
-      await prisma.reconciliationDrift.count({
-        where: { userId: u.id, field: 'scadiumBalance' },
-      }),
-    ).toBe(0);
+    // accrue() recorded the wager into the leaderboard buckets (no per-bet $SCAD
+    // mint anymore — the hourly block worker mints from this volume).
+    const buckets = await prisma.wagerLeaderboard.findMany({ where: { userId: u.id } });
+    expect(buckets.length).toBeGreaterThanOrEqual(1);
+    for (const b of buckets) expect(b.wageredLamports).toBe(stake);
+
+    // No per-bet $SCAD was credited.
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(after.scadiumBalance).toBe(0n);
   });
 });

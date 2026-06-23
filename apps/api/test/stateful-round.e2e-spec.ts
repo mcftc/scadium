@@ -137,7 +137,7 @@ describe('stateful-round helper (integration, real Postgres)', () => {
     expect(after.playBalanceLamports).toBe(9_000n);
   });
 
-  it('happy path: safe picks compound the multiplier, cashout credits the payout + accrues $SCAD', async () => {
+  it('happy path: safe picks compound the multiplier, cashout credits the payout + records wager volume', async () => {
     const user = await makeUser(10_000n);
     const start = await startStatefulRound(
       deps,
@@ -179,13 +179,13 @@ describe('stateful-round helper (integration, real Postgres)', () => {
     expect(after.gamesPlayed).toBe(1);
     expect(after.totalWagered).toBe(1_000n);
 
-    // A unified Bet row + a $SCAD wager-reward ledger credit were written.
+    // A unified Bet row was written; accrue recorded the wager VOLUME into the
+    // leaderboard (Engine v2 — no per-bet $SCAD mint; the hourly block worker
+    // mints from this volume).
     const bet = await prisma.bet.findFirst({ where: { userId: user.id, gameType: 'mines' } });
     expect(bet?.status).toBe('won');
-    const scadCredit = await prisma.balanceLedger.findFirst({
-      where: { userId: user.id, currency: 'scad', reason: 'wager_reward' },
-    });
-    expect(scadCredit).not.toBeNull();
+    const lb = await prisma.wagerLeaderboard.findFirst({ where: { userId: user.id } });
+    expect(lb?.wageredLamports).toBe(1_000n);
   });
 
   it('bust path: hitting a mine settles a loss with no payout', async () => {

@@ -4,12 +4,15 @@ import { GameType } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 
 /**
- * SCAD Engine coverage contract (T9): the wager-to-earn + dividend engine only
- * covers a game if that game (a) writes Bet rows and (b) credits $SCAD via
- * `ProofOfWagerService.accrue()` at settlement. This source-scan guard maps
- * EVERY `GameType` to the settlement module that must call `accrue` and fails if
- * any enum value is unmapped or its module dropped the call — so a newly added
- * game can't silently ship outside the engine.
+ * SCAD Engine coverage contract (T9): the Proof-of-Play engine only covers a
+ * game if that game (a) writes Bet rows and (b) calls
+ * `ProofOfWagerService.accrue()` at settlement. Under Engine v2 (E3) accrue no
+ * longer mints per bet — it records the wager VOLUME into the leaderboard
+ * buckets that feed the hourly block worker's play-rate split — so this call is
+ * how a game enters the play-rate. This source-scan guard maps EVERY `GameType`
+ * to the settlement module that must call `accrue` and fails if any enum value
+ * is unmapped or its module dropped the call — so a newly added game can't
+ * silently ship outside the engine.
  *
  * Runs as a unit spec (no DB); cwd is `apps/api` under `vitest run src`.
  */

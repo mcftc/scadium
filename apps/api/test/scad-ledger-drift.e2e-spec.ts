@@ -1,27 +1,35 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { SCAD } from '@scadium/shared';
-import { prisma, makeUser, realPow } from './engine-harness';
+import { prisma, makeUser } from './engine-harness';
+import { applyBalanceDelta } from '../src/prisma/apply-balance-delta';
 import { ReconciliationService } from '../src/reconciliation/reconciliation.service';
 
 /**
- * #229 — `accrue()` credits the REDEEMABLE $SCAD through `applyBalanceDelta`, so
- * every wager-reward credit writes a `scad` BalanceLedger row whose
- * `balanceAfter` equals `User.scadiumBalance`. Before the fix accrue did a raw
- * `scadiumBalance += amount` with no ledger row, leaving the `scad` ledger with
- * stake-path debits but no matching credits — unreconcilable.
- *
- * Proves: (a) accrue writes a `scad` ledger row matching the live balance, and
- * (b) the new `scadLedgerDrift()` reconcile arm flags ZERO for a clean
- * wager+accrue but FLAGS a deliberately-corrupted scadiumBalance.
+ * #229 — every REDEEMABLE $SCAD credit flows through `applyBalanceDelta`, so it
+ * writes a `scad` BalanceLedger row whose `balanceAfter` equals
+ * `User.scadiumBalance`, making the live balance a re-derivable projection.
+ * Under Engine v2 the credit path is the hourly block worker
+ * (`reason: 'block_reward'`); this asserts the ledger row matches the live
+ * balance and that the `scadLedgerDrift()` reconcile arm flags ZERO for a clean
+ * credit but FLAGS a directly-corrupted scadiumBalance.
  */
 const reconciliation = new ReconciliationService(
   prisma as never,
   { enabled: false, lotteryEnabled: false } as never,
 );
-const pow = realPow();
 
-describe('#229 — accrue() ledgers $SCAD (scadLedgerDrift reconcile arm)', () => {
+/** Credit $SCAD exactly as BlockMiningService does (the single mint path). */
+const mintScad = (userId: string, amount: bigint, refId = randomUUID()) =>
+  prisma.$transaction((tx) =>
+    applyBalanceDelta(tx, userId, amount, {
+      currency: 'scad',
+      reason: 'block_reward',
+      refType: 'EngineBlock',
+      refId,
+    }),
+  );
+
+describe('#229 — $SCAD credits ledger cleanly (scadLedgerDrift reconcile arm)', () => {
   beforeAll(async () => {
     await prisma.$connect();
   });
@@ -29,15 +37,12 @@ describe('#229 — accrue() ledgers $SCAD (scadLedgerDrift reconcile arm)', () =
     await prisma.$disconnect();
   });
 
-  it('accrue writes a scad BalanceLedger row whose balanceAfter == scadiumBalance', async () => {
+  it('a block-reward credit writes a scad BalanceLedger row whose balanceAfter == scadiumBalance', async () => {
     const u = await makeUser(0n);
-    const betId = randomUUID();
-    const stake = 2_000_000n; // 0.002 SOL
+    const refId = randomUUID();
+    const amount = 256_000_000_000n; // arbitrary block share
 
-    const amount = await prisma.$transaction((tx) =>
-      pow.accrue(tx, { userId: u.id, gameType: 'crash', stakeLamports: stake, betId }),
-    );
-    expect(amount).toBe(stake * BigInt(SCAD.WAGER_REWARD_PER_LAMPORT)); // tier 0, no campaign
+    await mintScad(u.id, amount, refId);
 
     const after = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
     expect(after.scadiumBalance).toBe(amount);
@@ -49,20 +54,16 @@ describe('#229 — accrue() ledgers $SCAD (scadLedgerDrift reconcile arm)', () =
     expect(ledger).not.toBeNull();
     expect(ledger!.delta).toBe(amount);
     expect(ledger!.balanceAfter).toBe(after.scadiumBalance);
-    expect(ledger!.reason).toBe('wager_reward');
-    expect(ledger!.refType).toBe('Bet');
-    expect(ledger!.refId).toBe(betId);
+    expect(ledger!.reason).toBe('block_reward');
+    expect(ledger!.refType).toBe('EngineBlock');
+    expect(ledger!.refId).toBe(refId);
   });
 
-  it('scadLedgerDrift() flags ZERO after a clean wager+accrue', async () => {
+  it('scadLedgerDrift() flags ZERO after clean credits', async () => {
     const u = await makeUser(0n);
-    // Two accruals — the latest balanceAfter must still equal the live balance.
-    await prisma.$transaction((tx) =>
-      pow.accrue(tx, { userId: u.id, gameType: 'crash', stakeLamports: 1_000_000n }),
-    );
-    await prisma.$transaction((tx) =>
-      pow.accrue(tx, { userId: u.id, gameType: 'dice', stakeLamports: 3_000_000n }),
-    );
+    // Two credits — the latest balanceAfter must still equal the live balance.
+    await mintScad(u.id, 1_000_000_000n);
+    await mintScad(u.id, 3_000_000_000n);
 
     await prisma.reconciliationDrift.deleteMany({ where: { userId: u.id } });
     await reconciliation.scadLedgerDrift();
@@ -74,9 +75,7 @@ describe('#229 — accrue() ledgers $SCAD (scadLedgerDrift reconcile arm)', () =
 
   it('scadLedgerDrift() FLAGS a directly-corrupted scadiumBalance', async () => {
     const u = await makeUser(0n);
-    await prisma.$transaction((tx) =>
-      pow.accrue(tx, { userId: u.id, gameType: 'crash', stakeLamports: 1_000_000n }),
-    );
+    await mintScad(u.id, 1_000_000_000n);
     // Direct (non-ledgered) write — exactly the tampering the reconciler catches.
     await prisma.user.update({
       where: { id: u.id },
