@@ -87,14 +87,16 @@ describe('Engine v2 block mining (integration, real Postgres)', () => {
     const absCross = cross < 0n ? -cross : cross;
     expect(absCross).toBeLessThan(shareB.playRate);
 
-    // The credit equals the recorded share (exact) — money moved == share row.
+    // The credit equals the recorded share — plus the big-reward bonus if A was
+    // the weighted-random winner (E4). Money moved == share row (+ bonus).
+    const aBonus = block.winnerId === a ? block.bigRewardScad : 0n;
     const ua = await prisma.user.findUniqueOrThrow({ where: { id: a } });
-    expect(ua.scadiumBalance).toBe(shareA.shareScad);
+    expect(ua.scadiumBalance).toBe(shareA.shareScad + aBonus);
 
     // Idempotent: a second mine settles nothing new — A's balance is unchanged.
     const again = await svc.mineBlock();
     expect(again.participantCount).toBe(0);
     const ua2 = await prisma.user.findUniqueOrThrow({ where: { id: a } });
-    expect(ua2.scadiumBalance).toBe(shareA.shareScad);
+    expect(ua2.scadiumBalance).toBe(shareA.shareScad + aBonus);
   });
 });

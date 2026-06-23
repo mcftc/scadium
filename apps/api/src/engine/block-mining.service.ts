@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { SCAD, blockRewardFor, activePlayRate, blockShare, stakePlayRate } from '@scadium/shared';
+import { ENGINE, SCAD, blockRewardFor, activePlayRate, blockShare, stakePlayRate } from '@scadium/shared';
+import { sha256, jackpotWinningTicket, weightedWinnerIndex } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { periodForHour } from '../queue/queue.constants';
@@ -101,6 +103,22 @@ export class BlockMiningService {
       return noop;
     }
 
+    // E4 — big-reward draw. A BIG_REWARD_BPS slice of the block goes to ONE
+    // play-rate-weighted RANDOM winner (an equal-chance sweepstakes); the rest
+    // is split pro-rata. Order participants deterministically so the draw is
+    // reproducible from the revealed seed; a committed seed yields a uniform
+    // ticket in [0, totalPlayRate) and the cumulative walk picks the winner.
+    const bigReward = (reward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
+    const splitPool = reward - bigReward;
+    const ordered = [...playRates.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const serverSeed = randomBytes(32).toString('hex');
+    const ticket = jackpotWinningTicket(serverSeed, period, 0, totalPlayRate);
+    const winnerIdx = weightedWinnerIndex(
+      ticket,
+      ordered.map(([, w]) => w),
+    );
+    const winnerId = bigReward > 0n ? (ordered[winnerIdx]?.[0] ?? null) : null;
+
     const result = await this.prisma.$transaction(async (tx) => {
       const block = await tx.engineBlock.upsert({
         where: { period },
@@ -111,8 +129,8 @@ export class BlockMiningService {
 
       let minted = 0n;
       let participants = 0;
-      for (const [userId, playRate] of playRates) {
-        const share = blockShare(playRate, totalPlayRate, reward);
+      for (const [userId, playRate] of ordered) {
+        const share = blockShare(playRate, totalPlayRate, splitPool);
         if (share <= 0n) continue;
         await tx.engineBlockShare.create({
           data: { blockId: block.id, userId, playRate, shareScad: share },
@@ -126,6 +144,20 @@ export class BlockMiningService {
         minted += share;
         participants += 1;
       }
+
+      // Award the big reward to the weighted-random winner (on top of their
+      // pro-rata share — the "block finder" bonus).
+      let bigMinted = 0n;
+      if (winnerId && bigReward > 0n) {
+        await applyBalanceDelta(tx, winnerId, bigReward, {
+          currency: 'scad',
+          reason: 'big_reward',
+          refType: 'EngineBlock',
+          refId: block.id,
+        });
+        bigMinted = bigReward;
+      }
+      minted += bigMinted;
 
       // Advance the single emission cursor by exactly what was minted, atomically
       // with the credits (so the P2E cap stays enforceable).
@@ -143,6 +175,10 @@ export class BlockMiningService {
           rewardScad: minted,
           totalPlayRate,
           participantCount: participants,
+          winnerId: bigMinted > 0n ? winnerId : null,
+          bigRewardScad: bigMinted,
+          drawSeed: serverSeed,
+          drawSeedHash: sha256(serverSeed),
         },
       });
 
