@@ -7,6 +7,9 @@ import {
   assetsForShares,
   applyAccrual,
   earlyExitPenalty,
+  scadBoostTier,
+  nextScadBoostTier,
+  boostedAprBps,
 } from '@scadium/shared';
 import { describe, expect, it } from 'vitest';
 
@@ -126,6 +129,55 @@ describe('vault money math', () => {
       // longer term → larger weight (higher effective APR).
       for (let i = 1; i < weights.length; i++) {
         expect(weights[i]!).toBeGreaterThan(weights[i - 1]!);
+      }
+    });
+  });
+
+  describe('loyalty APR boost tiers (V13)', () => {
+    it('defines ascending thresholds with ascending, ≥1.00× multipliers', () => {
+      const tiers = VAULT.BOOST_TIERS;
+      expect(tiers[0]!.minScadBase).toBe(0n); // Base starts at zero holdings
+      expect(tiers[0]!.multiplierBps).toBe(10_000); // Base = 1.00×
+      for (let i = 1; i < tiers.length; i++) {
+        expect(tiers[i]!.minScadBase).toBeGreaterThan(tiers[i - 1]!.minScadBase);
+        expect(tiers[i]!.multiplierBps).toBeGreaterThan(tiers[i - 1]!.multiplierBps);
+      }
+    });
+
+    it('selects the Base tier for zero / negative holdings', () => {
+      expect(scadBoostTier(0n).label).toBe('Base');
+      expect(scadBoostTier(-1n).label).toBe('Base');
+      expect(scadBoostTier(0n).multiplierBps).toBe(10_000);
+    });
+
+    it('selects the highest tier whose threshold is met (boundary-inclusive)', () => {
+      const silver = VAULT.BOOST_TIERS.find((t) => t.label === 'Silver')!;
+      // Exactly at the threshold qualifies for that tier…
+      expect(scadBoostTier(silver.minScadBase).label).toBe('Silver');
+      // …one base unit short stays on the tier below.
+      expect(scadBoostTier(silver.minScadBase - 1n).label).toBe('Bronze');
+    });
+
+    it('caps at the top tier for very large holdings', () => {
+      const top = VAULT.BOOST_TIERS[VAULT.BOOST_TIERS.length - 1]!;
+      const huge = top.minScadBase * 1_000n;
+      expect(scadBoostTier(huge).label).toBe(top.label);
+      expect(nextScadBoostTier(huge)).toBeNull();
+    });
+
+    it('points to the next tier up while one exists', () => {
+      expect(nextScadBoostTier(0n)!.label).toBe('Bronze');
+      const bronze = VAULT.BOOST_TIERS.find((t) => t.label === 'Bronze')!;
+      expect(nextScadBoostTier(bronze.minScadBase)!.label).toBe('Silver');
+    });
+
+    it('scales a base APR by the tier multiplier', () => {
+      expect(boostedAprBps(1200, 10_000)).toBe(1200); // 1.00× is a no-op
+      expect(boostedAprBps(1200, 12_500)).toBe(1500); // 12% → 15% at 1.25×
+      expect(boostedAprBps(1000, 20_000)).toBe(2000); // doubles at 2.00×
+      // a holder's effective APR is never below the base rate
+      for (const t of VAULT.BOOST_TIERS) {
+        expect(boostedAprBps(1000, t.multiplierBps)).toBeGreaterThanOrEqual(1000);
       }
     });
   });
