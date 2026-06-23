@@ -45,7 +45,7 @@ describe('Tower backend (integration, real Postgres)', () => {
     await prisma.$disconnect();
   });
 
-  it('happy path: climb three rows then cashout banks stake × multiplier + accrues $SCAD', async () => {
+  it('happy path: climb three rows then cashout banks stake × multiplier + records wager volume', async () => {
     const user = await makeUser(BAL);
     const start = await tower.start({ userId: user.id, amountLamports: STAKE });
     expect(start.status).toBe('active');
@@ -66,10 +66,10 @@ describe('Tower backend (integration, real Postgres)', () => {
     const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(after.playBalanceLamports).toBe(BAL - STAKE + expPayout);
 
-    const scad = await prisma.balanceLedger.findFirst({
-      where: { userId: user.id, currency: 'scad', reason: 'wager_reward' },
-    });
-    expect(scad).not.toBeNull();
+    // Engine v2: no per-bet $SCAD mint — accrue records the wager VOLUME into the
+    // leaderboard (the play-rate the hourly block worker mints from).
+    const lb = await prisma.wagerLeaderboard.findFirst({ where: { userId: user.id } });
+    expect(lb?.wageredLamports).toBe(STAKE);
   });
 
   it('bust: stepping on a trap settles a loss with no payout', async () => {

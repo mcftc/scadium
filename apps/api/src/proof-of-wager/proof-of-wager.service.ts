@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type GameType, type WagerCampaign } from '@prisma/client';
-import { LAMPORTS_PER_SOL, SCAD, WAGER, emissionPhaseFor } from '@scadium/shared';
+import { LAMPORTS_PER_SOL, WAGER, emissionPhaseFor } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 
 /** The fixed id of the singleton EmissionState row (see schema). */
 const EMISSION_SINGLETON_ID = 'singleton';
@@ -150,68 +149,17 @@ export class ProofOfWagerService {
    * credited (callers may ignore it).
    */
   async accrue(tx: Prisma.TransactionClient, params: AccrueParams): Promise<bigint> {
-    const { userId, gameType, stakeLamports, betId } = params;
+    const { userId, stakeLamports } = params;
     if (stakeLamports <= 0n) return 0n;
 
-    // Resolve the active halving phase from the CACHED emission total + the
-    // unflushed in-memory buffer — NO per-bet DB op (the cache refreshes at most
-    // once per TTL; see effectiveEmitted). Touching the singleton EmissionState
-    // row per bet (read + upsert on separate connections) exhausts the Prisma
-    // pool under load, so a 50-way concurrent bet round can't get connections and
-    // fails entirely (chaos/balance-race). The phase rate is taken at the START
-    // of accrue; boundary-spanning imprecision is bounded by one bet's $SCAD and
-    // accepted. The counter is an approximate phase cursor (buffered/flushed).
-    const effectiveTotal = await this.effectiveEmitted();
-
-    // Emission pool exhausted → nothing more to mint, ever.
-    const remaining = SCAD.P2E_POOL_BASE - effectiveTotal;
-    if (remaining <= 0n) return 0n;
-
-    const { ratePerLamport } = emissionPhaseFor(effectiveTotal);
-    const base = stakeLamports * BigInt(ratePerLamport);
-
-    // Lifetime-wager tier multiplier. Read inside the tx; the engine bumps
-    // totalWagered before calling accrue, so this reflects the post-wager total
-    // (tier-boundary rounding is negligible).
-    const user = await tx.user.findUnique({
-      where: { id: userId },
-      select: { totalWagered: true },
-    });
-    const campaignMult = await this.campaignMultiplier(tx, gameType);
-    const multiplier = this.effectiveMultiplier(user?.totalWagered ?? 0n, campaignMult);
-
-    // BigInt-safe: scale the float multiplier to an integer (3 dp) then divide.
-    const scaled = BigInt(Math.round(multiplier * 1000));
-    let amount = (base * scaled) / 1000n;
-    if (amount <= 0n) return 0n;
-
-    // CAP: never emit beyond the 500M P2E pool. Clamp this accrual to what is
-    // left; if exhausted by the clamp, return without crediting.
-    if (amount > remaining) amount = remaining;
-    if (amount <= 0n) return 0n;
-
-    // Credit the REDEEMABLE $SCAD through the single mutation point so a
-    // `scad` BalanceLedger row is written in THIS tx (#229). Previously this
-    // was a raw `increment`, leaving the `scad` ledger with stake-path debits
-    // but no matching credits — unreconcilable. `applyBalanceDelta` stamps the
-    // post-credit `scadiumBalance` as `balanceAfter`, so `scadLedgerDrift` can
-    // assert the live balance equals the latest ledger checkpoint.
-    await applyBalanceDelta(tx, userId, amount, {
-      currency: 'scad',
-      reason: 'wager_reward',
-      refType: 'Bet',
-      refId: betId ?? null,
-    });
-
-    // Advance the emission counter IN MEMORY (no per-bet DB op). The buffer is
-    // flushed to EmissionState in a single upsert on the next cache refresh
-    // (effectiveEmitted, ~once per TTL). The exact $SCAD issued is the in-tx
-    // `applyBalanceDelta('scad')` credit above (the ledger is the source of
-    // truth); this counter is an approximate phase cursor that may over-count by
-    // at most the mints of a few rolled-back accruals between flushes.
-    this.pendingEmitted += amount;
-
-    // Roll the wager into the daily + weekly leaderboard buckets.
+    // Engine v2 (E3): $SCAD is NO LONGER minted per bet. The hourly block worker
+    // (BlockMiningService) is the single emission authority — it mints each
+    // hour's halving-phase block reward split by PLAY-RATE. accrue() now only
+    // records wager VOLUME into the daily + weekly leaderboard buckets, which
+    // ALSO feed the play-rate the block split reads. It stays on the settlement
+    // tx (and in the engine-coverage contract) so every game remains wired into
+    // the engine; it just no longer credits a balance. Returns 0n (callers
+    // ignore the result).
     const { daily, weekly } = periodKeys(new Date());
     for (const period of [daily, weekly]) {
       await tx.wagerLeaderboard.upsert({
@@ -221,7 +169,7 @@ export class ProofOfWagerService {
       });
     }
 
-    return amount;
+    return 0n;
   }
 
   /**
