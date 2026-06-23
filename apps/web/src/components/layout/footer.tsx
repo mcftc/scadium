@@ -65,8 +65,8 @@ export function Footer() {
             <Logo />
             <p className="mt-4 text-sm text-foreground-muted max-w-xs">
               <ChainCopy
-                onchain="Non-custodial, provably-fair Solana casino. Play with instant on-chain settlement."
-                playMoney="Non-custodial, provably-fair Solana casino. Play-money beta — provably fair."
+                onchain="Non-custodial, provably-fair play-to-earn on Solana — every round mines $SCAD, settled on-chain."
+                playMoney="Non-custodial, provably-fair play-to-earn on Solana — every round mines $SCAD. Play-money beta."
               />
             </p>
           </div>

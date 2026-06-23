@@ -13,7 +13,7 @@ export default function AffiliatesPage() {
             <span className="text-gradient">Affiliates</span>
           </h1>
           <p className="mt-4 text-foreground-muted max-w-xl mx-auto">
-            Share your referral link, earn a cut of every friend&apos;s wagering volume.
+            Share your referral link, earn a cut of every friend&apos;s play volume.
           </p>
         </div>
         <AuthGate>

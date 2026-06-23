@@ -118,8 +118,8 @@ export function GamesGrid() {
           </h2>
           <p className="mt-4 text-foreground-muted max-w-xl mx-auto">
             <ChainCopy
-              onchain="Every bet is on-chain. Every result is verifiable. Every payout is instant."
-              playMoney="Every result is provably fair and verifiable. Play-money beta."
+              onchain="Every round mines $SCAD. Every result is verifiable. Every payout is instant."
+              playMoney="Every round mines $SCAD. Every result is provably fair and verifiable. Play-money beta."
             />
           </p>
         </div>

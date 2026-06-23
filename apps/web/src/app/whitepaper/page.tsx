@@ -31,7 +31,7 @@ export default function WhitepaperPage() {
 
             <Section n="2" title="Mission &amp; Vision">
               <p>
-                Build the most transparent casino on Solana: server-authoritative gameplay
+                Build the most transparent play-to-earn platform on Solana: server-authoritative gameplay
                 for speed, the chain for custody and proof. Nothing the house does is
                 invisible — seeds are committed on-chain before play, results are revealed
                 and asserted on-chain after, and the token economy runs through public
@@ -63,7 +63,7 @@ export default function WhitepaperPage() {
 
             <Section n="4" title="Buy &amp; Burn">
               <ul className="list-disc pl-5 space-y-1">
-                <li>20% of casino net gaming revenue bought and burnt</li>
+                <li>20% of net gaming revenue bought and burnt</li>
                 <li>Net Gaming Revenue = Bets − (Wins + Rewards)</li>
                 <li>Bought from the SCAD/SOL pool automatically, on a recurring schedule</li>
                 <li>Every burn is two public transactions: the buy and the SPL burn</li>
