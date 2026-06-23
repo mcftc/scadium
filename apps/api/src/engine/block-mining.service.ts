@@ -1,6 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { ENGINE, SCAD, blockRewardFor, activePlayRate, blockShare, stakePlayRate } from '@scadium/shared';
+import {
+  ENGINE,
+  SCAD,
+  blockRewardFor,
+  activePlayRate,
+  blockShare,
+  stakePlayRate,
+  emissionPhaseFor,
+} from '@scadium/shared';
 import { sha256, jackpotWinningTicket, weightedWinnerIndex } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
@@ -56,34 +64,8 @@ export class BlockMiningService {
     const emitted = emission?.totalEmittedScad ?? 0n;
     const reward = blockRewardFor(emitted);
 
-    // Each miner's play-rate this hour: active (hourly wagered × tier) + passive
-    // (staked $SCAD). Tier multiplier is the base 1.0× for now (per-user tiers
-    // can refine it later); staking passive lands in E6 but the term is wired in.
     const { start, end } = this.hourWindow(period);
-    const wagers = await this.prisma.bet.groupBy({
-      by: ['userId'],
-      where: { createdAt: { gte: start, lt: end } },
-      _sum: { amountLamports: true },
-    });
-
-    const playRates = new Map<string, bigint>();
-    for (const w of wagers) {
-      const pr = activePlayRate(w._sum.amountLamports ?? 0n);
-      if (pr > 0n) playRates.set(w.userId, pr);
-    }
-
-    // Passive play-rate from stakers (continuity — "savers keep mining"). E6
-    // tunes this; included here so the single split covers both.
-    const stakers = await this.prisma.user.findMany({
-      where: { scadiumStaked: { gt: 0n } },
-      select: { id: true, scadiumStaked: true },
-    });
-    for (const s of stakers) {
-      const pr = stakePlayRate(s.scadiumStaked);
-      if (pr > 0n) playRates.set(s.id, (playRates.get(s.id) ?? 0n) + pr);
-    }
-
-    const totalPlayRate = [...playRates.values()].reduce((a, b) => a + b, 0n);
+    const { playRates, totalPlayRate } = await this.playRatesForWindow(start, end);
 
     // Nothing to mine (pool exhausted, or no play this hour) → settle an empty
     // block so it is never retried.
@@ -191,18 +173,175 @@ export class BlockMiningService {
     return result;
   }
 
-  /** Recent blocks (newest first) for the engine feed (E5 expands this). */
+  /**
+   * Each miner's play-rate over a window: active (hourly wagered × tier, base
+   * 1.0× for now) + passive (staked $SCAD — "savers keep mining", E6 tunes the
+   * conversion). Shared by the worker (just-ended hour) and the read API
+   * (current, in-progress hour).
+   */
+  private async playRatesForWindow(
+    start: Date,
+    end: Date,
+  ): Promise<{ playRates: Map<string, bigint>; totalPlayRate: bigint }> {
+    const wagers = await this.prisma.bet.groupBy({
+      by: ['userId'],
+      where: { createdAt: { gte: start, lt: end } },
+      _sum: { amountLamports: true },
+    });
+    const playRates = new Map<string, bigint>();
+    for (const w of wagers) {
+      const pr = activePlayRate(w._sum.amountLamports ?? 0n);
+      if (pr > 0n) playRates.set(w.userId, pr);
+    }
+    const stakers = await this.prisma.user.findMany({
+      where: { scadiumStaked: { gt: 0n } },
+      select: { id: true, scadiumStaked: true },
+    });
+    for (const s of stakers) {
+      const pr = stakePlayRate(s.scadiumStaked);
+      if (pr > 0n) playRates.set(s.id, (playRates.get(s.id) ?? 0n) + pr);
+    }
+    const totalPlayRate = [...playRates.values()].reduce((a, b) => a + b, 0n);
+    return { playRates, totalPlayRate };
+  }
+
+  /** Engine emission (base units) so far, the remaining pool, and the phase. */
+  private async emissionSnapshot() {
+    const e = await this.prisma.emissionState.findUnique({ where: { id: EMISSION_SINGLETON_ID } });
+    const emitted = e?.totalEmittedScad ?? 0n;
+    const left = SCAD.P2E_POOL_BASE - emitted;
+    return { emitted, remaining: left > 0n ? left : 0n, ...emissionPhaseFor(emitted) };
+  }
+
+  /** ms until the next top-of-hour block distribution. */
+  private msToNextDistribution(now: number): number {
+    return 3_600_000 - (now % 3_600_000);
+  }
+
+  /**
+   * Engine-wide observability: halving phase + progress, total emitted, remaining
+   * P2E pool, the current hourly block reward, the big-reward pot, and the
+   * countdown to the next distribution. (`now` defaults to call time.)
+   */
+  async state(now = Date.now()) {
+    const snap = await this.emissionSnapshot();
+    const blockReward = blockRewardFor(snap.emitted);
+    const bigReward = (blockReward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
+    const lastBlock = await this.prisma.engineBlock.findFirst({
+      where: { distributed: true },
+      orderBy: { distributedAt: 'desc' },
+      select: {
+        period: true,
+        rewardScad: true,
+        participantCount: true,
+        winnerId: true,
+        bigRewardScad: true,
+        distributedAt: true,
+      },
+    });
+    return {
+      phase: snap.phase,
+      totalEmittedScad: snap.emitted.toString(),
+      remainingPoolScad: snap.remaining.toString(),
+      p2ePoolScad: SCAD.P2E_POOL_BASE.toString(),
+      toNextHalvingScad: snap.toNextHalvingBase.toString(),
+      currentBlockRewardScad: blockReward.toString(),
+      bigRewardScad: bigReward.toString(),
+      bigRewardBps: ENGINE.BIG_REWARD_BPS,
+      msToNextDistribution: this.msToNextDistribution(now),
+      lastBlock: lastBlock
+        ? {
+            period: lastBlock.period,
+            rewardScad: lastBlock.rewardScad.toString(),
+            participantCount: lastBlock.participantCount,
+            winnerId: lastBlock.winnerId,
+            bigRewardScad: lastBlock.bigRewardScad.toString(),
+            distributedAt: lastBlock.distributedAt?.toISOString() ?? null,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * A miner's live state for the CURRENT (in-progress) hour: their play-rate
+   * (active + passive stake), the hour's total play-rate, and their projected
+   * share of the current block reward if the hour ended now.
+   */
+  async minerState(userId: string, now = Date.now()) {
+    const { start, end } = this.hourWindow(periodForHour(now));
+    const { playRates, totalPlayRate } = await this.playRatesForWindow(start, end);
+    const myPlayRate = playRates.get(userId) ?? 0n;
+    const snap = await this.emissionSnapshot();
+    const blockReward = blockRewardFor(snap.emitted);
+    const splitPool = blockReward - (blockReward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
+    const projectedShare = blockShare(myPlayRate, totalPlayRate, splitPool);
+    return {
+      playRate: myPlayRate.toString(),
+      totalPlayRate: totalPlayRate.toString(),
+      shareBps: totalPlayRate > 0n ? Number((myPlayRate * 10_000n) / totalPlayRate) : 0,
+      projectedShareScad: projectedShare.toString(),
+      mining: myPlayRate > 0n,
+    };
+  }
+
+  /** Current-hour play-rate ranking (top miners), newest snapshot. */
+  async currentLeaderboard(limit = 25, now = Date.now()) {
+    const { start, end } = this.hourWindow(periodForHour(now));
+    const { playRates, totalPlayRate } = await this.playRatesForWindow(start, end);
+    const top = [...playRates.entries()]
+      .sort((a, b) => (b[1] > a[1] ? 1 : b[1] < a[1] ? -1 : 0))
+      .slice(0, Math.min(Math.max(limit, 1), 100));
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: top.map(([id]) => id) } },
+      select: { id: true, username: true, walletAddress: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return {
+      totalPlayRate: totalPlayRate.toString(),
+      miners: top.map(([id, pr], i) => ({
+        rank: i + 1,
+        userId: id,
+        username: byId.get(id)?.username ?? null,
+        walletAddress: byId.get(id)?.walletAddress ?? null,
+        playRate: pr.toString(),
+        shareBps: totalPlayRate > 0n ? Number((pr * 10_000n) / totalPlayRate) : 0,
+      })),
+    };
+  }
+
+  /** Recent blocks (newest first) for the engine feed, serialized. */
   async recentBlocks(limit = 30) {
-    return this.prisma.engineBlock.findMany({
+    const blocks = await this.prisma.engineBlock.findMany({
+      where: { distributed: true },
       orderBy: { createdAt: 'desc' },
       take: Math.min(Math.max(limit, 1), 100),
+      select: {
+        period: true,
+        rewardScad: true,
+        totalPlayRate: true,
+        participantCount: true,
+        winnerId: true,
+        bigRewardScad: true,
+        drawSeed: true,
+        drawSeedHash: true,
+        distributedAt: true,
+      },
     });
+    return blocks.map((b) => ({
+      period: b.period,
+      rewardScad: b.rewardScad.toString(),
+      totalPlayRate: b.totalPlayRate.toString(),
+      participantCount: b.participantCount,
+      winnerId: b.winnerId,
+      bigRewardScad: b.bigRewardScad.toString(),
+      drawSeed: b.drawSeed,
+      drawSeedHash: b.drawSeedHash,
+      distributedAt: b.distributedAt?.toISOString() ?? null,
+    }));
   }
 
   /** Remaining P2E pool (base units) — for observability. */
   async remainingPool(): Promise<bigint> {
-    const e = await this.prisma.emissionState.findUnique({ where: { id: EMISSION_SINGLETON_ID } });
-    const left = SCAD.P2E_POOL_BASE - (e?.totalEmittedScad ?? 0n);
-    return left > 0n ? left : 0n;
+    return (await this.emissionSnapshot()).remaining;
   }
 }
