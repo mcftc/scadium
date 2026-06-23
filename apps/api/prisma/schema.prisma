@@ -245,6 +245,7 @@ model User {
   vaultPositions       VaultPosition[]
   bets                 Bet[]
   instantRounds        InstantRound[]
+  engineBlockShares    EngineBlockShare[]
   chatMessages         ChatMessage[]
   crashBets            CrashBet[]
   scheduledCrashBets   ScheduledCrashBet[]
@@ -905,6 +906,47 @@ model DistributionClaim {
   createdAt    DateTime          @default(now())
 
   @@unique([roundId, userId])
+  @@index([userId, createdAt])
+}
+
+// ==================== SCAD ENGINE v2 — PROOF-OF-PLAY MINING ====================
+
+// One hourly "block": the phase-halved $SCAD block reward (from the P2E pool) is
+// split across the hour's miners by play-rate share, plus a weighted-random
+// big-reward draw (E4). One row per UTC hour (`period` unique), settled once via
+// the `distributed` guard — exactly like DistributionRound, but mints $SCAD.
+model EngineBlock {
+  id             String    @id @default(uuid()) @db.Uuid
+  period         String    @unique // UTC hour 'YYYYMMDDHH'
+  rewardScad     BigInt    @default(0) // total block reward minted (base units)
+  totalPlayRate  BigInt    @default(0) // Σ participant play-rate (lamport-equiv)
+  participantCount Int     @default(0)
+  // Big-reward draw (E4): the weighted-random winner + their slice + the proof.
+  winnerId       String?   @db.Uuid
+  bigRewardScad  BigInt    @default(0)
+  drawSeedHash   String?
+  drawSeed       String?
+  distributed    Boolean   @default(false)
+  distributedAt  DateTime?
+  createdAt      DateTime  @default(now())
+
+  shares EngineBlockShare[]
+
+  @@index([createdAt])
+}
+
+// One miner's cut of one block. `@@unique([blockId, userId])` → paid at most once.
+model EngineBlockShare {
+  id        String      @id @default(uuid()) @db.Uuid
+  blockId   String      @db.Uuid
+  block     EngineBlock @relation(fields: [blockId], references: [id])
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id])
+  playRate  BigInt // the weight numerator (lamport-equiv) for this miner this hour
+  shareScad BigInt // $SCAD base units credited from the pro-rata split
+  createdAt DateTime    @default(now())
+
+  @@unique([blockId, userId])
   @@index([userId, createdAt])
 }
 

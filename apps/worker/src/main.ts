@@ -10,6 +10,7 @@ import {
   ReconciliationService,
   RewardsService,
   DistributionService,
+  BlockMiningService,
   VaultAccrualService,
   RedisService,
   queueConnection,
@@ -39,6 +40,7 @@ async function bootstrap(): Promise<void> {
   const reconciliation = app.get(ReconciliationService, { strict: false });
   const rewards = app.get(RewardsService, { strict: false });
   const distribution = app.get(DistributionService, { strict: false });
+  const blockMining = app.get(BlockMiningService, { strict: false });
   const vaultAccrual = app.get(VaultAccrualService, { strict: false });
   const redis = app.get(RedisService, { strict: false });
 
@@ -106,6 +108,19 @@ async function bootstrap(): Promise<void> {
       { connection },
     ),
     new Worker(
+      QUEUE_NAMES.blockMining,
+      // SCAD Engine v2: hourly Proof-of-Play block mint. Idempotent per hour
+      // (EngineBlock.period unique + distributed flag + EngineBlockShare
+      // @@unique); a Redis lock serializes the per-miner credit loop so two
+      // replicas don't both walk it.
+      async () => {
+        await withRedisLock(redis.client, 'lock:block-mining', 9 * 60_000, () =>
+          blockMining.mineBlock(),
+        );
+      },
+      { connection },
+    ),
+    new Worker(
       QUEUE_NAMES.vaultAccrual,
       // SCAD Vault: hourly NGR→$SCAD term-pool yield. Idempotent per hour
       // (VaultAccrualRound.period unique + distributed flag); a Redis lock still
@@ -135,6 +150,7 @@ async function bootstrap(): Promise<void> {
   const rewardClaimsQueue = new Queue(QUEUE_NAMES.rewardClaims, { connection });
   const lotteryPayoutsQueue = new Queue(QUEUE_NAMES.lotteryPayouts, { connection });
   const distributionQueue = new Queue(QUEUE_NAMES.distribution, { connection });
+  const blockMiningQueue = new Queue(QUEUE_NAMES.blockMining, { connection });
   const vaultAccrualQueue = new Queue(QUEUE_NAMES.vaultAccrual, { connection });
 
   await airdropQueue.upsertJobScheduler(
@@ -177,8 +193,15 @@ async function bootstrap(): Promise<void> {
     { every: 5 * 60_000 },
     { name: 'accrue' },
   );
+  // SCAD Engine v2 block mining — same cadence; mineBlock() is a no-op until an
+  // unsettled hour exists.
+  await blockMiningQueue.upsertJobScheduler(
+    'block-mining-hourly',
+    { every: 5 * 60_000 },
+    { name: 'mine' },
+  );
 
-  logger.log('worker up — 8 queues, schedulers registered');
+  logger.log('worker up — 9 queues, schedulers registered');
 
   const shutdown = async () => {
     logger.log('shutting down…');
