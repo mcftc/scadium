@@ -727,6 +727,10 @@ export const CHAT = {
   MESSAGE_MAX_LEN: 500,
   RATE_LIMIT_WINDOW_MS: 5_000,
   RATE_LIMIT_MESSAGES: 5,
+  // Anti-spam: only players who have wagered at least this much (lifetime
+  // `totalWagered`) may post in general chat — i.e. they have skin in the game.
+  // 0.01 SOL equivalent. Moderators/admins are exempt.
+  MIN_WAGERED_LAMPORTS: LAMPORTS_PER_SOL / 100,
 } as const;
 
 // ---------- Geo blocklist ----------
