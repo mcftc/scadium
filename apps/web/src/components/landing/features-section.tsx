@@ -40,9 +40,9 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
   },
   {
     icon: BarChart3,
-    title: 'Earn $SCADIUM',
+    title: 'Mine $SCAD',
     description:
-      'Every SOL wagered earns $SCADIUM. Buy-and-burn mechanic funded by 20% of daily site profit.',
+      'Like a miner solving the next block, every round you play mines $SCAD — no hashrate, just playrate. A buy-and-burn funded by 20% of net revenue backs the token.',
   },
 ];
 

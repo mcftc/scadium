@@ -12,21 +12,21 @@ export function HeroSection() {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-surface border border-primary-400/30 mb-8">
             <div className="h-1.5 w-1.5 rounded-full bg-primary-400 animate-pulse-glow" />
             <span className="text-xs font-medium text-foreground-muted">
-              Live on Solana · Non-Custodial
+              On-Chain Games · Non-Custodial · Play-to-Earn
             </span>
           </div>
 
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight max-w-4xl">
-            The <span className="text-gradient">decentralized</span>
+            <span className="text-gradient">Proof-of-Play.</span>
             <br />
-            casino on Solana
+            Mine $SCAD on Solana
           </h1>
 
           <p className="mt-6 text-lg md:text-xl text-foreground-muted max-w-2xl">
-            Crash. Coinflip. Blackjack. Provably fair.{' '}
+            Provably-fair, on-chain games — every round mines $SCAD.{' '}
             <ChainCopy
-              onchain="Instantly settled, never custodial — connect your wallet and play, your SOL stays in your control."
-              playMoney="Connect your wallet to sign in and play with a play-money balance — on-chain settlement is coming."
+              onchain="Non-custodial — connect your wallet and play, your funds stay in your control."
+              playMoney="Connect your wallet to sign in and play — earn $SCAD as you go. On-chain mode is coming."
             />
           </p>
 
@@ -49,7 +49,7 @@ export function HeroSection() {
             {[
               { label: 'Settlement', value: '~400ms', icon: Zap },
               { label: 'Fees', value: '<$0.01' },
-              { label: 'House edge', value: '5%' },
+              { label: 'Block reward', value: '$SCAD' },
               { label: 'Audited', value: 'Yes' },
             ].map((stat) => (
               <div key={stat.label} className="text-center">

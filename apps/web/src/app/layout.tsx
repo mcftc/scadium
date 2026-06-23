@@ -12,25 +12,26 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: 'Scadium — Solana Casino | Crash, Coinflip, Blackjack',
+    default: 'Scadium — Proof-of-Play | Mine $SCAD on Solana',
     template: '%s · Scadium',
   },
   description:
-    'Scadium is a non-custodial, provably-fair Solana casino. Play Crash, Coinflip, and Blackjack. Connect your wallet and start.',
+    'Scadium is a non-custodial, provably-fair platform of on-chain games on Solana. Play-to-earn — every round mines $SCAD. Connect your wallet and start.',
   keywords: [
     'Solana',
-    'casino',
-    'crash',
-    'coinflip',
-    'blackjack',
+    'on-chain games',
+    'play-to-earn',
+    'proof-of-play',
+    '$SCAD',
+    'mine',
     'Web3',
     'provably fair',
     'non-custodial',
   ],
   metadataBase: new URL('https://scadium.io'),
   openGraph: {
-    title: 'Scadium — Solana Casino',
-    description: 'Non-custodial, provably-fair Solana casino.',
+    title: 'Scadium — Proof-of-Play on Solana',
+    description: 'Non-custodial, provably-fair play-to-earn — mine $SCAD as you play.',
     type: 'website',
   },
 };

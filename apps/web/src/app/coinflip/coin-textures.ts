@@ -20,7 +20,7 @@ const FACE = {
     rim: '#6c57b8',
     gradient: ['#d9c6ff', '#9a6ff0', '#5a3fa6'],
     field: '#7d5bd0',
-    legendTop: 'SCADIUM CASINO',
+    legendTop: 'SCADIUM',
     legendBottom: 'PROVABLY FAIR',
   },
   tails: {
@@ -30,7 +30,7 @@ const FACE = {
     gradient: ['#bdf6ff', '#34d6ee', '#0c6f8c'],
     field: '#1aa6c6',
     legendTop: 'ONE SCAD',
-    legendBottom: 'SOLANA CASINO',
+    legendBottom: 'PROOF OF PLAY',
   },
 } as const;
 

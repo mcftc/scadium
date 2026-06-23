@@ -8,7 +8,7 @@ export const metadata = { title: 'FAQ' };
 const faqs: { q: string; a: ReactNode }[] = [
   {
     q: 'What is Scadium?',
-    a: 'A non-custodial, provably-fair Solana casino. You sign in with your wallet (SIWS) and every game result can be reproduced from committed seeds.',
+    a: 'A non-custodial, provably-fair play-to-earn platform on Solana where every round mines $SCAD. You sign in with your wallet (SIWS) and every game result can be reproduced from committed seeds.',
   },
   {
     q: 'How do deposits work?',
@@ -25,7 +25,7 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'What is $SCAD?',
-    a: 'The native reward token. You earn it by wagering; 20% of net gaming revenue buys $SCAD from the pool and burns it.',
+    a: 'The native reward token. You mine it by playing; 20% of net gaming revenue buys $SCAD from the pool and burns it.',
   },
   {
     q: 'How do free lottery tickets work?',

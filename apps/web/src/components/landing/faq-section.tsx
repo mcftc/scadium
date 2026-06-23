@@ -18,11 +18,11 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'What is $SCADIUM?',
-    a: 'The native reward token. Earned passively from wagering (128 $SCADIUM per 1 SOL wagered). Tokenomics: 50% retroactive airdrops, 40% future drops, 10% team. 20% of daily site profit funds buy-and-burn.',
+    a: 'The native reward token. Mined as you play (128 $SCAD per 1 SOL played) — no hashrate, just playrate. Tokenomics: 50% retroactive airdrops, 40% future drops, 10% team. 20% of net revenue funds buy-and-burn.',
   },
   {
-    q: 'Is there a house edge?',
-    a: 'Yes — 5% on Crash and Coinflip, ~0.5% on Blackjack with standard basic strategy. All RTPs are publicly verifiable on our Fairness page.',
+    q: 'How does earning $SCAD work?',
+    a: 'Every round mines $SCAD — the more you play, the more you earn. Each game keeps a small, fully-disclosed edge (5% on Crash/Coinflip, ~0.5% on Blackjack), all publicly verifiable on our Fairness page.',
   },
   {
     q: 'Which wallets are supported?',

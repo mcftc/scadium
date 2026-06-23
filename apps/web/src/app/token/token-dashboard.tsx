@@ -334,7 +334,7 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
         <p className="text-[11px] text-foreground-muted text-center">
           {stats
             ? `Earning ${stats.currentRatePerLamport} $SCAD per 1 SOL wagered — the rate halves at each phase cap.`
-            : 'Proof-of-wager mints $SCAD on every bet; the rate halves by phase.'}
+            : 'Proof-of-Play mints $SCAD on every round; the rate halves by phase.'}
         </p>
       </CardContent>
     </Card>
