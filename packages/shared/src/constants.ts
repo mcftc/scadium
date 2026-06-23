@@ -425,7 +425,63 @@ export const ENGINE = {
   MIN_DIVIDEND_POOL_USDS_BASE: 1_000, // $0.001
   /** Auto-stake earned $SCAD on reward claim by default (bc.game parity). */
   AUTO_STAKE_DEFAULT: true,
+
+  // ---- Proof-of-Play mining (Engine v2) ----
+  /**
+   * Hourly $SCAD "block reward" at halving PHASE 1, in SCAD base units
+   * (10k SCAD/hour). Halves each phase via `blockRewardFor` (10k → 5k → … like
+   * the 128→2 rate schedule), so the 500M P2E pool drains over a long, Bitcoin-
+   * style tail. The block is split across the hour's miners by play-rate share.
+   */
+  BLOCK_REWARD_PHASE1_BASE: 10_000n * 1_000_000_000n,
+  /** Slice of each hourly block routed to the weighted-random big-reward draw (bps). */
+  BIG_REWARD_BPS: 1_000, // 10%
+  /**
+   * Staking → passive play-rate: a staker's `scadiumStaked` (SCAD base units)
+   * contributes this bps of itself as lamport-equivalent play-rate each hour, so
+   * "$SCAD savers" keep mining without actively playing (continuity). Tuned low
+   * so active play still dominates. 1% → 1000 staked SCAD ≈ 0.01 SOL-equiv/hr.
+   */
+  STAKE_PLAYRATE_BPS: 100,
 } as const;
+
+/**
+ * Hourly block reward (SCAD base units) for the current halving phase, halved
+ * once per phase from `BLOCK_REWARD_PHASE1_BASE` and clamped to what's left of
+ * the P2E pool. Returns 0n once the pool is exhausted.
+ */
+export function blockRewardFor(totalEmittedBase: bigint): bigint {
+  const remaining = SCAD.P2E_POOL_BASE - totalEmittedBase;
+  if (remaining <= 0n) return 0n;
+  const { phase } = emissionPhaseFor(totalEmittedBase);
+  const reward = ENGINE.BLOCK_REWARD_PHASE1_BASE >> BigInt(phase - 1); // halve per phase
+  return reward < remaining ? reward : remaining;
+}
+
+/**
+ * A player's active play-rate for an hour: lamports wagered scaled by their tier
+ * multiplier (integer milli — 1000 = 1.0×). Play-rate is the "hashrate" the
+ * hourly block is split by.
+ */
+export function activePlayRate(wageredLamports: bigint, tierMultMilli = 1000): bigint {
+  if (wageredLamports <= 0n) return 0n;
+  return (wageredLamports * BigInt(tierMultMilli)) / 1000n;
+}
+
+/** Passive play-rate (lamport-equiv) contributed by a staked $SCAD balance. */
+export function stakePlayRate(stakedScadBase: bigint): bigint {
+  if (stakedScadBase <= 0n) return 0n;
+  return (stakedScadBase * BigInt(ENGINE.STAKE_PLAYRATE_BPS)) / 10_000n;
+}
+
+/**
+ * One miner's pro-rata cut of a block reward, floored (dust stays in the pool /
+ * rolls to the next block). BigInt-safe.
+ */
+export function blockShare(playRate: bigint, totalPlayRate: bigint, reward: bigint): bigint {
+  if (playRate <= 0n || totalPlayRate <= 0n || reward <= 0n) return 0n;
+  return (reward * playRate) / totalPlayRate;
+}
 
 /**
  * Convert a lamport-denominated NGR figure to USDS base units at the fixed
