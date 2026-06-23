@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
+
+/** `expiresIn`'s accepted type in @nestjs/jwt 11 (`number | ms.StringValue`),
+ * derived from JwtModuleOptions so no jsonwebtoken/ms import is needed. */
+type JwtExpiresIn = NonNullable<JwtModuleOptions['signOptions']>['expiresIn'];
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -26,7 +30,10 @@ export function jwtModuleOptions(config: ConfigService): JwtModuleOptions {
   return {
     secret,
     signOptions: {
-      expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '15m',
+      // @nestjs/jwt 11 types `expiresIn` as `number | ms.StringValue` (a
+      // template-literal type a runtime config string can't satisfy); the value
+      // is a valid jsonwebtoken TTL ("15m" / seconds), so cast to its type.
+      expiresIn: (config.get<string>('JWT_ACCESS_TTL') ?? '15m') as JwtExpiresIn,
     },
   };
 }
