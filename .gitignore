@@ -61,7 +61,8 @@ infra/prisma/*.db-journal
 .remember/
 .playwright-mcp/
 .agents/
-skills-lock.json
+# skills-lock.json IS tracked (the manifest of shared agent skills, like pnpm-lock.yaml);
+# .agents/ stays ignored (the skill content) — run `npx skills experimental_install` to restore.
 .keys/
 
 # Claude Code: ignore local/session state, but TRACK the shared dev pipeline
