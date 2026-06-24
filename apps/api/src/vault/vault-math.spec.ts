@@ -10,6 +10,13 @@ import {
   scadBoostTier,
   nextScadBoostTier,
   boostedAprBps,
+  bufferTargetAssets,
+  investableExcess,
+  divestForBufferFloor,
+  unwindForWithdrawal,
+  minOutAfterSlippage,
+  harvestableYield,
+  vaultStrategyDrift,
 } from '@scadium/shared';
 import { describe, expect, it } from 'vitest';
 
@@ -179,6 +186,99 @@ describe('vault money math', () => {
       for (const t of VAULT.BOOST_TIERS) {
         expect(boostedAprBps(1000, t.multiplierBps)).toBeGreaterThanOrEqual(1000);
       }
+    });
+  });
+
+  describe('Faz 3 strategy math (V11/V12)', () => {
+    const S = VAULT.STRATEGY;
+
+    it('locks a sane buffer/cap budget (buffer ≤ floor-complement of the cap)', () => {
+      expect(S.BUFFER_FLOOR_BPS).toBeLessThanOrEqual(S.BUFFER_BPS);
+      // never deploy so much that less than the buffer could remain liquid
+      expect(S.MAX_INVESTED_BPS + S.BUFFER_BPS).toBeLessThanOrEqual(10_000);
+      expect(S.MAX_UNWIND_SLIPPAGE_BPS).toBeLessThan(10_000);
+    });
+
+    it('bufferTargetAssets is bufferBps of total (0 for empty pool)', () => {
+      expect(bufferTargetAssets(1_000_000n, 1500)).toBe(150_000n);
+      expect(bufferTargetAssets(0n, 1500)).toBe(0n);
+    });
+
+    describe('investableExcess', () => {
+      const base = { totalAssets: 1_000_000n, invested: 0n, bufferBps: 1500, maxInvestedBps: 8500 };
+      it('deploys only the liquid above the buffer target', () => {
+        // liquid 1,000,000, buffer target 150,000 → investable 850,000 (== cap)
+        expect(investableExcess({ ...base, liquid: 1_000_000n })).toBe(850_000n);
+      });
+      it('is zero at/under the buffer target', () => {
+        expect(investableExcess({ ...base, liquid: 150_000n })).toBe(0n);
+        expect(investableExcess({ ...base, liquid: 100_000n })).toBe(0n);
+      });
+      it('respects the MAX_INVESTED_BPS cap given prior investment', () => {
+        // already invested 800,000 of an 850,000 cap → only 50,000 of room left
+        expect(investableExcess({ ...base, liquid: 1_000_000n, invested: 800_000n })).toBe(50_000n);
+      });
+      it('never invests from an empty/zero pool', () => {
+        expect(investableExcess({ ...base, liquid: 0n })).toBe(0n);
+        expect(investableExcess({ ...base, totalAssets: 0n, liquid: 0n })).toBe(0n);
+      });
+    });
+
+    describe('divestForBufferFloor', () => {
+      const base = { totalAssets: 1_000_000n, invested: 800_000n, bufferBps: 1500, floorBps: 1000 };
+      it('refills to the buffer target when liquid drops below the floor', () => {
+        // liquid 50,000 < floor 100,000 → pull to target 150,000 → divest 100,000
+        expect(divestForBufferFloor({ ...base, liquid: 50_000n })).toBe(100_000n);
+      });
+      it('does nothing while liquid is at/above the floor', () => {
+        expect(divestForBufferFloor({ ...base, liquid: 100_000n })).toBe(0n);
+        expect(divestForBufferFloor({ ...base, liquid: 200_000n })).toBe(0n);
+      });
+      it('is bounded by what is actually invested', () => {
+        expect(divestForBufferFloor({ ...base, liquid: 0n, invested: 40_000n })).toBe(40_000n);
+      });
+    });
+
+    it('unwindForWithdrawal covers only the shortfall beyond the liquid balance', () => {
+      expect(unwindForWithdrawal(300n, 100n)).toBe(200n);
+      expect(unwindForWithdrawal(80n, 100n)).toBe(0n); // buffer covers it
+      expect(unwindForWithdrawal(100n, 100n)).toBe(0n);
+    });
+
+    it('minOutAfterSlippage applies the slippage cap (and floors at 0)', () => {
+      expect(minOutAfterSlippage(1_000_000n, 50)).toBe(995_000n); // 0.5%
+      expect(minOutAfterSlippage(0n, 50)).toBe(0n);
+      expect(minOutAfterSlippage(1_000n, 0)).toBe(1_000n);
+    });
+
+    it('harvestableYield is the gain above cost basis, never negative', () => {
+      expect(harvestableYield(1_050n, 1_000n)).toBe(50n); // appreciated
+      expect(harvestableYield(1_000n, 1_000n)).toBe(0n); // flat
+      expect(harvestableYield(950n, 1_000n)).toBe(0n); // a loss is held, not minted
+    });
+
+    describe('vaultStrategyDrift', () => {
+      const tol = VAULT.STRATEGY.DRIFT_TOLERANCE_BPS;
+      it('is ok when total == liquid + strategyValue', () => {
+        const r = vaultStrategyDrift({
+          totalAssets: 1_000_000n,
+          liquid: 200_000n,
+          strategyValue: 800_000n,
+          toleranceBps: tol,
+        });
+        expect(r.drift).toBe(0n);
+        expect(r.ok).toBe(true);
+      });
+      it('flags drift beyond tolerance and reports its sign', () => {
+        const r = vaultStrategyDrift({
+          totalAssets: 1_000_000n,
+          liquid: 200_000n,
+          strategyValue: 700_000n, // 100,000 short
+          toleranceBps: tol,
+        });
+        expect(r.drift).toBe(-100_000n);
+        expect(r.ok).toBe(false);
+      });
     });
   });
 });

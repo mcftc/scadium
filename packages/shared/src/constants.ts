@@ -557,7 +557,35 @@ export const VAULT = {
     { minScadBase: 250_000_000_000_000n, multiplierBps: 15_000, label: 'Gold' }, // 250k SCAD → 1.50×
     { minScadBase: 1_000_000_000_000_000n, multiplierBps: 20_000, label: 'Diamond' }, // 1M SCAD → 2.00×
   ],
+  /**
+   * Faz 3 real-DeFi strategy parameters (V11 jitoSOL / V12 Kamino — see
+   * `docs/runbooks/vault-faz3-defi-design.md`). A pool keeps `BUFFER_BPS` of its
+   * assets liquid for instant withdrawals and may deploy the rest into a yield
+   * strategy, never exceeding `MAX_INVESTED_BPS`. When liquid falls below
+   * `BUFFER_FLOOR_BPS` the strategy is divested back to the buffer target.
+   * Off-chain-first: these drive `VaultStrategyService`'s planning today and the
+   * on-chain `vault_invest`/`vault_divest`/`vault_harvest` CPIs once deployed.
+   */
+  STRATEGY: {
+    /** Target liquid fraction kept for instant withdrawals (15%). */
+    BUFFER_BPS: 1500,
+    /** Refill trigger: divest to the buffer target once liquid drops below 10%. */
+    BUFFER_FLOOR_BPS: 1000,
+    /** Hard cap on assets deployed into a strategy (≤ 85% → ≥ 15% recoverable). */
+    MAX_INVESTED_BPS: 8500,
+    /** Don't bother investing dust below this (base units) — avoids churn/fees. */
+    MIN_INVEST_BASE: 1_000_000_000,
+    /** Max tolerated slippage unwinding a position to cover a withdrawal (0.5%). */
+    MAX_UNWIND_SLIPPAGE_BPS: 50,
+    /** Harvest cadence (1h) — aligns with the hourly accrual round. */
+    HARVEST_INTERVAL_MS: 3_600_000,
+    /** Reconciliation tolerance: |total − (liquid + strategyValue)| ≤ this (bps). */
+    DRIFT_TOLERANCE_BPS: 1,
+  },
 } as const;
+
+/** A pool's Faz 3 yield strategy (off-chain mirror of the on-chain `Strategy` enum). */
+export type VaultStrategy = 'none' | 'jito_stake' | 'kamino_lend';
 
 /** A single $SCAD-holdings loyalty boost tier (see `VAULT.BOOST_TIERS`). */
 export type ScadBoostTier = (typeof VAULT.BOOST_TIERS)[number];
@@ -590,6 +618,100 @@ export function nextScadBoostTier(holdingsBase: bigint): ScadBoostTier | null {
  */
 export function boostedAprBps(baseAprBps: number, multiplierBps: number): number {
   return Math.round((baseAprBps * multiplierBps) / 10_000);
+}
+
+// ---------- Vault Faz 3 strategy math (V11/V12) ----------
+// Pure, BigInt-safe helpers shared by `VaultStrategyService` (off-chain) and
+// mirrored by the on-chain `vault_invest`/`vault_divest`/`vault_harvest` CPIs.
+// `liquid` = assets sitting in the pool token account; `invested` = assets
+// deployed in the strategy; `strategyValue` = the position's current on-chain
+// worth (≥ invested once yield accrues). All amounts are asset base units.
+
+/** Liquid balance a pool targets for instant withdrawals (`bufferBps` of total). */
+export function bufferTargetAssets(totalAssets: bigint, bufferBps: number): bigint {
+  if (totalAssets <= 0n) return 0n;
+  return (totalAssets * BigInt(bufferBps)) / 10_000n;
+}
+
+/**
+ * Idle assets a pool may deploy into its strategy right now: the liquid balance
+ * above the buffer target, additionally capped so total `invested` never exceeds
+ * `maxInvestedBps` of `totalAssets`. Zero when at/under the buffer or at the cap.
+ */
+export function investableExcess(args: {
+  liquid: bigint;
+  invested: bigint;
+  totalAssets: bigint;
+  bufferBps: number;
+  maxInvestedBps: number;
+}): bigint {
+  const { liquid, invested, totalAssets, bufferBps, maxInvestedBps } = args;
+  if (totalAssets <= 0n || liquid <= 0n) return 0n;
+  const target = bufferTargetAssets(totalAssets, bufferBps);
+  const aboveBuffer = liquid > target ? liquid - target : 0n;
+  const investCap = (totalAssets * BigInt(maxInvestedBps)) / 10_000n;
+  const capRoom = invested >= investCap ? 0n : investCap - invested;
+  return aboveBuffer < capRoom ? aboveBuffer : capRoom;
+}
+
+/**
+ * Assets to divest back to the buffer when liquid has fallen below the floor.
+ * Pulls enough to reach the buffer TARGET (not just the floor), bounded by what
+ * is actually invested. Zero while liquid is at/above the floor.
+ */
+export function divestForBufferFloor(args: {
+  liquid: bigint;
+  invested: bigint;
+  totalAssets: bigint;
+  bufferBps: number;
+  floorBps: number;
+}): bigint {
+  const { liquid, invested, totalAssets, bufferBps, floorBps } = args;
+  if (totalAssets <= 0n || invested <= 0n) return 0n;
+  const floor = bufferTargetAssets(totalAssets, floorBps);
+  if (liquid >= floor) return 0n;
+  const target = bufferTargetAssets(totalAssets, bufferBps);
+  const need = target - liquid; // > 0 since liquid < floor ≤ target
+  return need < invested ? need : invested;
+}
+
+/** Assets to unwind from the strategy to cover a withdrawal the buffer can't (`net > liquid`). */
+export function unwindForWithdrawal(net: bigint, liquid: bigint): bigint {
+  return net > liquid ? net - liquid : 0n;
+}
+
+/** Minimum acceptable output when unwinding `amount` within a slippage cap. */
+export function minOutAfterSlippage(amount: bigint, slippageBps: number): bigint {
+  if (amount <= 0n) return 0n;
+  return (amount * BigInt(10_000 - slippageBps)) / 10_000n;
+}
+
+/**
+ * Realised strategy yield to credit the pool index at harvest: how much the
+ * deployed position has appreciated above its cost basis (`invested`). Never
+ * negative (a loss is held, not minted as negative yield — surfaced via drift).
+ */
+export function harvestableYield(strategyValue: bigint, invested: bigint): bigint {
+  return strategyValue > invested ? strategyValue - invested : 0n;
+}
+
+/**
+ * Strategy reconciliation invariant: a pool's `totalAssets` must equal
+ * `liquid + strategyValue` within `toleranceBps`. Returns the signed drift
+ * (assets) and whether it is within tolerance — the off-chain analogue of the
+ * on-chain check, used flag-only by `ReconciliationService.vaultStrategyDrift`.
+ */
+export function vaultStrategyDrift(args: {
+  totalAssets: bigint;
+  liquid: bigint;
+  strategyValue: bigint;
+  toleranceBps: number;
+}): { drift: bigint; ok: boolean } {
+  const { totalAssets, liquid, strategyValue, toleranceBps } = args;
+  const drift = liquid + strategyValue - totalAssets;
+  const abs = drift < 0n ? -drift : drift;
+  const tol = (totalAssets * BigInt(toleranceBps)) / 10_000n;
+  return { drift, ok: abs <= tol };
 }
 
 /**

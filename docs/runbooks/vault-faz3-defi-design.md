@@ -1,10 +1,14 @@
 # SCAD Vault — Faz 3 (real DeFi yield) design & skeleton
 
-Status: **design only — NOT implemented.** Faz 1 (off-chain $SCAD term vault +
-house-revenue yield) and Faz 2 (on-chain program + bridge) are merged. Faz 3
-adds **real external yield** (liquid staking + lending) and cannot be written
-"decoratively": the CPIs target live mainnet protocol accounts. This document is
-the blueprint to pick up once the preconditions below are met.
+Status: **off-chain skeleton scaffolded; on-chain NOT implemented.** Faz 1
+(off-chain $SCAD term vault + house-revenue yield) and Faz 2 (on-chain program +
+bridge) are merged. The Faz-3 **off-chain interface** — strategy constants +
+pure buffer/unwind/harvest math, `VaultStrategyService`, and the cosigner-gated
+`ChainService` seams — is now wired and unit-tested but no-ops until the chain
+layer is enabled (§3). The remaining work is the **on-chain half** (real external
+yield via liquid staking + lending): the CPIs target live mainnet protocol
+accounts and cannot be written "decoratively". This document is the blueprint to
+finish once the preconditions below are met.
 
 Tracks GitHub issues **#260 (V11)**, **#261 (V12)**, **#262 (V13)** under epic #249.
 
@@ -81,24 +85,39 @@ CPI targets (remaining-accounts / specific contexts):
 - **V12 — Kamino**: `lend` / `withdraw` against a Kamino reserve (kUSDC), interest
   accrues in the cToken → harvest = revalue.
 
-## 3. Off-chain skeleton (`apps/api`)
+## 3. Off-chain skeleton (`apps/api`) — **SCAFFOLDED** (devnet-free)
 
-- `VaultStrategyService` (new): owns the invest/divest/harvest cadence per pool,
-  worker-driven (queue `vault-strategy`, Redis-locked, idempotent per period),
-  enforcing `buffer_bps`. Mirrors `VaultAccrualService`'s structure.
-  - `rebalance(poolId)` — if `liquid > buffer target`, `vault_invest` the excess;
-    if `liquid < buffer floor`, `vault_divest` to refill.
-  - `harvest(poolId)` — read strategy position value, compute delta vs `invested`,
-    credit the pool index via the existing accrual path (off-chain) + on-chain
-    `vault_harvest` when live.
-- `ChainService`: `vaultInvest` / `vaultDivest` / `vaultHarvest` / `readStrategyValue`
-  — all cosigner-gated, null when disabled (mirror `vaultAccrue`).
-- `ReconciliationService.vaultStrategyDrift()` — assert
-  `pool.total_assets ≈ liquid_balance + strategy_value` (flag-only), extending
-  `vaultDrift`. Add an **unwind-shortfall** alert (strategy can't cover a queued
-  withdrawal).
-- New shared constants in `VAULT`: `BUFFER_BPS`, `HARVEST_INTERVAL_MS`,
-  `MAX_UNWIND_SLIPPAGE_BPS`, per-strategy caps.
+The off-chain interface below is now wired and unit-tested; it stays a no-op
+until the chain layer is enabled (`ChainService.enabled`), which requires the
+deploy + audit + legal gates in §0. Filling in the CPI encoding is the only
+remaining step once the program ships.
+
+- **`VaultStrategyService`** (`apps/api/src/vault/vault-strategy.service.ts`):
+  owns the invest/divest/harvest cadence per pool, enforcing `BUFFER_BPS`.
+  Mirrors `VaultAccrualService`'s structure.
+  - `planRebalance(snap)` / `planHarvest(snap)` — **pure** (static), fully tested:
+    if `liquid > buffer target` → invest the excess (capped at `MAX_INVESTED_BPS`);
+    if `liquid < buffer floor` → divest to refill; harvest = gain above cost basis.
+  - `rebalance()` / `harvest()` / `strategyDrift()` — gated executors that no-op
+    while disabled (worker queue `vault-strategy` is TODO: register once live).
+- **`ChainService`** seams (`apps/api/src/solana/chain.service.ts`):
+  `vaultInvest` / `vaultDivest` / `vaultHarvest` / `readStrategyValue` — all
+  cosigner-gated, null/no-op when disabled (mirror `vaultAccrue`). The CPI
+  encoding is a `TODO(V11/V12)` since the program instructions aren't deployed.
+- **`vaultStrategyDrift()`** invariant lives in `@scadium/shared` (pure, tested);
+  `VaultStrategyService.strategyDrift()` applies it flag-only with an
+  **unwind-shortfall** alert. Wiring it into `ReconciliationService`'s periodic
+  scan is TODO (needs the persisted `invested`/`strategy` pool state).
+- **Shared constants** (`packages/shared/src/constants.ts` → `VAULT.STRATEGY`):
+  `BUFFER_BPS`, `BUFFER_FLOOR_BPS`, `MAX_INVESTED_BPS`, `MIN_INVEST_BASE`,
+  `MAX_UNWIND_SLIPPAGE_BPS`, `HARVEST_INTERVAL_MS`, `DRIFT_TOLERANCE_BPS`, plus
+  the `VaultStrategy` type and pure helpers (`bufferTargetAssets`,
+  `investableExcess`, `divestForBufferFloor`, `unwindForWithdrawal`,
+  `minOutAfterSlippage`, `harvestableYield`, `vaultStrategyDrift`).
+
+> Still TODO for the live implementation: the Prisma `VaultPool` mirror gains
+> `invested` / `strategy` columns (a migration), the `vault-strategy` worker
+> queue registration, and the CPI encoding in the four `ChainService` seams.
 
 ## 4. Task breakdown
 
