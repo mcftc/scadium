@@ -998,6 +998,56 @@ export class ChainService implements OnModuleInit {
       return null;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Vault Faz 3 (real-DeFi yield) seams — V11 jitoSOL / V12 Kamino.
+  // Cosigner-gated and null/no-op when disabled, exactly like `vaultAccrue`. The
+  // on-chain instructions (`vault_invest`/`vault_divest`/`vault_harvest`) do NOT
+  // exist in `programs/scadium_vault` yet — Faz 3 is gated on deploy + audit +
+  // legal (see `docs/runbooks/vault-faz3-defi-design.md` §0). These define the
+  // interface `VaultStrategyService` calls so the rest of the off-chain skeleton
+  // is wired and testable now; fill in the CPI encoding when the program ships.
+  // ---------------------------------------------------------------------------
+
+  /** Deploy idle pool assets (above the buffer) into the pool's strategy. Null when disabled. */
+  async vaultInvest(_params: { termDays: number; amount: bigint }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner) return null;
+    // TODO(V11/#260): encode the `vault_invest` CPI (Jito stake-pool deposit_sol
+    // / Kamino lend) once the program instruction exists. Cosigner-signed; the
+    // cosigner may only move pool↔strategy, never to an arbitrary destination.
+    this.logger.warn('vaultInvest called but the vault_invest instruction is not deployed yet');
+    return null;
+  }
+
+  /** Pull assets back from the strategy (buffer refill or large withdrawal). Null when disabled. */
+  async vaultDivest(_params: { termDays: number; amount: bigint }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner) return null;
+    // TODO(V11/#260): encode the `vault_divest` CPI (withdraw_stake / Kamino
+    // withdraw), enforcing the unwind slippage cap (`MAX_UNWIND_SLIPPAGE_BPS`).
+    this.logger.warn('vaultDivest called but the vault_divest instruction is not deployed yet');
+    return null;
+  }
+
+  /** Realise accrued strategy yield → credit the pool index. Null when disabled. */
+  async vaultHarvest(_params: { termDays: number }): Promise<string | null> {
+    if (!this.enabled || !this.cosigner) return null;
+    // TODO(V12/#261): encode the `vault_harvest` CPI (revalue the LST/cToken
+    // position and credit the index via the existing apply_accrual path).
+    this.logger.warn('vaultHarvest called but the vault_harvest instruction is not deployed yet');
+    return null;
+  }
+
+  /**
+   * Current on-chain worth of a pool's deployed strategy position (≥ its cost
+   * basis once yield accrues), for harvest + reconciliation. Null when disabled
+   * or no position exists.
+   */
+  async readStrategyValue(_termDays: number): Promise<bigint | null> {
+    if (!this.enabled) return null;
+    // TODO(V11/#260): read the LST/cToken balance and apply the live exchange
+    // rate to value the position in the pool's asset.
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------ utils
