@@ -1,0 +1,118 @@
+name: Deploy programs (devnet)
+
+# Manual deploy of the three Anchor programs (scadium_vault/swap/lottery) to
+# Solana devnet. Sidesteps the Windows/WSL build requirement by building on a
+# free Ubuntu runner. Program ids are pinned by the committed
+# target/deploy/*-keypair.json, so re-runs hit the same addresses.
+#
+# Prereqs (one-time):
+#   1. Repo secret DEVNET_DEPLOYER_KEY = the deployer wallet's id.json (a JSON
+#      array of 64 bytes). This wallet PAYS for the deploy (program ids come from
+#      the committed keypairs, not this one).
+#   2. Fund that wallet on devnet (~8 SOL): https://faucet.solana.com
+#      (the public RPC airdrop is usually rate-limited/dry).
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: Cluster to deploy to
+        type: choice
+        default: devnet
+        options: [devnet, testnet]
+      min_balance_sol:
+        description: Abort if the deployer holds less than this many SOL
+        type: string
+        default: '6'
+
+concurrency:
+  group: deploy-${{ github.event.inputs.cluster }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Same toolchain versions as the green `anchor-tests` CI job — proven to
+      # build these exact programs.
+      - name: Install Solana (agave, prebuilt)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.1/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI (prebuilt release binary)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/anchor" \
+            https://github.com/solana-foundation/anchor/releases/download/v1.0.2/anchor-1.0.2-x86_64-unknown-linux-gnu
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache SBF platform-tools
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/solana
+          key: platform-tools-${{ runner.os }}-agave-4.0.1
+
+      - name: Load deployer wallet
+        env:
+          DEVNET_DEPLOYER_KEY: ${{ secrets.DEVNET_DEPLOYER_KEY }}
+        run: |
+          if [ -z "$DEVNET_DEPLOYER_KEY" ]; then
+            echo "::error::DEVNET_DEPLOYER_KEY secret is not set. Add it (the deployer id.json array) in repo Settings → Secrets → Actions." >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.config/solana"
+          printf '%s' "$DEVNET_DEPLOYER_KEY" > "$HOME/.config/solana/id.json"
+          solana config set --url "https://api.${{ github.event.inputs.cluster }}.solana.com" >/dev/null
+          echo "Deployer: $(solana-keygen pubkey "$HOME/.config/solana/id.json")"
+
+      - name: Check / top up balance
+        run: |
+          PUBKEY=$(solana-keygen pubkey "$HOME/.config/solana/id.json")
+          # Best-effort airdrop (usually rate-limited on public devnet — fund via faucet.solana.com).
+          solana airdrop 2 "$PUBKEY" || true
+          BAL=$(solana balance "$PUBKEY" | awk '{print $1}')
+          echo "Balance: ${BAL} SOL"
+          MIN='${{ github.event.inputs.min_balance_sol }}'
+          if awk "BEGIN{exit !(${BAL:-0} < ${MIN})}"; then
+            echo "::error::Deployer ${PUBKEY} holds ${BAL} SOL (< ${MIN}). Fund it at https://faucet.solana.com then re-run." >&2
+            exit 1
+          fi
+
+      - name: anchor build
+        run: anchor build
+
+      - name: Verify committed IDL still matches the build (no drift)
+        run: git diff --exit-code target/idl target/types
+
+      - name: anchor deploy
+        run: anchor deploy --provider.cluster "${{ github.event.inputs.cluster }}"
+
+      - name: Upload / upgrade on-chain IDL
+        run: |
+          for p in scadium_vault scadium_swap scadium_lottery; do
+            id=$(solana-keygen pubkey "target/deploy/${p}-keypair.json")
+            anchor idl init  --provider.cluster "${{ github.event.inputs.cluster }}" -f "target/idl/$p.json" "$id" \
+              || anchor idl upgrade --provider.cluster "${{ github.event.inputs.cluster }}" -f "target/idl/$p.json" "$id" \
+              || echo "::warning::IDL publish failed for $p (non-fatal)"
+          done
+
+      - name: Summary
+        run: |
+          C='${{ github.event.inputs.cluster }}'
+          {
+            echo "### Deployed to ${C} :rocket:"
+            echo ""
+            echo "| Program | Address | Explorer |"
+            echo "|---|---|---|"
+            for p in scadium_vault scadium_swap scadium_lottery; do
+              id=$(solana-keygen pubkey "target/deploy/${p}-keypair.json")
+              echo "| \`$p\` | \`$id\` | [view](https://explorer.solana.com/address/$id?cluster=${C}) |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -78,7 +78,9 @@ async function bootstrap() {
   // Swagger — gated: OFF in production unless DOCS_ENABLED=true (#38).
   const docs = setupSwagger(app);
 
-  const port = Number(process.env.API_PORT ?? 4000);
+  // API_PORT for local/compose; PORT is what most PaaS hosts (Render/Railway/Fly)
+  // inject and route to — honor it so the same image deploys unmodified.
+  const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
   await app.listen(port, '0.0.0.0');
   logger.log(`🎰 Scadium API running on http://localhost:${port}`);
   if (docs) logger.log(`📚 Swagger docs: http://localhost:${port}/docs`);
