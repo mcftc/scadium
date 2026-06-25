@@ -17,6 +17,20 @@ devnet**, and the app across Vercel + Render + Neon + Upstash. The app runs in
 > and Solana's docs make WSL mandatory on Windows. The CI runner is Linux and
 > already builds these programs, so we deploy from there — no local WSL needed.
 
+### Already provisioned (this deploy)
+
+| Resource | Status | Identifier |
+|---|---|---|
+| Neon Postgres | ✅ created + **migrated** | project `scadium-devnet` (org `scadium`, us-east-1) |
+| Upstash Redis | ✅ created | `scadium-devnet` (us-east-1, TLS) |
+| Vercel web | ✅ **live** | <https://scadium.vercel.app> (project `scadium`) |
+| GH deploy workflow + `DEVNET_DEPLOYER_KEY` | ✅ ready | deployer `6y88nGbYGVzsHc49SuGfyFEcBgdsDYYeqMKiBJLsJtDT` |
+
+`DATABASE_URL` / `REDIS_URL` are not committed — retrieve them with
+`neonctl connection-string --project-id <id>` and `upstash redis get --db-id <id>`,
+or from each dashboard. **Remaining:** fund the deployer + run the deploy workflow
+(Part A), and host the API/worker (Part D).
+
 ---
 
 ## Part A — Deploy the programs to devnet
@@ -90,18 +104,25 @@ Program IDs are already pinned by the committed `target/deploy/*-keypair.json`
 > `https://scadium-worker.onrender.com/` every few minutes (e.g. cron-job.org) or
 > upgrade it to a paid background worker. Core gameplay does not depend on it.
 
-## Part E — Web (Vercel)
+## Part E — Web (Vercel) — already deployed
 
-1. <https://vercel.com> → **Add New → Project** → import this repo. [`vercel.json`](vercel.json)
-   sets the monorepo build (builds `@scadium/shared` + `@scadium/fair` first).
-2. Set **Environment Variables** (build-time — `NEXT_PUBLIC_*` are inlined):
-   - `NEXT_PUBLIC_API_URL` = the Render API URL (Part D)
-   - `NEXT_PUBLIC_WS_URL` = same host with `wss://` (e.g. `wss://scadium-api.onrender.com`)
-   - `NEXT_PUBLIC_SOLANA_NETWORK` = `devnet`
-   - `NEXT_PUBLIC_SOLANA_RPC` = `https://api.devnet.solana.com`
-   - `NEXT_PUBLIC_APP_NAME` = `Scadium`
-3. Deploy. Note the URL, then go back to **Part D** and set the API's `CORS_ORIGIN`
-   / `SIWS_*` to this origin and redeploy the API.
+Project `scadium` is created, linked to this repo, and **live at
+<https://scadium.vercel.app>**. There is no committed `vercel.json`; the monorepo
+build lives in the Vercel **project settings**:
+
+- Root Directory: `apps/web`
+- Build Command: `cd ../.. && pnpm turbo run build --filter=@scadium/web`
+  (turbo's `^build` compiles `@scadium/shared` + `@scadium/fair` first)
+- Output Directory: `.next`
+- Install Command: `pnpm install --frozen-lockfile`
+- Env (Production): `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`,
+  `NEXT_PUBLIC_SOLANA_NETWORK=devnet`, `NEXT_PUBLIC_SOLANA_RPC`, `NEXT_PUBLIC_APP_NAME`.
+
+`NEXT_PUBLIC_API_URL`/`WS_URL` currently point at the predicted Render URL
+(`https://scadium-api.onrender.com`). Once the API is live (Part D), if its URL
+differs, update those two env vars and redeploy: `vercel --prod` (or push to main —
+the repo is git-connected). Then set the API's `CORS_ORIGIN`/`SIWS_*` to
+`https://scadium.vercel.app`.
 
 ## Part F — Verify
 
