@@ -4,9 +4,16 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { generateServerSeed, commitServerSeed, coinflipResult } from '@scadium/fair';
+import {
+  generateServerSeed,
+  commitServerSeed,
+  coinflipResult,
+  deriveSeedContext,
+} from '@scadium/fair';
+import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { COINFLIP } from '@scadium/shared';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { randomUUID } from 'node:crypto';
@@ -42,6 +49,9 @@ export class CoinflipService {
     private readonly rg: RgService,
     private readonly affiliates: AffiliatesService,
     private readonly proofOfWager: ProofOfWagerService,
+    // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
+    // when live each flip's outcome is anchored on the ONE scadium_rng program.
+    @Optional() private readonly onchainRng?: OnchainRngService,
   ) {}
 
   // ------------ Queries ------------
@@ -139,6 +149,38 @@ export class CoinflipService {
     // Self-exclusion / cooling-off block (0n: the SOL limit is keyed off the
     // create stake; joins still hard-block excluded/cooling-off users).
     await this.rg.assertCanWager(params.userId, 0n);
+
+    // ON-CHAIN ANCHORING (shared scadium_rng): reserve the JOINER's seed and drive
+    // a round for this flip BEFORE the settle tx, so the ~1s commit→reveal never
+    // holds the tx open. The per-flip serverSeed is committed at create and is
+    // IMMUTABLE until resolve, so a non-claiming pre-read is safe; the in-tx CAS
+    // claim stays the only concurrency gate. Off-chain — or on ANY failure —
+    // `reserved`/`onchainEntropy` stay null and the flip derives exactly as today.
+    let reserved: {
+      serverSeed: string;
+      serverSeedHash: string;
+      clientSeed: string;
+      nonce: bigint;
+    } | null = null;
+    let onchainEntropy: Uint8Array | null = null;
+    if (this.onchainRng?.live) {
+      const pre = await this.prisma.coinflipGame.findUnique({
+        where: { id: params.gameId },
+        include: { seed: true },
+      });
+      if (pre?.status === 'open' && pre.seed?.serverSeed && pre.creatorId !== params.userId) {
+        reserved = await this.seeds.reserveSeedContext(params.userId);
+        onchainEntropy = await this.onchainRng.roundEntropy({
+          gameType: 'coinflip',
+          roundId: this.onchainRng.nextRoundId(),
+          serverSeed: pre.seed.serverSeed,
+          clientSeed: reserved.clientSeed,
+          nonce: Number(reserved.nonce),
+          gameParams: {},
+        });
+      }
+    }
+
     const settled = await this.prisma.$transaction(async (tx) => {
       // Claim/replay happens INSIDE the ledger tx so a thrown settle rolls the
       // claim back too. A replay returns the stored dto and fires NO chain
@@ -146,7 +188,7 @@ export class CoinflipService {
       const replay = await claimIdempotency(tx, params.userId, 'coinflip_join', key);
       if (replay) {
         return {
-          dto: replay as ReturnType<typeof this.serialize>,
+          dto: replay as ReturnType<CoinflipService['serialize']>,
           replayed: true as const,
           stake: BigInt(0),
           settles: [] as {
@@ -196,9 +238,20 @@ export class CoinflipService {
       // per-flip serverSeed was committed at create (before the joiner/their seed
       // was known), so the operator cannot grind the outcome.
       if (!game.seed) throw new Error('Seed missing for flip');
-      const ctx = await this.seeds.consumeNonce(tx, params.userId);
+      // Use the pre-reserved joiner seed (on-chain mode) or consume it now
+      // (off-chain). Fold the per-flip serverSeed with the shared-RNG entropy when
+      // present — off-chain the fold is a pass-through, so the result is identical.
+      const ctx = reserved ?? (await this.seeds.consumeNonce(tx, params.userId));
       const flipNonce = Number(ctx.nonce);
-      const result = coinflipResult(game.seed.serverSeed!, ctx.clientSeed, flipNonce);
+      const flipSeed = onchainEntropy
+        ? deriveSeedContext({
+            serverSeed: game.seed.serverSeed!,
+            clientSeed: ctx.clientSeed,
+            nonce: flipNonce,
+            onchainEntropy,
+          }).serverSeed
+        : game.seed.serverSeed!;
+      const result = coinflipResult(flipSeed, ctx.clientSeed, flipNonce);
       const creatorWins = result === (game.creatorSide as Side);
       const winnerId = creatorWins ? game.creatorId : params.userId;
       const loserId = creatorWins ? params.userId : game.creatorId;
@@ -206,8 +259,7 @@ export class CoinflipService {
       // 1.9x payout goes to winner from the 2x pot (5% house edge)
       const pot = game.amountLamports * BigInt(2);
       const winnerPayout =
-        (game.amountLamports * BigInt(Math.round(COINFLIP.PAYOUT_MULTIPLIER * 100))) /
-        BigInt(100);
+        (game.amountLamports * BigInt(Math.round(COINFLIP.PAYOUT_MULTIPLIER * 100))) / BigInt(100);
       // House take = pot - winnerPayout (retained by the protocol)
 
       const profit = winnerPayout - game.amountLamports;
@@ -425,10 +477,7 @@ export class CoinflipService {
 
   // ------------ Helpers ------------
   private assertBetRange(amount: bigint) {
-    if (
-      amount < BigInt(COINFLIP.MIN_BET_LAMPORTS) ||
-      amount > BigInt(COINFLIP.MAX_BET_LAMPORTS)
-    ) {
+    if (amount < BigInt(COINFLIP.MIN_BET_LAMPORTS) || amount > BigInt(COINFLIP.MAX_BET_LAMPORTS)) {
       throw new BadRequestException(
         `Bet out of range (${COINFLIP.MIN_BET_LAMPORTS}-${COINFLIP.MAX_BET_LAMPORTS} lamports)`,
       );

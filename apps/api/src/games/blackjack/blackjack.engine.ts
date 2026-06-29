@@ -1,4 +1,10 @@
-import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Optional,
+  type OnModuleInit,
+  type OnModuleDestroy,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   blackjackDeal,
@@ -10,6 +16,7 @@ import {
   generateServerSeed,
   generateClientSeed,
   commitServerSeed,
+  deriveSeedContext,
   type TwentyOnePlusThreeOutcome,
   type PerfectPairsOutcome,
   type DealLogEntry,
@@ -20,6 +27,7 @@ import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
@@ -79,6 +87,11 @@ interface TableState {
   serverSeed: string | null;
   serverSeedHash: string | null;
   clientSeed: string | null;
+  /** Seed the deck is dealt from. Off-chain === serverSeed; when the shared
+   * scadium_rng is live this is serverSeed folded with the round's on-chain
+   * entropy, so the cards derive from the ONE program. serverSeed stays the
+   * revealed commitment preimage. */
+  dealSeed: string | null;
   nonce: number;
   timer: NodeJS.Timeout | null;
   /** Private tables self-destruct after 10 idle minutes. */
@@ -117,9 +130,16 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
+    // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
+    // when live the round's deck is anchored on the ONE scadium_rng program.
+    @Optional() private readonly onchainRng?: OnchainRngService,
   ) {
     if (this.redis) {
-      this.election = new LeaderElection(this.redis.client, BLACKJACK_LOCK_KEY, BLACKJACK_LOCK_TTL_MS);
+      this.election = new LeaderElection(
+        this.redis.client,
+        BLACKJACK_LOCK_KEY,
+        BLACKJACK_LOCK_TTL_MS,
+      );
     }
   }
 
@@ -227,9 +247,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
             data: { status: 'waiting' },
           });
         });
-        this.logger.log(
-          `blackjack recovery: round ${round.id} refunded ${refunds.length} seat(s)`,
-        );
+        this.logger.log(`blackjack recovery: round ${round.id} refunded ${refunds.length} seat(s)`);
       } catch (e) {
         // #219 — another settler (a live settle or a concurrent recovery pass)
         // already claimed this round: benign, not a recovery failure. No dead-letter.
@@ -328,6 +346,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       serverSeed: null,
       serverSeedHash: null,
       clientSeed: null,
+      dealSeed: null,
       nonce: 0,
       timer: null,
       lastActivityAt: Date.now(),
@@ -523,11 +542,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    * has already debited `betTotal`; replacing returns the previous total for
    * refund. Placing the first bet of a round starts the betting countdown.
    */
-  placeBet(params: {
-    tableId: string;
-    userId: string;
-    bet: SeatBet;
-  }): { previousTotalLamports: bigint } {
+  placeBet(params: { tableId: string; userId: string; bet: SeatBet }): {
+    previousTotalLamports: bigint;
+  } {
     const t = this.table(params.tableId);
     if (t.phase !== 'idle' && t.phase !== 'betting' && t.phase !== 'settled') {
       throw new Error('Bets are closed — wait for the next round');
@@ -544,10 +561,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       const prevPotential =
         prev > BigInt(0) ? ExposureGuard.potential(prev, BLACKJACK.MAX_PAYOUT_X) : BigInt(0);
       t.exposure.release(prevPotential);
-      const potential = ExposureGuard.potential(
-        this.betTotal(params.bet),
-        BLACKJACK.MAX_PAYOUT_X,
-      );
+      const potential = ExposureGuard.potential(this.betTotal(params.bet), BLACKJACK.MAX_PAYOUT_X);
       if (!t.exposure.reserve(potential)) {
         t.exposure.reserve(prevPotential); // restore the replaced bet's hold
         throw new Error('Round exposure limit reached — try a smaller bet or the next round');
@@ -614,7 +628,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (this.chain.enabled) {
       const bankroll = await this.chain.houseVaultBalance();
       if (bankroll === null) {
-        this.logger.warn(`table ${t.id}: house bankroll unreadable — exposure guard off this round`);
+        this.logger.warn(
+          `table ${t.id}: house bankroll unreadable — exposure guard off this round`,
+        );
       } else {
         t.exposure = new ExposureGuard(bankroll);
       }
@@ -655,6 +671,32 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     t.clientSeed = clientSeed;
     t.nonce = 0;
 
+    // ON-CHAIN ANCHORING (shared scadium_rng): the deck is dealt from `dealSeed`.
+    // Off-chain it === serverSeed (byte-identical deck). When live, drive a round
+    // during the betting window (deal is BETTING_WINDOW_MS away) and fold the
+    // program's entropy in, so the cards derive from the ONE program. serverSeed
+    // stays the revealed commitment preimage; a restart refunds the round, so
+    // `dealSeed` needs no persistence.
+    t.dealSeed = serverSeed;
+    if (this.onchainRng?.live) {
+      const entropy = await this.onchainRng.roundEntropy({
+        gameType: 'blackjack',
+        roundId: this.onchainRng.nextRoundId(),
+        serverSeed,
+        clientSeed,
+        nonce: 0,
+        gameParams: {},
+      });
+      if (entropy) {
+        t.dealSeed = deriveSeedContext({
+          serverSeed,
+          clientSeed,
+          nonce: 0,
+          onchainEntropy: entropy,
+        }).serverSeed;
+      }
+    }
+
     await this.prisma.blackjackTable.update({ where: { id: t.id }, data: { status: 'betting' } });
     this.broadcast(t);
 
@@ -674,7 +716,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    */
   private drawCard(t: TableState, dealtTo: number | 'dealer', handId: string): Card {
     const deckIndex = t.deckIndex;
-    const card = blackjackDeal(t.serverSeed!, t.clientSeed!, t.nonce, deckIndex + 1)[deckIndex]!;
+    const card = blackjackDeal(t.dealSeed!, t.clientSeed!, t.nonce, deckIndex + 1)[deckIndex]!;
     t.deckIndex += 1;
     t.dealLog.push({ deckIndex, dealtTo, handId, card });
     return card;
@@ -847,7 +889,10 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     t.phase = 'dealer_turn';
     t.activeSeat = null;
     t.closeAt = null;
-    await this.prisma.blackjackTable.update({ where: { id: t.id }, data: { status: 'dealer_turn' } });
+    await this.prisma.blackjackTable.update({
+      where: { id: t.id },
+      data: { status: 'dealer_turn' },
+    });
 
     // Reveal the hole card first — even when everyone busted (UI integrity).
     t.dealerHidden = false;
@@ -923,8 +968,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
       let sidePayout = BigInt(0);
       if (s.side21p3Outcome && s.side21p3Outcome !== 'none') {
         sidePayout +=
-          bet.side21p3Lamports *
-          BigInt(BLACKJACK.SIDE_BETS.twentyOnePlusThree[s.side21p3Outcome]);
+          bet.side21p3Lamports * BigInt(BLACKJACK.SIDE_BETS.twentyOnePlusThree[s.side21p3Outcome]);
       }
       if (s.sidePerfectPairsOutcome && s.sidePerfectPairsOutcome !== 'none') {
         sidePayout +=
@@ -1014,8 +1058,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
               amountLamports: d.stake,
               payoutLamports: d.payout,
               multiplier: d.multiplier,
-              status:
-                d.won ? 'won' : d.payout === d.stake && d.stake > BigInt(0) ? 'won' : 'lost',
+              status: d.won ? 'won' : d.payout === d.stake && d.stake > BigInt(0) ? 'won' : 'lost',
               seedId: t.seedId!,
               nonce: t.nonce,
               resultJson: {
@@ -1029,13 +1072,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
                 // deterministic stream that produced THIS seat's cards (+ the
                 // dealer's), so the player reproduces their hand via @scadium/fair
                 // `reproduceHand`/`reproduceRound`. handIds are split-ready.
-                deckIndices: t.dealLog
-                  .filter((e) => e.dealtTo === s.index)
-                  .map((e) => e.deckIndex),
+                deckIndices: t.dealLog.filter((e) => e.dealtTo === s.index).map((e) => e.deckIndex),
                 handIds: [
-                  ...new Set(
-                    t.dealLog.filter((e) => e.dealtTo === s.index).map((e) => e.handId),
-                  ),
+                  ...new Set(t.dealLog.filter((e) => e.dealtTo === s.index).map((e) => e.handId)),
                 ],
                 dealerDeckIndices: t.dealLog
                   .filter((e) => e.dealtTo === 'dealer')

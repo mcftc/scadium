@@ -1,9 +1,10 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import {
   crashPoint,
   crashPointFromSlot,
+  deriveSeedContext,
   generateServerSeed,
   generateClientSeed,
   commitServerSeed,
@@ -14,6 +15,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { CrashGateway } from './crash.gateway';
@@ -107,6 +109,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
+    // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
+    // when live the round's bust is anchored on the ONE scadium_rng program.
+    @Optional() private readonly onchainRng?: OnchainRngService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, CRASH_LOCK_KEY, CRASH_LOCK_TTL_MS);
@@ -417,13 +422,42 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
-    // Flag on: defer the bust to beginRun (derived from a slot hash that does not
-    // exist at commit, #101). Flag off: today's behaviour — bust committed up front.
-    const entropyOn = onchainEntropyOn();
+
+    // SHARED scadium_rng anchoring takes PRECEDENCE (the single-contract path):
+    // when live, drive a round during the betting window and fold its entropy into
+    // the seed, so the bust derives from the ONE program like every other game.
+    // Off-chain — or on ANY failure — `bustSeed` stays === `serverSeed`
+    // (deriveSeedContext pass-through), byte-identical to today.
+    let bustSeed = serverSeed;
+    let rngAnchored = false;
+    if (this.onchainRng?.live) {
+      const entropy = await this.onchainRng.roundEntropy({
+        gameType: 'crash',
+        roundId: this.onchainRng.nextRoundId(),
+        serverSeed,
+        clientSeed,
+        nonce,
+        gameParams: {},
+      });
+      if (entropy) {
+        bustSeed = deriveSeedContext({
+          serverSeed,
+          clientSeed,
+          nonce,
+          onchainEntropy: entropy,
+        }).serverSeed;
+        rngAnchored = true;
+      }
+    }
+
+    // Legacy #101 slot-hash path runs ONLY when scadium_rng did not anchor: defer
+    // the bust to beginRun (derived from a pinned slot hash that can't exist at
+    // commit). Otherwise the bust is committed up front from `bustSeed`.
+    const entropyOn = !rngAnchored && onchainEntropyOn();
     const targetSlot = entropyOn
       ? ((await this.chain.currentSlot()) ?? 0) + CRASH_ENTROPY_SLOT_DELTA
       : null;
-    const bustPoint = entropyOn ? 0 : crashPoint(serverSeed, clientSeed, nonce);
+    const bustPoint = entropyOn ? 0 : crashPoint(bustSeed, clientSeed, nonce);
 
     const seed = await this.prisma.seed.create({
       data: {
