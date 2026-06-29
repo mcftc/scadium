@@ -54,7 +54,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Cache SBF platform-tools
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/solana
           key: platform-tools-${{ runner.os }}-agave-4.0.1
