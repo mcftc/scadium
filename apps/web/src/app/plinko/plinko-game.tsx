@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
-import { PLINKO } from '@scadium/shared';
+import { PLINKO, plinkoPayouts } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
 import {
   BetAmountInput,
@@ -40,7 +40,7 @@ export function PlinkoGame() {
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
 
-  const payouts = PLINKO.PAYOUTS[rows] ?? [];
+  const payouts = plinkoPayouts(rows) ?? [];
   const validBet = isValidBetSol(sol, PLINKO.MIN_BET_LAMPORTS);
 
   async function onPlace() {

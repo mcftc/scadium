@@ -1,0 +1,24 @@
+[package]
+name = "scadium-rng"
+version = "0.1.0"
+description = "Scadium shared on-chain RNG: commit→reveal + SlotHashes entropy for ALL games"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "scadium_rng"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "1.0"
+solana-sha256-hasher = "3.1"

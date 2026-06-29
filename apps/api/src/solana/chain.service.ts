@@ -118,6 +118,8 @@ export class ChainService implements OnModuleInit {
       this.usdsMint = usdsMint ? new PublicKey(usdsMint) : null;
       const lotteryProgramId = this.config.get<string>('LOTTERY_PROGRAM_ID');
       this.lotteryProgramId = lotteryProgramId ? new PublicKey(lotteryProgramId) : null;
+      const rngProgramId = this.config.get<string>('RNG_PROGRAM_ID');
+      this.rngProgramId = rngProgramId ? new PublicKey(rngProgramId) : null;
       this.enabled = true;
       this.logger.log(
         `On-chain settlement enabled — program ${programId}, cosigner ${this.cosignerProvider.publicKey?.toBase58()} (${this.cosignerProvider.kind})`,
@@ -422,6 +424,7 @@ export class ChainService implements OnModuleInit {
   // ------------------------------------------------------------ lottery
 
   private lotteryProgramId: PublicKey | null = null;
+  private rngProgramId: PublicKey | null = null;
 
   // The lottery is denominated in $SCAD (the role CAKE plays in PancakeSwap):
   // tickets, prizes, burn and injection all move the SCAD mint.
@@ -563,6 +566,127 @@ export class ChainService implements OnModuleInit {
       return { signature, digits, slotHashHex, finalEntropyHex };
     } catch (e) {
       this.logger.error(`reveal_draw ${params.drawIndex} failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------- shared RNG
+  // The `scadium_rng` program supplies commit→reveal + SlotHashes entropy to
+  // EVERY game (not just the lottery). Same off-chain-first hybrid: until it is
+  // deployed (`RNG_PROGRAM_ID` set + cosigner available) every method below
+  // no-ops and the API derives the same entropy from a synthetic slot hash via
+  // `@scadium/fair::deriveSeedContext` — so play-money stays reproducible.
+
+  get rngEnabled(): boolean {
+    return this.enabled && !!this.rngProgramId;
+  }
+  get rngProgramIdBase58(): string | null {
+    return this.rngProgramId?.toBase58() ?? null;
+  }
+
+  rngConfigPda(): PublicKey {
+    return PublicKey.findProgramAddressSync([Buffer.from('rng')], this.rngProgramId!)[0];
+  }
+  rngRoundPda(gameType: number, roundId: bigint): PublicKey {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from('round'), Buffer.from([gameType & 0xff]), u64le(roundId)],
+      this.rngProgramId!,
+    )[0];
+  }
+
+  /** Open a round: commit the seed hash + bound game params, pin a future slot. */
+  async rngOpenRound(params: {
+    gameType: number;
+    roundId: bigint;
+    serverSeedHashHex: string; // 64-char hex
+    clientSeedHex: string; // utf8, zero-padded to 32 bytes
+    gameParamsHashHex: string; // 64-char hex (= @scadium/fair gameParamsHash)
+    nonce: number;
+    targetSlot: bigint;
+  }): Promise<string | null> {
+    if (!this.rngEnabled || !this.cosigner) return null;
+    try {
+      const clientSeed = Buffer.alloc(32);
+      Buffer.from(params.clientSeedHex, 'utf8').copy(clientSeed);
+      const data = Buffer.concat([
+        anchorDiscriminator('open_round'),
+        Buffer.from([params.gameType & 0xff]),
+        u64le(params.roundId),
+        Buffer.from(params.serverSeedHashHex, 'hex'),
+        clientSeed,
+        Buffer.from(params.gameParamsHashHex, 'hex'),
+        u32le(params.nonce),
+        u64le(params.targetSlot),
+      ]);
+      const ix = new TransactionInstruction({
+        programId: this.rngProgramId!,
+        keys: [
+          { pubkey: this.rngConfigPda(), isSigner: false, isWritable: false },
+          {
+            pubkey: this.rngRoundPda(params.gameType, params.roundId),
+            isSigner: false,
+            isWritable: true,
+          },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      return await this.send(ix);
+    } catch (e) {
+      this.logger.error(
+        `rng open_round ${params.gameType}/${params.roundId} failed: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Settle a round: reveal the seed; the PROGRAM re-derives `final_entropy` from
+   * the pinned slot's hash and we read it back (chain is the source of truth).
+   * That entropy is fed to `@scadium/fair::deriveOutcome` so the game outcome is
+   * anchored on-chain and reproducible by anyone.
+   */
+  async rngSettleRound(params: {
+    gameType: number;
+    roundId: bigint;
+    serverSeedHex: string; // 64-char hex → 64 utf8 bytes on-chain
+  }): Promise<{ signature: string; slotHashHex: string; entropyHex: string } | null> {
+    if (!this.rngEnabled || !this.cosigner) return null;
+    try {
+      const data = Buffer.concat([
+        anchorDiscriminator('settle_round'),
+        Buffer.from([params.gameType & 0xff]),
+        u64le(params.roundId),
+        Buffer.from(params.serverSeedHex, 'utf8'),
+      ]);
+      const roundPda = this.rngRoundPda(params.gameType, params.roundId);
+      const ix = new TransactionInstruction({
+        programId: this.rngProgramId!,
+        keys: [
+          { pubkey: this.rngConfigPda(), isSigner: false, isWritable: false },
+          { pubkey: roundPda, isSigner: false, isWritable: true },
+          { pubkey: this.cosigner.publicKey, isSigner: true, isWritable: false },
+          { pubkey: SYSVAR_SLOT_HASHES_PUBKEY, isSigner: false, isWritable: false },
+        ],
+        data,
+      });
+      const signature = await this.send(ix);
+
+      // Round layout after the 8-byte discriminator (programs/scadium_rng):
+      // game_type u8(1) | round_id u64(8) | server_seed_hash 32 | client_seed 32 |
+      // game_params_hash 32 | nonce u32(4) | target_slot u64(8) | revealed_seed 64 |
+      // slot u64(8) | slot_hash 32 | final_entropy 32 | status 1 | bump 1
+      const info = await this.connection.getAccountInfo(roundPda, 'confirmed');
+      if (!info) throw new Error('Round account missing after settle');
+      const buf = info.data;
+      const slotHashHex = buf.subarray(197, 229).toString('hex');
+      const entropyHex = buf.subarray(229, 261).toString('hex');
+      return { signature, slotHashHex, entropyHex };
+    } catch (e) {
+      this.logger.error(
+        `rng settle_round ${params.gameType}/${params.roundId} failed: ${(e as Error).message}`,
+      );
       return null;
     }
   }

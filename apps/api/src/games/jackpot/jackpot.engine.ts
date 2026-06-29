@@ -1,6 +1,7 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import {
   commitServerSeed,
+  deriveSeedContext,
   generateClientSeed,
   generateServerSeed,
   jackpotWinningTicket,
@@ -12,49 +13,18 @@ import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
+import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { JackpotGateway } from './jackpot.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
+import { DEMO_BOTS, DEMO_BOT_BALANCE, demoBotsEnabled } from '../bots/demo-bots.const';
 
 // Single-writer election (#13/#86): only the lock holder opens/draws rounds, so
 // N replicas never produce duplicate JackpotRound rows. No Redis → always leader.
 const JACKPOT_LOCK_KEY = 'lock:engine:jackpot';
 const JACKPOT_LOCK_TTL_MS = 10_000;
-
-// Demo-only bot players (JACKPOT_DEMO_BOTS=1): real User rows with a huge play
-// balance that auto-join each round so solo/local play actually draws (and the
-// 3D wheel reveal fires). They enter through the same money-safe debit + entry
-// path as anyone else, so settlement and the ledger are untouched.
-const DEMO_BOTS = [
-  {
-    id: 'd0d0d0d0-0000-4000-8000-000000000001',
-    username: 'DegenBot',
-    wallet: 'DemoBot1degenking1111111111111111111111111',
-  },
-  {
-    id: 'd0d0d0d0-0000-4000-8000-000000000002',
-    username: 'MoonBot',
-    wallet: 'DemoBot2moonshot2222222222222222222222222',
-  },
-  {
-    id: 'd0d0d0d0-0000-4000-8000-000000000003',
-    username: 'LuckyBot',
-    wallet: 'DemoBot3lucky33333333333333333333333333333',
-  },
-  {
-    id: 'd0d0d0d0-0000-4000-8000-000000000004',
-    username: 'BonkBot',
-    wallet: 'DemoBot4bonk44444444444444444444444444444',
-  },
-  {
-    id: 'd0d0d0d0-0000-4000-8000-000000000005',
-    username: 'ApeBot',
-    wallet: 'DemoBot5ape555555555555555555555555555555',
-  },
-] as const;
-const DEMO_BOT_BALANCE = BigInt('100000000000000'); // 100k SOL of play money
 
 interface CurrentRound {
   id: string;
@@ -110,6 +80,9 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
     private readonly redis?: RedisService,
+    // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
+    // when live the winning ticket is anchored on the ONE scadium_rng program.
+    @Optional() private readonly onchainRng?: OnchainRngService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, JACKPOT_LOCK_KEY, JACKPOT_LOCK_TTL_MS);
@@ -122,7 +95,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   private get demoBots(): boolean {
-    return process.env.JACKPOT_DEMO_BOTS === '1';
+    return demoBotsEnabled();
   }
 
   async onModuleInit(): Promise<void> {
@@ -405,6 +378,35 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     const roundId = this.current.id;
     const { serverSeed, clientSeed, nonce, seedId } = this.current;
 
+    // ON-CHAIN ANCHORING (shared scadium_rng program): fold the program's entropy
+    // into the DRAW seed so the winning ticket derives from the one contract, just
+    // like the lottery. Driven BEFORE the serializable settle tx so the ~1s
+    // commit→reveal never holds it open. Off-chain — or on ANY failure — `drawSeed`
+    // stays === `serverSeed` (deriveSeedContext pass-through), so the winner is
+    // byte-identical to the play-money draw. The original `serverSeed` is still
+    // revealed for commit verification; `onchainEntropyHex` lets the verifier fold.
+    let drawSeed = serverSeed;
+    let onchainEntropyHex: string | null = null;
+    if (this.onchainRng?.live) {
+      const entropy = await this.onchainRng.roundEntropy({
+        gameType: 'jackpot',
+        roundId: this.onchainRng.nextRoundId(),
+        serverSeed,
+        clientSeed,
+        nonce,
+        gameParams: {},
+      });
+      if (entropy) {
+        drawSeed = deriveSeedContext({
+          serverSeed,
+          clientSeed,
+          nonce,
+          onchainEntropy: entropy,
+        }).serverSeed;
+        onchainEntropyHex = Buffer.from(entropy).toString('hex');
+      }
+    }
+
     // #215 — outcome computed INSIDE the serializable tx from an inside-the-tx
     // entry read, so a late enter that commits before our claim is ALWAYS
     // included and one after is ALWAYS rejected (see the closure below). These
@@ -478,7 +480,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
         // Draw the winning ticket and walk cumulative ranges to find the winner.
         // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
         // number here would lose precision and bias the winner toward low tickets.
-        const drawnTicket = jackpotWinningTicket(serverSeed, clientSeed, nonce, total);
+        const drawnTicket = jackpotWinningTicket(drawSeed, clientSeed, nonce, total);
         let cumulative = 0n;
         let winner = entries[0]!;
         for (const e of entries) {
@@ -588,12 +590,15 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
                 totalLamports: total.toString(),
                 winningTicket: drawnTicket.toString(),
                 won,
-                // Self-contained verification context (ADR 0001 / #93).
+                // Self-contained verification context (ADR 0001 / #93). When the
+                // draw was on-chain anchored, `onchainEntropy` is the program's
+                // RoundSettled.entropy — fold it into serverSeed to reproduce.
                 fair: {
                   serverSeed: this.current.serverSeed,
                   serverSeedHash: this.current.serverSeedHash,
                   clientSeed: this.current.clientSeed,
                   nonce: this.current.nonce,
+                  ...(onchainEntropyHex ? { onchainEntropy: onchainEntropyHex } : {}),
                 },
               },
             },

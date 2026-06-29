@@ -30,6 +30,7 @@ import { PlinkoModule } from './games/plinko/plinko.module';
 import { MinesModule } from './games/mines/mines.module';
 import { TowerModule } from './games/tower/tower.module';
 import { HiloModule } from './games/hilo/hilo.module';
+import { BotsModule } from './games/bots/bots.module';
 import { ChatModule } from './chat/chat.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AirdropModule } from './airdrop/airdrop.module';
@@ -92,6 +93,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     MinesModule,
     TowerModule,
     HiloModule,
+    BotsModule,
     ChatModule,
     LeaderboardModule,
     AirdropModule,

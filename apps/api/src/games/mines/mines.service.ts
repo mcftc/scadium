@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { MINES, minesMultiplier } from '@scadium/shared';
 import { mineField } from '@scadium/fair';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SeedManagerService } from '../../fairness/seed-manager.service';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { OnchainRngService } from '../../solana/onchain-rng.service';
 import {
   advanceStatefulRound,
   getActiveRound,
@@ -29,6 +30,9 @@ export class MinesService {
     private readonly seeds: SeedManagerService,
     private readonly rg: RgService,
     private readonly proofOfWager: ProofOfWagerService,
+    // Optional so unit specs can construct the service without the chain layer;
+    // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
+    @Optional() private readonly onchainRng?: OnchainRngService,
   ) {}
 
   private get deps(): StatefulDeps {
@@ -37,6 +41,7 @@ export class MinesService {
       seeds: this.seeds,
       rg: this.rg,
       proofOfWager: this.proofOfWager,
+      onchainRng: this.onchainRng,
     };
   }
 
@@ -59,7 +64,7 @@ export class MinesService {
 
     return startStatefulRound(
       this.deps,
-      { userId, gameType: 'mines', stakeLamports: amountLamports },
+      { userId, gameType: 'mines', stakeLamports: amountLamports, gameParams: { mines } },
       (seed) => {
         const field = mineField(seed.serverSeed, seed.clientSeed, seed.nonce, MINES.CELLS, mines);
         return {

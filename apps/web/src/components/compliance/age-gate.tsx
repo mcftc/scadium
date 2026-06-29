@@ -1,5 +1,6 @@
 'use client';
 
+import { useHydrated } from '@/hooks/use-hydrated';
 import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe, useAckAge } from '@/hooks/use-me';
 
@@ -13,17 +14,21 @@ const DECLINE_URL = 'https://www.google.com';
  * (`User.ageConfirmedAt`) for authed users, so a confirmed user never sees it
  * again. Declining navigates away.
  *
- * Default-shown: the server render and the first client render both paint the
- * overlay (no hydration mismatch, no flash of interactive app for an un-acked
- * visitor); an effect hides it once a prior ack is found.
+ * Hydration-gated (mirrors `CookieBanner`): `useLocalStorageValue` returns
+ * `null` on the server and the first client render, so a previously-acked user
+ * would otherwise see the overlay painted in the SSR HTML and flash on EVERY
+ * refresh before the effect re-reads localStorage. We therefore render nothing
+ * until hydrated, then show the gate only when there is no prior ack. No SSR
+ * flash, and an acked user never sees it again.
  */
 export function AgeGate() {
+  const hydrated = useHydrated();
   const { data: me } = useMe();
   const ackAge = useAckAge();
   const localAck = useLocalStorageValue(ACK_KEY) === '1';
 
   const acked = localAck || !!me?.ageConfirmedAt;
-  if (acked) return null;
+  if (!hydrated || acked) return null;
 
   const handleConfirm = () => {
     writeLocalStorageValue(ACK_KEY, '1');

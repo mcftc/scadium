@@ -13,7 +13,7 @@ import {
   PieChart,
   Sparkles,
 } from 'lucide-react';
-import { SCAD } from '@scadium/shared';
+import { SCAD, ENGINE } from '@scadium/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api-client';
 import { solscanToken, solscanTx } from '@/lib/explorer';
@@ -191,7 +191,8 @@ export function TokenDashboard() {
             </div>
             <BurnChart points={cumulative} />
             <p className="text-[11px] text-foreground-muted text-center">
-              10% of net gaming revenue buys $SCAD from the pool and burns it.
+              {ENGINE.BUYBACK_NGR_BPS / 100}% of net gaming revenue buys $SCAD from the pool and
+              burns it.
             </p>
           </CardContent>
         </Card>

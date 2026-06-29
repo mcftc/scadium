@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEMO_BOT_IDS } from '../games/bots/demo-bots.const';
+
+// Demo bots (DEMO_BOTS=1) play every game with a huge balance; keep them off the
+// public leaderboards so they don't top every board.
+const EXCLUDE_BOTS = { notIn: [...DEMO_BOT_IDS] };
 
 /**
  * Leaderboard queries. For now aggregates directly from the User table's
@@ -13,7 +18,7 @@ export class LeaderboardService {
 
   async topByVolume(limit = 50) {
     const users = await this.prisma.user.findMany({
-      where: { banned: false, totalWagered: { gt: 0 } },
+      where: { banned: false, totalWagered: { gt: 0 }, id: EXCLUDE_BOTS },
       orderBy: { totalWagered: 'desc' },
       take: Math.min(Math.max(limit, 1), 100),
       select: {
@@ -38,7 +43,7 @@ export class LeaderboardService {
 
   async topByProfit(limit = 50) {
     const users = await this.prisma.user.findMany({
-      where: { banned: false },
+      where: { banned: false, id: EXCLUDE_BOTS },
       orderBy: { totalWon: 'desc' },
       take: Math.min(Math.max(limit, 1), 100),
       select: {

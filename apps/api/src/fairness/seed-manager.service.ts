@@ -134,6 +134,27 @@ export class SeedManagerService {
   }
 
   /**
+   * Atomically reserve the next nonce OUTSIDE any caller transaction and return
+   * the full derivation context (serverSeed included — SERVER-SIDE ONLY). This is
+   * the on-chain-anchored counterpart to {@link consumeNonce}: the shared RNG
+   * round (open → reveal, ~1s) must run BEFORE settlement and must NOT be held
+   * inside the serializable settlement tx, so the nonce is reserved here first,
+   * the entropy is fetched, and the settlement then settles against this exact
+   * reserved context (no second increment). The atomic `{ increment: 1 }` keeps
+   * concurrent bets from ever sharing a nonce, same as `consumeNonce`.
+   */
+  async reserveSeedContext(
+    userId: string,
+  ): Promise<{ serverSeed: string; serverSeedHash: string; clientSeed: string; nonce: bigint }> {
+    await this.getOrCreateActivePair(userId);
+    return this.prisma.clientSeed.update({
+      where: { userId },
+      data: { nonce: { increment: 1 } },
+      select: { serverSeed: true, serverSeedHash: true, clientSeed: true, nonce: true },
+    });
+  }
+
+  /**
    * Advance the nonce WITHIN a caller's transaction and return the full
    * derivation context (serverSeed included — SERVER-SIDE ONLY, never serialized
    * to the client). Used by game engines so the nonce consumption is atomic with

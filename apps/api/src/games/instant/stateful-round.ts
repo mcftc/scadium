@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma, type GameType, type InstantRound } from '@prisma/client';
+import { deriveSeedContext, type GameParams } from '@scadium/fair';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { SeedManagerService } from '../../fairness/seed-manager.service';
 import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import type { OnchainRngService } from '../../solana/onchain-rng.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
@@ -27,6 +29,14 @@ export interface StatefulDeps {
   seeds: SeedManagerService;
   rg: RgService;
   proofOfWager: ProofOfWagerService;
+  /**
+   * Shared on-chain RNG driver. When live (scadium_rng deployed + cosigner), the
+   * round's committed field (mine layout / card sequence / trap map) is anchored
+   * on-chain: the seed is reserved and a round driven on the ONE program at
+   * START, and the field is built from the chain-folded seed. Absent/disabled →
+   * the deterministic off-chain build (unchanged).
+   */
+  onchainRng?: OnchainRngService;
 }
 
 export interface RoundFairness {
@@ -130,13 +140,31 @@ function viewOf(round: InstantRound): RoundView {
  */
 export async function startStatefulRound(
   deps: StatefulDeps,
-  params: { userId: string; gameType: GameType; stakeLamports: bigint },
+  params: { userId: string; gameType: GameType; stakeLamports: bigint; gameParams?: GameParams },
   build: (seed: StatefulSeedContext) => BuildResult,
 ): Promise<RoundView> {
-  const { userId, gameType, stakeLamports } = params;
+  const { userId, gameType, stakeLamports, gameParams } = params;
   if (stakeLamports <= 0n) throw new BadRequestException('amount must be positive');
 
   await deps.rg.assertCanWager(userId, stakeLamports);
+
+  // ON-CHAIN ANCHORING (when scadium_rng is live): reserve the seed/nonce and
+  // drive ONE shared-RNG round for `gameType` BEFORE the tx, so the committed
+  // field is derived from chain entropy. Off-chain (or any failure) → both null
+  // and the field is built from the rotating seed exactly as before.
+  let reserved: Awaited<ReturnType<SeedManagerService['reserveSeedContext']>> | null = null;
+  let onchainEntropy: Uint8Array | null = null;
+  if (deps.onchainRng?.live) {
+    reserved = await deps.seeds.reserveSeedContext(userId);
+    onchainEntropy = await deps.onchainRng.roundEntropy({
+      gameType,
+      roundId: deps.onchainRng.nextRoundId(),
+      serverSeed: reserved.serverSeed,
+      clientSeed: reserved.clientSeed,
+      nonce: Number(reserved.nonce),
+      gameParams,
+    });
+  }
 
   return withSerializable(deps.prisma, async (tx) => {
     // 1) One-active-round guard (fast path; the partial unique index is the
@@ -155,13 +183,22 @@ export async function startStatefulRound(
       refType: 'InstantRound',
     });
 
-    // 3) Consume the player's rotating provably-fair seed.
-    const ctx = await deps.seeds.consumeNonce(tx, userId);
-    const seed: StatefulSeedContext = {
+    // 3) Use the pre-reserved seed (on-chain mode) or consume the rotating seed
+    //    now (off-chain), then fold through the unified derivation. Off-chain
+    //    (onchainEntropy null) the fold is a pass-through — byte-identical build.
+    const ctx = reserved ?? (await deps.seeds.consumeNonce(tx, userId));
+    const folded = deriveSeedContext({
       serverSeed: ctx.serverSeed,
-      serverSeedHash: ctx.serverSeedHash,
       clientSeed: ctx.clientSeed,
       nonce: Number(ctx.nonce),
+      onchainEntropy,
+      gameParams,
+    });
+    const seed: StatefulSeedContext = {
+      serverSeed: folded.serverSeed,
+      serverSeedHash: ctx.serverSeedHash,
+      clientSeed: folded.clientSeed,
+      nonce: folded.nonce,
     };
 
     // 4) Build the committed field for this game.

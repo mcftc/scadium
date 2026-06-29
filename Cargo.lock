@@ -1035,6 +1035,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "scadium-rng"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "solana-sha256-hasher",
+]
+
+[[package]]
 name = "scadium-swap"
 version = "0.1.0"
 dependencies = [

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 
 const meMock = vi.fn();
 const ackMutate = vi.fn();
@@ -48,5 +49,16 @@ describe('AgeGate (#44)', () => {
     meMock.mockReturnValue({ data: undefined });
     const { container } = render(<AgeGate />);
     expect(container.firstChild).toBeNull();
+  });
+
+  // Regression: the gate used to paint into the SSR HTML (useLocalStorageValue
+  // returns null on the server), so an already-acked user saw it flash on EVERY
+  // refresh before hydration re-read localStorage. It is now hydration-gated
+  // (useHydrated() is false during SSR), so the server markup is empty and the
+  // gate only mounts client-side when there is genuinely no prior ack.
+  it('renders nothing during SSR (no flash on refresh)', () => {
+    meMock.mockReturnValue({ data: undefined });
+    const html = renderToString(<AgeGate />);
+    expect(html).toBe('');
   });
 });

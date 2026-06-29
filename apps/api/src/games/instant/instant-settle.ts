@@ -1,9 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import type { GameType } from '@prisma/client';
+import { deriveSeedContext, type GameParams } from '@scadium/fair';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { SeedManagerService } from '../../fairness/seed-manager.service';
 import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import type { OnchainRngService } from '../../solana/onchain-rng.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
@@ -30,6 +32,13 @@ export interface InstantDeps {
   seeds: SeedManagerService;
   rg: RgService;
   proofOfWager: ProofOfWagerService;
+  /**
+   * Shared on-chain RNG driver. When present AND live (scadium_rng deployed +
+   * cosigner), every instant bet is anchored on-chain: its seed/nonce is reserved
+   * and a round is driven on the ONE program so the outcome derives from chain
+   * entropy. Absent/disabled → the deterministic off-chain derivation (unchanged).
+   */
+  onchainRng?: OnchainRngService;
 }
 
 export interface InstantSettleResult {
@@ -55,13 +64,40 @@ export interface InstantSettleResult {
  */
 export async function settleInstantBet(
   deps: InstantDeps,
-  params: { userId: string; gameType: GameType; amountLamports: bigint },
+  params: {
+    userId: string;
+    gameType: GameType;
+    amountLamports: bigint;
+    /** Per-round dynamics bound into the on-chain derivation (target, rows, …). */
+    gameParams?: GameParams;
+  },
   resolve: (seed: InstantSeedContext) => InstantOutcome,
 ): Promise<InstantSettleResult> {
-  const { userId, gameType, amountLamports } = params;
+  const { userId, gameType, amountLamports, gameParams } = params;
   if (amountLamports <= 0n) throw new BadRequestException('amount must be positive');
 
   await deps.rg.assertCanWager(userId, amountLamports);
+
+  // ON-CHAIN ANCHORING (when scadium_rng is live): reserve this bet's seed/nonce
+  // and drive ONE shared-RNG round for `gameType` BEFORE the settlement tx, so
+  // the ~1s commit→reveal never holds the serializable tx open. The program's
+  // `final_entropy` is folded into the seed below. Off-chain (or ANY failure)
+  // both stay null and the tx consumes the nonce + derives deterministically,
+  // byte-identical to the play-money behaviour. A reserved-but-unused nonce (tx
+  // rolls back) is harmless — nonces only need to be unique, not contiguous.
+  let reserved: Awaited<ReturnType<SeedManagerService['reserveSeedContext']>> | null = null;
+  let onchainEntropy: Uint8Array | null = null;
+  if (deps.onchainRng?.live) {
+    reserved = await deps.seeds.reserveSeedContext(userId);
+    onchainEntropy = await deps.onchainRng.roundEntropy({
+      gameType,
+      roundId: deps.onchainRng.nextRoundId(),
+      serverSeed: reserved.serverSeed,
+      clientSeed: reserved.clientSeed,
+      nonce: Number(reserved.nonce),
+      gameParams,
+    });
+  }
 
   return withSerializable(deps.prisma, async (tx) => {
     // 1) Debit the stake through the single mutation point (writes a ledger row).
@@ -70,14 +106,25 @@ export async function settleInstantBet(
       refType: 'Bet',
     });
 
-    // 2) Consume the player's rotating provably-fair seed (active serverSeed is
-    //    committed; revealed only on rotation).
-    const ctx = await deps.seeds.consumeNonce(tx, userId);
-    const seed: InstantSeedContext = {
+    // 2) Use the pre-reserved seed (on-chain mode) or consume the player's
+    //    rotating provably-fair seed now (off-chain). The active serverSeed is
+    //    committed; revealed only on rotation.
+    const ctx = reserved ?? (await deps.seeds.consumeNonce(tx, userId));
+    // Fold through the unified derivation (single source for every game). Off-chain
+    // (no `onchainEntropy`) this is a pass-through and behaves exactly as before;
+    // when `scadium_rng` is live the round entropy + params anchor the outcome.
+    const folded = deriveSeedContext({
       serverSeed: ctx.serverSeed,
-      serverSeedHash: ctx.serverSeedHash,
       clientSeed: ctx.clientSeed,
       nonce: Number(ctx.nonce),
+      onchainEntropy,
+      gameParams,
+    });
+    const seed: InstantSeedContext = {
+      serverSeed: folded.serverSeed,
+      serverSeedHash: ctx.serverSeedHash,
+      clientSeed: folded.clientSeed,
+      nonce: folded.nonce,
     };
 
     // 3) Resolve the outcome and compute payout (BigInt-safe, 2-dp multiplier).

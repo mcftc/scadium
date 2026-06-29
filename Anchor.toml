@@ -6,6 +6,7 @@ skip-lint = false
 
 [programs.devnet]
 scadium_lottery = "3HHxLKiAW4JhSHaPSKpjCqCxpQgPfTd8pP6tzL8ZAVk5"
+scadium_rng = "3cPWLMPmbu9z5dKmAxXBqMsW3Uo1JYV9SMM4UR68HQCm"
 scadium_swap = "9Fog7cFRQiPfszYu1ioFdqQDwmmTd6SZpkyb8hyo13dU"
 scadium_vault = "DSQJ8FX8JGhB2nKPGVM2ptWZydskNmp8629C8HXTvrqr"
 
@@ -14,7 +15,7 @@ cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = ["programs/scadium_vault", "programs/scadium_swap", "programs/scadium_lottery"]
+members = ["programs/scadium_vault", "programs/scadium_swap", "programs/scadium_lottery", "programs/scadium_rng"]
 
 [scripts]
 test = "pnpm exec ts-mocha -p ./tsconfig.anchor.json -t 1000000 tests/**/*.ts"

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
-import { WHEEL, WHEEL_SEGMENTS } from '@scadium/shared';
+import { WHEEL, WHEEL_PAYOUT_BUCKETS, WHEEL_SEGMENTS } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
 import {
   BetAmountInput,
@@ -20,12 +20,14 @@ import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
 
 /** Color a segment by its multiplier tier. */
+// Tier bands chosen so both the raw bucket shape (5/3/2/1.5/1.2) and the
+// RTP-scaled payouts (≈4.92/2.95/1.96/1.47/1.18) map to the same colour tier.
 function tierColor(m: number): string {
-  if (m >= 5) return '#EE86FF';
-  if (m >= 3) return '#C76BFF';
-  if (m >= 2) return '#9C4FE0';
-  if (m >= 1.5) return '#6F5FCC';
-  if (m >= 1.2) return '#4D3D99';
+  if (m >= 4) return '#EE86FF';
+  if (m >= 2.5) return '#C76BFF';
+  if (m >= 1.8) return '#9C4FE0';
+  if (m >= 1.35) return '#6F5FCC';
+  if (m >= 1.05) return '#4D3D99';
   return '#2a2440';
 }
 
@@ -64,7 +66,7 @@ export function WheelGame() {
         <Wheel result={last} tierColor={tierColor} sound={sound} />
         {/* Bucket legend */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-          {WHEEL.BUCKETS.map((b) => (
+          {WHEEL_PAYOUT_BUCKETS.map((b) => (
             <div
               key={b.multiplier}
               className="rounded-lg border border-border p-2 text-center"
@@ -117,7 +119,7 @@ export function WheelGame() {
 }
 
 /**
- * SVG wheel rendered from WHEEL.BUCKETS expanded by weight into WHEEL_SEGMENTS
+ * SVG wheel rendered from WHEEL_PAYOUT_BUCKETS expanded by weight into WHEEL_SEGMENTS
  * slices. On a result we rotate so the server's `result.index` slice lands under
  * the top pointer, plus several full turns for the spin feel.
  */
@@ -141,7 +143,7 @@ function Wheel({
   const segAngle = 360 / WHEEL_SEGMENTS;
   // Flatten buckets into per-segment slices (index → multiplier).
   const slices: { mult: number }[] = [];
-  for (const b of WHEEL.BUCKETS) {
+  for (const b of WHEEL_PAYOUT_BUCKETS) {
     for (let i = 0; i < b.weight; i += 1) slices.push({ mult: b.multiplier });
   }
 

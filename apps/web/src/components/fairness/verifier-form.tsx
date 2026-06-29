@@ -23,6 +23,7 @@ import {
   LIMBO,
   WHEEL_SEGMENTS,
   PLINKO,
+  plinkoPayouts,
   diceMultiplier,
   wheelMultiplier,
   type Card,
@@ -150,11 +151,12 @@ export function VerifierForm() {
         output = `segment ${index} / ${WHEEL_SEGMENTS}  →  ${mult}×`;
       } else if (game === 'plinko') {
         const r = parseInt(rows, 10);
-        if (!PLINKO.PAYOUTS[r]) {
+        const payouts = plinkoPayouts(r);
+        if (!payouts) {
           throw new Error(`Plinko rows must be one of ${PLINKO.ROWS.join(', ')}`);
         }
         const { path, bin } = await plinkoDrop(serverSeed, clientSeed, nonceNum, r);
-        const mult = PLINKO.PAYOUTS[r]![bin] ?? 0;
+        const mult = payouts[bin] ?? 0;
         const dirs = path.map((d) => (d ? 'R' : 'L')).join('');
         output = `bin ${bin} / ${r}  →  ${mult}×\npath ${dirs}`;
       } else {

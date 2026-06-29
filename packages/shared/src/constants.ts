@@ -5,6 +5,16 @@
 
 export const LAMPORTS_PER_SOL = 1_000_000_000;
 
+// ---------- House edge / RTP (single source of truth) ----------
+// Every house-banked game targets the SAME return-to-player. Each game's
+// `HOUSE_EDGE` points here so standardising the hold is a one-line change, and
+// the payout helpers / scaled tables below all derive their EV from `RTP`.
+// EXEMPT: lottery (pari-mutuel pool/burn model, no per-bet RTP) and blackjack
+// (RTP is emergent from the rule set — dealer hits soft 17, 3:2 naturals, side
+// bets — and can't be a flat scalar without distorting the rules).
+export const HOUSE_EDGE = 0.05; // 5% hold
+export const RTP = 1 - HOUSE_EDGE; // 0.95 return-to-player
+
 // ---------- Game types ----------
 export const GAME_TYPES = ['crash', 'coinflip', 'blackjack', 'lottery', 'jackpot'] as const;
 export type GameType = (typeof GAME_TYPES)[number];
@@ -13,8 +23,10 @@ export type GameType = (typeof GAME_TYPES)[number];
 export const COINFLIP = {
   MIN_BET_LAMPORTS: 1_000_000, // 0.001 SOL
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL, // 100 SOL
-  PAYOUT_MULTIPLIER: 1.9,
-  HOUSE_EDGE: 0.05,
+  // Even-money flip pays 2× the stake minus the house edge, taken upfront:
+  // 2 × RTP = 1.9× on a win (house take = pot − 1.9×stake).
+  PAYOUT_MULTIPLIER: Math.round(2 * RTP * 100) / 100,
+  HOUSE_EDGE,
   SIDES: ['heads', 'tails'] as const,
 } as const;
 
@@ -29,8 +41,8 @@ export const CRASH = {
   BET_WINDOW_MS: 20_000, // 20s betting window between rounds
   TICK_RATE_HZ: 20,
   GROWTH_RATE: 1.0024, // m(t_ms) = GROWTH_RATE ^ (t_ms / 10)
-  INSTANT_BUST_CHANCE: 1 / 20, // matches solpump formula (h % 20 === 0)
-  HOUSE_EDGE: 0.05,
+  INSTANT_BUST_CHANCE: 1 / 20, // matches solpump formula (h % 20 === 0) = 5% hold
+  HOUSE_EDGE, // structural: the h%20 instant-bust IS the 5% edge (see crash.ts)
 } as const;
 
 // ---------- Blackjack ----------
@@ -790,7 +802,7 @@ export function earlyExitPenalty(assets: bigint): bigint {
 export const DICE = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE: 0.01,
+  HOUSE_EDGE,
   MIN_TARGET: 2, // roll-under target, in [MIN_TARGET, MAX_TARGET]
   MAX_TARGET: 98,
 } as const;
@@ -803,7 +815,7 @@ export function diceMultiplier(target: number, edge = DICE.HOUSE_EDGE): number {
 export const LIMBO = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE: 0.01,
+  HOUSE_EDGE,
   MIN_TARGET: 1.01,
   MAX_TARGET: 1_000_000,
 } as const;
@@ -811,8 +823,10 @@ export const LIMBO = {
 export const WHEEL = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  // Weighted buckets (medium risk). segmentCount = sum of weights; the spin
-  // index maps to a bucket by cumulative weight. EV ≈ 0.965 (tunable).
+  // Weighted bucket SHAPE (medium risk). segmentCount = sum of weights; the spin
+  // index maps to a bucket by cumulative weight. The relative multipliers/weights
+  // define the feel; the absolute payouts are SCALED so EV === RTP (see
+  // `wheelScaledBuckets`). The 0 bucket stays 0.
   BUCKETS: [
     { multiplier: 0, weight: 32 },
     { multiplier: 1.2, weight: 30 },
@@ -826,21 +840,50 @@ export const WHEEL = {
 /** Total weight = wheel segment count. */
 export const WHEEL_SEGMENTS = WHEEL.BUCKETS.reduce((a, b) => a + b.weight, 0);
 
-/** Map a spin index in [0, WHEEL_SEGMENTS) to its bucket multiplier. */
+/**
+ * Scale the raw bucket multipliers by a single factor so the wheel's expected
+ * value equals `targetRtp` (default 95%), preserving the bucket shape. Winning
+ * multipliers are floored to 2 dp (matching the other payout helpers — the
+ * residual rounding stays in the house's favour). The losing (0×) bucket is
+ * untouched.
+ */
+export function wheelScaledBuckets(targetRtp = RTP): { multiplier: number; weight: number }[] {
+  const rawEv = WHEEL.BUCKETS.reduce((a, b) => a + b.weight * b.multiplier, 0) / WHEEL_SEGMENTS;
+  const k = targetRtp / rawEv;
+  return WHEEL.BUCKETS.map((b) => ({
+    multiplier: b.multiplier === 0 ? 0 : Math.floor(b.multiplier * k * 100) / 100,
+    weight: b.weight,
+  }));
+}
+
+/** Pre-scaled buckets at the platform RTP (computed once). */
+export const WHEEL_PAYOUT_BUCKETS = wheelScaledBuckets();
+
+/** Map a spin index in [0, WHEEL_SEGMENTS) to its (scaled) bucket multiplier. */
 export function wheelMultiplier(index: number): number {
   let acc = 0;
-  for (const b of WHEEL.BUCKETS) {
+  for (const b of WHEEL_PAYOUT_BUCKETS) {
     acc += b.weight;
     if (index < acc) return b.multiplier;
   }
   return 0;
 }
 
+/** Expected value of a set of weighted buckets (for tests / tuning). */
+export function wheelExpectedValue(
+  buckets: { multiplier: number; weight: number }[] = WHEEL_PAYOUT_BUCKETS,
+): number {
+  const totalWeight = buckets.reduce((a, b) => a + b.weight, 0);
+  return buckets.reduce((a, b) => a + b.weight * b.multiplier, 0) / totalWeight;
+}
+
 export const PLINKO = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
   ROWS: [8, 12, 16] as const,
-  // bin → multiplier (length rows+1), medium risk (Stake-style, edge-tuned).
+  // bin → multiplier SHAPE (length rows+1), medium risk (Stake-style). These are
+  // relative shapes; the absolute payouts are SCALED so each row's binomial EV
+  // equals RTP (see `plinkoScaledPayouts` / `plinkoPayouts`).
   PAYOUTS: {
     8: [13, 3, 1.3, 0.7, 0.4, 0.7, 1.3, 3, 13],
     12: [33, 11, 4, 2, 1.1, 0.6, 0.3, 0.6, 1.1, 2, 4, 11, 33],
@@ -848,10 +891,51 @@ export const PLINKO = {
   } as Record<number, number[]>,
 } as const;
 
+/** Binomial coefficient C(n, k) (small n — plinko rows ≤ 16). */
+function binomial(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  let c = 1;
+  for (let i = 0; i < k; i += 1) c = (c * (n - i)) / (i + 1);
+  return c;
+}
+
+/** Probability that a ball lands in `bin` for `rows` (fair left/right at each peg). */
+export function plinkoBinProbability(rows: number, bin: number): number {
+  return binomial(rows, bin) / 2 ** rows;
+}
+
+/** Binomial-weighted expected value of a plinko payout row (for tests / tuning). */
+export function plinkoExpectedValue(payouts: number[]): number {
+  const rows = payouts.length - 1;
+  return payouts.reduce((acc, mult, bin) => acc + plinkoBinProbability(rows, bin) * mult, 0);
+}
+
+/**
+ * Scale a row's payout shape by a single factor so its binomial EV equals
+ * `targetRtp` (default 95%), preserving the symmetric shape. Each entry is
+ * floored to 2 dp (residual rounding stays in the house's favour).
+ */
+export function plinkoScaledPayouts(rows: number, targetRtp = RTP): number[] {
+  const raw = PLINKO.PAYOUTS[rows];
+  if (!raw) return [];
+  const k = targetRtp / plinkoExpectedValue(raw);
+  return raw.map((m) => Math.floor(m * k * 100) / 100);
+}
+
+/** Pre-scaled payout tables at the platform RTP (computed once per row). */
+export const PLINKO_PAYOUTS: Record<number, number[]> = Object.fromEntries(
+  PLINKO.ROWS.map((rows) => [rows, plinkoScaledPayouts(rows)]),
+);
+
+/** Scaled payout row for `rows`, or `undefined` if `rows` is unsupported. */
+export function plinkoPayouts(rows: number): number[] | undefined {
+  return PLINKO_PAYOUTS[rows];
+}
+
 export const MINES = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE: 0.01,
+  HOUSE_EDGE,
   CELLS: 25,
   MIN_MINES: 1,
   MAX_MINES: 24,
@@ -878,7 +962,7 @@ export function minesMultiplier(
 export const HILO = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE: 0.02,
+  HOUSE_EDGE,
   // Card ranks 0 (Ace) … 12 (King). Infinite-deck model (rank = card % 13).
   RANKS: 13,
   // Max guesses in a round before it auto-cashes-out (the committed card
@@ -921,7 +1005,7 @@ export function hiloStepMultiplier(
 export const TOWER = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE: 0.01,
+  HOUSE_EDGE,
   ROWS: 8,
   COLUMNS: 3,
   SAFE_PER_ROW: 2,

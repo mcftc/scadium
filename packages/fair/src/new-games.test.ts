@@ -128,18 +128,18 @@ describe('hiloStepMultiplier (Hi-Lo odds)', () => {
     expect(hiloWinProbability(12, 'lower')).toBeCloseTo(13 / 13);
   });
 
-  it('golden step multipliers (edge 0.02, floored to 2 dp)', () => {
-    // Guaranteed-win option still carries the edge: 0.98 / 1 = 0.98.
-    expect(hiloStepMultiplier(0, 'higher')).toBe(0.98);
-    expect(hiloStepMultiplier(12, 'lower')).toBe(0.98);
-    // Longest-odds option: 0.98 / (1/13) = 12.74 mathematically, 12.73 after the
+  it('golden step multipliers (platform edge 0.05 = RTP 0.95, floored to 2 dp)', () => {
+    // Guaranteed-win option still carries the edge: 0.95 / 1 = 0.95.
+    expect(hiloStepMultiplier(0, 'higher')).toBe(0.95);
+    expect(hiloStepMultiplier(12, 'lower')).toBe(0.95);
+    // Longest-odds option: 0.95 / (1/13) = 12.35 mathematically → 12.34 after the
     // 2-dp floor catches the float epsilon (conservative — never overpays; same
     // flooring convention as minesMultiplier/towerMultiplier).
-    expect(hiloStepMultiplier(0, 'lower')).toBe(12.73);
-    expect(hiloStepMultiplier(12, 'higher')).toBe(12.73);
-    // Mid rank: 0.98 / (7/13) = 1.82 either way.
-    expect(hiloStepMultiplier(6, 'higher')).toBe(1.82);
-    expect(hiloStepMultiplier(6, 'lower')).toBe(1.82);
+    expect(hiloStepMultiplier(0, 'lower')).toBe(12.34);
+    expect(hiloStepMultiplier(12, 'higher')).toBe(12.34);
+    // Mid rank: 0.95 / (7/13) = 1.764… → 1.76 either way.
+    expect(hiloStepMultiplier(6, 'higher')).toBe(1.76);
+    expect(hiloStepMultiplier(6, 'lower')).toBe(1.76);
   });
 });
 

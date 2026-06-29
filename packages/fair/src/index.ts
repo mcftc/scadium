@@ -15,3 +15,4 @@ export * from './mines';
 export * from './hilo';
 export * from './tower';
 export * from './engine-draw';
+export * from './derive';
