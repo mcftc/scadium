@@ -1,0 +1,74 @@
+# Render Blueprint — API + worker for Scadium (free tier).
+# Postgres lives on Neon and Redis on Upstash (set DATABASE_URL / REDIS_URL in the
+# Render dashboard — they are sync:false here so they are never committed).
+#
+# Deploy: Render Dashboard → New → Blueprint → pick this repo. See DEPLOYMENT.md.
+#
+# Free-tier caveat: free web services spin DOWN after ~15 min idle. That is fine
+# for the API (a request wakes it). The worker gets no inbound traffic, so to keep
+# its scheduled economy jobs (airdrops/leaderboards/distribution/reconcile) running
+# you must either ping its /health every few min (e.g. cron-job.org) or move it to
+# a paid background worker. Core gameplay (crash/coinflip/blackjack/…) does NOT
+# need the worker.
+services:
+  - type: web
+    name: scadium-api
+    runtime: docker
+    repo: https://github.com/mcftc/scadium
+    branch: main
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: free
+    region: virginia
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '10000'
+      # API refuses to boot without a >=32-byte secret — Render generates one.
+      - key: JWT_SECRET
+        generateValue: true
+      # From Neon — set in the dashboard (Settings → Environment).
+      - key: DATABASE_URL
+        sync: false
+      # From Upstash (rediss://…) — set in the dashboard.
+      - key: REDIS_URL
+        sync: false
+      # The deployed Vercel web origin, e.g. https://scadium.vercel.app
+      - key: CORS_ORIGIN
+        sync: false
+      - key: SIWS_DOMAIN
+        sync: false
+      - key: SIWS_URI
+        sync: false
+      - key: SOLANA_NETWORK
+        value: devnet
+      - key: SOLANA_RPC
+        value: https://api.devnet.solana.com
+      - key: LOG_LEVEL
+        value: info
+      - key: DOCS_ENABLED
+        value: 'false'
+
+  - type: web
+    name: scadium-worker
+    runtime: docker
+    repo: https://github.com/mcftc/scadium
+    branch: main
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
+    plan: free
+    region: virginia
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '10000'
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false

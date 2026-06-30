@@ -203,6 +203,19 @@ async function bootstrap(): Promise<void> {
 
   logger.log('worker up — 9 queues, schedulers registered');
 
+  // Health endpoint so the worker can run as a free PaaS "web service"
+  // (Render/Railway/Fly require an open HTTP port). No-op locally / in
+  // docker-compose where PORT is unset.
+  if (process.env.PORT) {
+    const http = await import('node:http');
+    http
+      .createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('ok');
+      })
+      .listen(Number(process.env.PORT), () => logger.log(`health on :${process.env.PORT}`));
+  }
+
   const shutdown = async () => {
     logger.log('shutting down…');
     await Promise.allSettled(consumers.map((c) => c.close()));

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Scadium — non-custodial, provably-fair Solana casino (Crash, Coinflip, Blackjack, Jackpot, Lottery) modeled after solpump.io. **It currently runs entirely on a play-money balance** (`User.playBalanceLamports`, seeded at 10 SOL): every casino game debits/credits Postgres, not the chain. On-chain Phases A–F shipped the Anchor programs (`scadium_vault`/`scadium_swap`/`scadium_lottery`), a `$SCAD` rewards economy, a SCAD/SOL CPMM pool + buy-and-burn, and on-chain lottery draws — **but the chain layer is currently decorative**: the programs are not built/deployed (no `target/`/IDL) and the vault balance is never reconciled with the spendable play balance, so `settle_bet` is a fire-and-forget receipt that moves ~0 lamports. Making it real money is the roadmap.
+Scadium — non-custodial, provably-fair Solana casino modeled after solpump.io, now with **12 games** (`apps/api/src/games/*`): Crash, Coinflip, Blackjack, Jackpot, Lottery, Dice, Limbo, HiLo, Mines, Plinko, Tower, Wheel. **It defaults to a play-money balance** (`User.playBalanceLamports`, seeded at 10 SOL): every casino game debits/credits Postgres, not the chain. Real money is a **fail-closed boot toggle** — `main.ts` runs `assertRealMoneyReady` and refuses to start with `REAL_MONEY_ENABLED` unless licence + KYC + geoblocking are configured (see `apps/api/src/compliance/`). On-chain Phases A–F shipped the Anchor programs (`scadium_vault`/`scadium_swap`/`scadium_lottery`), a `$SCAD` rewards economy, a SCAD/SOL CPMM pool + buy-and-burn, and on-chain lottery draws; the IDL + program keypairs are now **committed under `target/`** and CI runs `anchor build` + localnet integration + an IDL-drift gate. The chain layer is still **off-chain-first** — balances live in Postgres and the programs aren't yet mainnet-live for real money — but it is no longer unbuilt. Making it real money is the roadmap.
 
 **Read `ANALYSIS.md` (repo root) first** — it is the authoritative gap analysis: per-subsystem maturity, a risk register (5 critical / 10 high), a feature gap matrix, and the phased roadmap **G→M** with a real-money gating checklist. The work is tracked as GitHub issues/milestones (one milestone per phase G–M) on `mcftc/scadium`. There is **no** `~/.claude/plans/*` file — that earlier reference is stale.
 
@@ -15,14 +15,14 @@ Scadium — non-custodial, provably-fair Solana casino (Crash, Coinflip, Blackja
 pnpm + Turborepo monorepo. Node ≥ 20, pnpm ≥ 10.
 
 - `apps/web` — Next.js 15 (App Router, React 19, Tailwind, Solana wallet-adapter, Socket.io client, Zustand, TanStack Query)
-- `apps/api` — NestJS 10 (REST under `/api/v1`, Socket.io gateways, Prisma + Postgres, JWT auth, Swagger at `/docs`)
+- `apps/api` — NestJS 11 + Express 5 (REST under `/api/v1`, Socket.io gateways, Prisma + Postgres, SIWS+JWT auth, Swagger at `/docs` — gated off in prod unless `DOCS_ENABLED`). Also: pino structured logging, Sentry, Prometheus `/metrics`, and `@nestjs/throttler` per-IP rate-limiting.
 - `apps/api/prisma` — single Postgres schema, source of truth for the DB
-- `apps/worker` — BullMQ worker (airdrops, leaderboards) — promised in README but **does not exist yet**; airdrop/leaderboard/buy-and-burn currently run as in-process `setTimeout`/`setInterval` in the API (a single-instance trap — Phase H stands up the worker)
+- `apps/worker` — BullMQ worker process (Phase H, **shipped**): boots the API's `WorkerModule` headless and runs **9 Redis-backed queues** (`airdrop`, `burn`, `leaderboard`, `reconcile`, `rewardClaims`, `lotteryPayouts`, `distribution`, `blockMining`, `vaultAccrual`) on repeatable schedulers. Each job is idempotent + Redis-locked, so running ≥2 replicas is safe. The engines/services live in `apps/api` (`src/worker/worker.module.ts`); the worker just hosts them out-of-process.
 - `packages/shared` — TS types, zod schemas, and game constants (`COINFLIP`, `CRASH`, `BLACKJACK`, `AFFILIATE`, …)
 - `packages/fair` — provably-fair engine (HMAC-SHA256 over `${clientSeed}:${nonce}`, keyed by serverSeed)
 - `packages/ui` — shared component primitives
-- `programs/` — Anchor (Rust) Solana programs: `scadium_vault`, `scadium_swap`, `scadium_lottery` (~1.4k LOC of real code — **not empty**, but unbuilt/undeployed: no `target/`, no generated IDL, and the setup scripts import IDL files that don't exist yet)
-- `infra/docker-compose.yml` — Postgres 16 + Redis 7 for local dev (note: Redis is started but **currently unused** by the code)
+- `programs/` — Anchor (Rust) Solana programs: `scadium_vault`, `scadium_swap`, `scadium_lottery`. Built + tested in CI (`anchor build`, `cargo test/clippy/audit`, localnet integration); the generated IDL (`target/idl/*.json`) and program keypairs (`target/deploy/*-keypair.json`) are **committed**, and an IDL-drift gate fails CI if a program change isn't accompanied by its regenerated IDL. Not yet deployed to mainnet.
+- `infra/docker-compose.yml` — Postgres 16 + Redis 7 for local dev. Redis is now **core**: BullMQ queues (worker), distributed locks, and the Socket.io Redis adapter for multi-replica broadcast. `infra/helm/scadium` is the production Helm chart (CI lints + renders it).
 
 TS path aliases (`tsconfig.base.json`) map `@scadium/{shared,fair,ui}` → each package's `src/`. The web app additionally lists them under `transpilePackages` in `next.config.mjs`.
 
@@ -54,7 +54,7 @@ pnpm --filter @scadium/fair test                     # vitest run
 pnpm --filter @scadium/fair test -- crash.test       # single test file
 ```
 
-CI (`.github/workflows/ci.yml`) runs: `prisma migrate deploy` → build `@scadium/shared` and `@scadium/fair` → `@scadium/fair` tests → `turbo run typecheck` → build web → `tsc` build api. Mirror that order locally when debugging CI failures.
+CI (`.github/workflows/ci.yml`) has multiple jobs: **build** (dep audit, bootstrap guard, `prisma migrate deploy`, build `@scadium/{shared,fair}`, fair tests incl. Node⇄browser parity, API unit tests, typecheck, build web/api/worker); **api-integration** (Postgres + Redis services, `test:integration`); **anchor-tests** (`cargo test/clippy/audit`, `anchor build`, IDL-drift gate, localnet `anchor test`); **secret-scan** (gitleaks); **container-scan** (Trivy); **audit-status** (real-money cutover gate); **helm-chart** (lint + template); **web-e2e** (Playwright). Mirror the relevant job's step order locally when debugging.
 
 ## Architecture — things that span multiple files
 
@@ -72,13 +72,19 @@ CI (`.github/workflows/ci.yml`) runs: `prisma migrate deploy` → build `@scadiu
 
 **SCAD Vault (term staking).** The LOCKED tier that complements the (now liquid) Engine: a user locks `$SCAD` into a fixed-term pool (`VaultPool`, one per `(asset, termDays)` — 30/90/180/365) as a `VaultPosition` (a contract with its own `maturesAt`). Accounting is share/index based (ERC-4626-style): `VaultPool.indexRay` is the share price; a deposit mints shares at the current index (index unchanged), and yield + early-exit penalties RAISE the index so positions appreciate pro-rata in O(1). `apps/api/src/vault/vault.service.ts` does deposit/withdraw (early withdrawal before `maturesAt` keeps `VAULT.EARLY_EXIT_PENALTY_BPS` in the pool, lifting the index for holders); `apps/api/src/vault/vault-accrual.service.ts` is the hourly worker round (queue `vault-accrual`) that takes `VAULT.YIELD_NGR_BPS` of NGR, converts lamports→$SCAD (`lamportsToScadBase`), and splits it across pools by `weightBps × totalShares`. Balances move only through `applyBalanceDelta` (currencies `scad` ↔ `scad_vault`; `User.scadiumVault` is the principal aggregate). **NGR-budget invariant:** Engine dividend (12%) + Vault yield (8%) must stay ≤ 20% (buy-and-burn removed = 0%) — `ngrRedistributionBps()` + the vault-math test guard it. The math lives purely in `packages/shared/src/constants.ts` (`VAULT`, `sharesForDeposit`/`assetsForShares`/`applyAccrual`/`earlyExitPenalty`), so the Rust program (`programs/scadium_vault` — `init_vault_pool`/`vault_deposit`/`vault_withdraw`/`vault_accrue`) mirrors it bit-for-bit. The chain layer is the same off-chain-first hybrid as everywhere else: `ChainService.vaultAccrue`/`readVaultPoolOnChain` are cosigner-gated and no-op until deploy (deposit/withdraw are USER-signed client-wallet flows); `ReconciliationService.vaultLedgerDrift()` asserts the off-chain invariants (Σ position shares == pool.totalShares; Σ principal == `User.scadiumVault`) and `vaultDrift()` flags off-chain↔on-chain divergence once live. See `docs/runbooks/vault-onchain.md`.
 
+**Compliance & real-money gate.** `apps/api/src/{compliance,kyc,responsible-gambling}/` guard the real-money path. `assertRealMoneyReady` (`compliance/real-money-gate.ts`) fails the boot **closed** unless licence + KYC + geoblocking (IP-salt / proxy-secret) + VPN detection are configured; geoblocking is always enforced. Toggled by `REAL_MONEY_ENABLED`.
+
+**Reconciliation & solvency.** `apps/api/src/reconciliation/` runs on the worker's `reconcile` cadence: `reconcileAll` + `houseSolvency` + `scadLedgerDrift`/`stakeLedgerDrift`/`usdsSolvency` (ledger invariants) + `sweepLotteryPrizes`. It is the safety net asserting off-chain ledgers balance and the house vault stays above its rent floor.
+
+**SCAD Engine v2 — block mining (Proof-of-Play).** Parallel to the dividend round, `apps/api/src/engine/` mints an hourly `EngineBlock` and splits it across players by wager (`EngineBlockShare`), idempotent per hour, driven from the worker's `blockMining` queue.
+
 **Auth = SIWS (Sign-In With Solana).** `apps/api/src/auth/siws.service.ts` issues a nonce, builds a canonical multi-line message including `Issued At`, and verifies the wallet's ed25519 signature via `tweetnacl`. The exact message string is reused on verify (re-derived from the stored `issuedAt`); the frontend in `apps/web/src/hooks/use-siws-sign-in.ts` must display the identical string before signing. Nonce store is currently in-memory (move to Redis for prod) with 5-minute TTL. After verify, the auth controller issues a JWT (`@nestjs/jwt`).
 
 **Realtime.** Per-feature Socket.io namespaces (`/crash`, `/coinflip`, `/chat`, …) on the API side. Browser side: `apps/web/src/providers/socket-provider.tsx` lazily creates one connection per namespace and reuses it across components — call `useSocket('/crash')` from a component.
 
 **HTTP client.** `apps/web/src/lib/api-client.ts:api()` is the single fetch wrapper. It prefixes `${NEXT_PUBLIC_API_URL}/api/v1`, attaches the JWT from the auth store, and throws `ApiError`. Don't bypass it.
 
-**Global pipes/prefix on the API.** `main.ts` enables `ValidationPipe({ whitelist, forbidNonWhitelisted, transform })` and `setGlobalPrefix('api/v1', { exclude: ['health'] })`. All controller DTOs assume class-validator and that unknown fields are stripped.
+**Global pipes/prefix on the API.** `main.ts` enables `ValidationPipe({ whitelist, forbidNonWhitelisted, transform })` and `setGlobalPrefix('api/v1', { exclude: ['health', 'health/live', 'health/ready', 'metrics'] })` (probes + the Prometheus scrape stay unprefixed). All controller DTOs assume class-validator and that unknown fields are stripped. Boot order in `main.ts`: `initSentry()` → pino logger → `assertRealMoneyReady` compliance gate → `trust proxy` (per-IP throttling) → Redis Socket.io adapter (when `REDIS_URL` set, for multi-replica) → pipes → CORS → prefix → gated Swagger.
 
 ## Conventions that aren't obvious from `tsconfig`
 
