@@ -1,4 +1,5 @@
 import { Container } from '@/components/ui/container';
+import { EngineSubNav } from '@/components/layout/engine-subnav';
 import { EngineDashboard } from './engine-dashboard';
 
 export const metadata = { title: 'SCAD Engine' };
@@ -20,6 +21,8 @@ export default function EnginePage() {
             the house&apos;s profit, paid in USDS.
           </p>
         </div>
+
+        <EngineSubNav />
 
         <EngineDashboard />
       </div>
