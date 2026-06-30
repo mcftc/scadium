@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { VAULT, boostedAprBps, nextScadBoostTier, scadBoostTier } from '@scadium/shared';
 import type { ScadBoostTier } from '@scadium/shared';
@@ -94,22 +94,20 @@ export function VaultDashboard() {
     refetchInterval: 30_000,
   });
 
-  // Timestamp of the last positions refetch — interpolation baseline.
-  const fetchedAt = useRef(Date.now());
+  // ~5fps clock stored as a timestamp (not a counter) so the live counter ticks
+  // between polls without reading Date.now() during render.
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    if (positions.dataUpdatedAt) fetchedAt.current = positions.dataUpdatedAt;
-  }, [positions.dataUpdatedAt]);
-
-  // ~5fps clock drives the live counter without thrashing React.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 200);
+    const t = setInterval(() => setNow(Date.now()), 200);
     return () => clearInterval(t);
   }, []);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vault'] });
 
-  const elapsedSec = (Date.now() - fetchedAt.current) / 1000;
+  // Interpolation baseline: TanStack Query's last-fetch timestamp (reactive — no
+  // ref, no Date.now() in render). 0 until the first tick/fetch ⇒ elapsed 0.
+  const elapsedSec =
+    now && positions.dataUpdatedAt ? Math.max(0, (now - positions.dataUpdatedAt) / 1000) : 0;
   const liveTotal = (positions.data ?? []).reduce((sum, p) => sum + liveValue(p, elapsedSec), 0);
   const principalTotal = (positions.data ?? []).reduce((sum, p) => sum + toScad(p.principal), 0);
   const liveEarned = Math.max(0, liveTotal - principalTotal);
@@ -132,12 +130,7 @@ export function VaultDashboard() {
 
       <BoostPanel tier={tier} holdingsBase={holdingsBase} hasToken={!!token} />
 
-      <PoolsPanel
-        pools={pools.data}
-        hasToken={!!token}
-        tier={tier}
-        onDeposited={invalidate}
-      />
+      <PoolsPanel pools={pools.data} hasToken={!!token} tier={tier} onDeposited={invalidate} />
 
       <RiskPanel pools={pools.data} />
 
@@ -198,8 +191,8 @@ function BoostPanel({
                   Your tier
                 </div>
                 <div className="text-lg font-bold">
-                  {tier.label} · <span className="text-primary-400">{fmtMult(tier.multiplierBps)}</span>{' '}
-                  APR
+                  {tier.label} ·{' '}
+                  <span className="text-primary-400">{fmtMult(tier.multiplierBps)}</span> APR
                 </div>
               </div>
               <div className="text-right text-xs text-foreground-muted">
