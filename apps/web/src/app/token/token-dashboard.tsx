@@ -40,7 +40,6 @@ interface TokenStats {
   phaseCount: number;
   currentRatePerLamport: number;
   toNextHalvingBase: string;
-  totalBurnedScad: string;
   totalDistributedUsds: string;
   allocation: AllocSlice[];
 }

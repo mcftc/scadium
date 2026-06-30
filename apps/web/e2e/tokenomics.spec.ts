@@ -5,7 +5,8 @@ import { test, expect } from '@playwright/test';
  * hard-code a stale pre-Vault model: 217,755,972 supply, a 40% "future rewards"
  * bucket, and a flat 20% buy-and-burn). It now derives every number from the
  * `@scadium/shared` ENGINE constants, so this spec locks it to the live model:
- * 1B fixed supply, the 6-way allocation, and the 6/6/8 NGR redistribution.
+ * 1B fixed supply, the 6-way allocation, and the no-burn NGR redistribution
+ * (12% staking dividends + 8% vault yield, no buy-and-burn).
  *
  * Static page — no API needed.
  */

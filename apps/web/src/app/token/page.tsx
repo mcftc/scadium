@@ -16,7 +16,8 @@ export default function TokenPage() {
             <span className="text-gradient">$SCAD</span>
           </h1>
           <p className="mt-4 text-foreground-muted max-w-xl mx-auto text-lg">
-            Earn by playing. Buy-and-burn funded by site profit. No presale, no team unlocks.
+            Earn by playing. Gaming revenue shared with holders as dividends. No presale, no team
+            unlocks.
           </p>
         </div>
 

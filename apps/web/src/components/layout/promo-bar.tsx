@@ -25,8 +25,8 @@ export function PromoBar() {
       <div className="mx-auto flex max-w-screen-2xl items-center justify-center gap-2 px-4 py-1.5">
         <Sparkles className="h-3 w-3 text-primary-400" />
         <span className="text-[11px] font-semibold">
-          Trade <span className="text-primary-300">$SCAD</span> on our on-chain AMM — every bet
-          feeds the buy-and-burn
+          Trade <span className="text-primary-300">$SCAD</span> on our on-chain AMM — mine more
+          every time you play
         </span>
         <Link
           href="/trade"

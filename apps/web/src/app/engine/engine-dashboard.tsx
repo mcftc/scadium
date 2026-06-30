@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ENGINE } from '@scadium/shared';
-import { Coins, Flame, Lock, TrendingUp, Wallet, Zap } from 'lucide-react';
+import { Coins, Lock, TrendingUp, Wallet, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
@@ -23,10 +23,8 @@ const usds = (b: string, dp = 2) => `$${fmt(b, USDS_DECIMALS, dp)}`;
 
 interface EngineSummary {
   totalStakedScad: string;
-  totalBurnedScad: string;
   totalDistributedUsds: string;
   dividendNgrBps: number;
-  buybackNgrBps: number;
   distributionIntervalMs: number;
   lastRound: {
     period: string;
@@ -106,7 +104,7 @@ export function EngineDashboard() {
 
       <MiningSection />
 
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-2 gap-4">
         <Stat
           label="Total staked"
           value={stats.data ? `${scad(stats.data.totalStakedScad, 0)} SCAD` : '…'}
@@ -116,11 +114,6 @@ export function EngineDashboard() {
           label="USDS distributed"
           value={stats.data ? usds(stats.data.totalDistributedUsds) : '…'}
           icon={Coins}
-        />
-        <Stat
-          label="$SCAD burned"
-          value={stats.data ? `${scad(stats.data.totalBurnedScad, 0)}` : '…'}
-          icon={Flame}
         />
       </div>
 
@@ -138,8 +131,8 @@ export function EngineDashboard() {
 
       {stats.data && (
         <p className="text-center text-xs text-foreground-muted">
-          {(stats.data.dividendNgrBps / 100).toFixed(0)}% of house profit → stakers ·{' '}
-          {(stats.data.buybackNgrBps / 100).toFixed(0)}% → buy &amp; burn · paid hourly in USDS
+          {(stats.data.dividendNgrBps / 100).toFixed(0)}% of house profit → stakers · paid hourly in
+          USDS
         </p>
       )}
     </div>
