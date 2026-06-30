@@ -5,7 +5,7 @@ export const metadata = { title: 'Crash' };
 
 export default function CrashPage() {
   return (
-    <Container>
+    <Container className="max-w-[1800px]">
       <div className="py-4">
         <CrashGame />
       </div>

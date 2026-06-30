@@ -24,7 +24,7 @@ export function CrashGame() {
       {/* CENTER: Game area */}
       <div className="flex-1 min-w-0 space-y-3">
         <CrashHistory history={state?.history ?? []} />
-        <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[520px]">
+        <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[calc(100vh-11rem)] lg:min-h-[560px] lg:max-h-[820px]">
           <CrashCurve state={state} cashouts={cashouts} myBet={myBet} />
           {/* Live player count overlay (top-left), like solpump */}
           <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10">
@@ -38,7 +38,7 @@ export function CrashGame() {
       </div>
 
       {/* RIGHT (desktop) / BELOW (mobile): Bet panel + players */}
-      <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
+      <div className="w-full lg:w-[320px] shrink-0 space-y-4">
         <Card className="p-5">
           <CrashBetPanel state={state} />
         </Card>
