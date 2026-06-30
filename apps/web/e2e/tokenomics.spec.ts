@@ -29,5 +29,12 @@ test.describe('$SCAD whitepaper tokenomics', () => {
     await expect(page.getByText(/staking dividends/i)).toBeVisible();
     await expect(page.getByText(/vault yield/i)).toBeVisible();
     await expect(page.getByText(/of net gaming revenue/i).first()).toBeVisible();
+
+    // Emission MUST reflect the SCAD Engine v2 Proof-of-Play block-mining model
+    // (BlockMiningService) — NOT the removed per-bet "128 $SCAD per 1 SOL
+    // wagered" mint. Cashback (32/SOL net loss) survives as a separate accrual.
+    await expect(page.getByText(/Proof-of-Play mining/i)).toBeVisible();
+    await expect(page.getByText(/emitted in hourly blocks/i)).toBeVisible();
+    await expect(page.getByText(/128 \$SCAD per 1 SOL wagered/i)).toHaveCount(0);
   });
 });

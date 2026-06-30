@@ -23,6 +23,12 @@ const DIVIDEND_PCT = ENGINE.DIVIDEND_NGR_BPS / 100;
 const BURN_PCT = ENGINE.BUYBACK_NGR_BPS / 100;
 const VAULT_PCT = VAULT.YIELD_NGR_BPS / 100;
 const REDIST_PCT = DIVIDEND_PCT + BURN_PCT + VAULT_PCT;
+// SCAD Engine v2 (Proof-of-Play mining): $SCAD is emitted in HOURLY BLOCKS, not
+// per bet (the per-bet mint was removed). These derive the block model straight
+// from the engine constants so the page matches BlockMiningService exactly.
+const BLOCK_REWARD_WHOLE = Number(ENGINE.BLOCK_REWARD_PHASE1_BASE / 10n ** BigInt(SCAD.DECIMALS));
+const BIG_REWARD_PCT = ENGINE.BIG_REWARD_BPS / 100;
+const STAKE_PLAYRATE_PCT = ENGINE.STAKE_PLAYRATE_BPS / 100;
 
 /**
  * $SCAD whitepaper — same structure as solpump's /coin/whitepaper:
@@ -71,10 +77,17 @@ export default function WhitepaperPage() {
             ))}
           </ul>
           <p className="mt-3">
-            Earning rate: <strong>128 $SCAD per 1 SOL wagered</strong> at launch, halving across
-            seven emission phases (128→64→32→16→8→4→2) until the{' '}
-            {M(SCAD.TOTAL_SUPPLY * SCAD.ALLOC_P2E)} Play-to-Earn pool is exhausted; claimable
-            on-chain at any time. Cashback accrues at 32 $SCAD per 1 SOL of net losses.
+            <strong>Proof-of-Play mining:</strong> $SCAD is emitted in hourly blocks — not per bet.
+            Each hour, a block subsidy of <strong>{fmt(BLOCK_REWARD_WHOLE)} $SCAD</strong> at launch
+            (halving as the {M(SCAD.TOTAL_SUPPLY * SCAD.ALLOC_P2E)} Play-to-Earn pool drains across
+            seven phases) is split among that hour&apos;s players by <strong>play-rate</strong> —
+            the amount you wagered, scaled by your loyalty tier. {BIG_REWARD_PCT}% of every block is
+            routed to a weighted-random big-reward draw, and staked $SCAD earns a passive play-rate
+            ({STAKE_PLAYRATE_PCT}% of your stake per hour) so holders keep mining even while idle.
+          </p>
+          <p className="mt-2">
+            Cashback accrues separately at <strong>32 $SCAD per 1 SOL of net losses</strong>. Mining
+            rewards, cashback and USDS dividends are all claimable on-chain at any time.
           </p>
         </Section>
 
