@@ -1,5 +1,6 @@
 import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server } from 'socket.io';
+import { resolveCorsOrigins } from '../../config/cors';
 
 /**
  * Realtime channel for the lottery. Browser side subscribes via
@@ -8,7 +9,7 @@ import { Server } from 'socket.io';
  */
 @WebSocketGateway({
   namespace: '/lottery',
-  cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
+  cors: { origin: resolveCorsOrigins(process.env.CORS_ORIGIN), credentials: true },
 })
 export class LotteryGateway {
   @WebSocketServer()

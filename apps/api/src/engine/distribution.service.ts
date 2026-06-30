@@ -161,11 +161,10 @@ export class DistributionService {
     }));
   }
 
-  /** Engine-wide stats for the dashboard header (supply/burn/staked/dividends). */
+  /** Engine-wide stats for the dashboard header (staked / dividends). */
   async engineStats() {
-    const [stakedAgg, burnAgg, distAgg, lastRound] = await Promise.all([
+    const [stakedAgg, distAgg, lastRound] = await Promise.all([
       this.prisma.user.aggregate({ _sum: { scadiumStaked: true } }),
-      this.prisma.tokenBurn.aggregate({ _sum: { scadBurned: true } }),
       this.prisma.distributionRound.aggregate({ _sum: { poolUsds: true } }),
       this.prisma.distributionRound.findFirst({
         where: { distributed: true },
@@ -175,10 +174,8 @@ export class DistributionService {
     ]);
     return {
       totalStakedScad: (stakedAgg._sum.scadiumStaked ?? 0n).toString(),
-      totalBurnedScad: (burnAgg._sum.scadBurned ?? 0n).toString(),
       totalDistributedUsds: (distAgg._sum.poolUsds ?? 0n).toString(),
       dividendNgrBps: ENGINE.DIVIDEND_NGR_BPS,
-      buybackNgrBps: ENGINE.BUYBACK_NGR_BPS,
       distributionIntervalMs: ENGINE.DISTRIBUTION_INTERVAL_MS,
       lastRound: lastRound
         ? {

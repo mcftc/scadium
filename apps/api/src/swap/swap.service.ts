@@ -10,7 +10,7 @@ import {
 } from '@solana/web3.js';
 import { createHash } from 'crypto';
 import { USD_PER_SOL } from '@scadium/shared';
-import { SWAP, buybackBudgetLamports, resolveNetworkConfig } from '@scadium/shared';
+import { SWAP, ENGINE, buybackBudgetLamports, resolveNetworkConfig } from '@scadium/shared';
 import { expectedSwapOut, minOutWithSlippage } from './swap-math';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -217,11 +217,15 @@ export class SwapService implements OnModuleInit {
   // ----------------------------------------------------- buy & burn job
 
   /**
-   * ENGINE.BUYBACK_NGR_BPS (10%) of positive NGR (stakes − payouts) since the
-   * last burn. The other 10% of NGR funds the staker USDS dividend (see
-   * DistributionService) — the two run on independent windows and never contend.
+   * Buy-and-burn is RETIRED: $SCAD is a pure Proof-of-Play mining token, not a
+   * deflationary one, so `ENGINE.BUYBACK_NGR_BPS` is `0` and this job is an
+   * explicit no-op. The slice that once funded buy-and-burn now flows entirely to
+   * stakers as the USDS dividend (see DistributionService, 12% of NGR). The job +
+   * queue are kept (not deleted) so re-enabling is a one-constant change and the
+   * worker wiring stays stable.
    */
   async runBuyAndBurn(): Promise<void> {
+    if (ENGINE.BUYBACK_NGR_BPS === 0) return; // retired — $SCAD has no protocol burn
     if (!this.enabled || !this.cosigner) return;
     try {
       const lastBurn = await this.prisma.tokenBurn.findFirst({
@@ -236,7 +240,7 @@ export class SwapService implements OnModuleInit {
       const payouts = agg._sum.payoutLamports ?? BigInt(0);
       const ngr = stakes - payouts;
       if (ngr <= BigInt(0)) return;
-      const burnBudget = buybackBudgetLamports(ngr); // ENGINE.BUYBACK_NGR_BPS (10%)
+      const burnBudget = buybackBudgetLamports(ngr); // 0 while BUYBACK_NGR_BPS=0
       if (burnBudget < BigInt(1_000_000)) return; // skip dust (<0.001 SOL)
 
       // 1) Swap SOL→SCAD as the cosigner (own wallet SOL funds the buy).

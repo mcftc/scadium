@@ -5,6 +5,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
+import { resolveCorsOrigins } from '../../config/cors';
 
 /**
  * WebSocket gateway for the coinflip lobby. Clients join the `coinflip`
@@ -16,7 +17,7 @@ import { Server } from 'socket.io';
  */
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000',
+    origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
     credentials: true,
   },
   namespace: '/coinflip',

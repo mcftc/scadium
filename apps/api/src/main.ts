@@ -11,6 +11,7 @@ import { GeoService } from './compliance/geo.service';
 import { VpnDetectionService } from './compliance/vpn-detection.service';
 import { KycService } from './kyc/kyc.service';
 import { assertRealMoneyReady } from './compliance/real-money-gate';
+import { resolveCorsOrigins } from './config/cors';
 
 async function bootstrap() {
   // Error tracking first so even bootstrap failures can be captured (#38).
@@ -64,9 +65,11 @@ async function bootstrap() {
     }),
   );
 
-  // CORS
+  // CORS — the canonical scadium.com origin is ALWAYS allowed (even if
+  // CORS_ORIGIN is unset/misconfigured on the host), so a missing env var can
+  // never CORS-block the live web app's wallet sign-in again. See config/cors.ts.
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000',
+    origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
     credentials: true,
   });
 

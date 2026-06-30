@@ -10,6 +10,7 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
+import { resolveCorsOrigins } from '../config/cors';
 
 /**
  * Realtime chat gateway. Clients connect to `/chat`, optionally with a
@@ -21,7 +22,7 @@ import { ChatService } from './chat.service';
  */
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000',
+    origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
     credentials: true,
   },
   namespace: '/chat',

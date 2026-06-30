@@ -1,6 +1,7 @@
 import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server } from 'socket.io';
 import type { Card } from '@scadium/shared';
+import { resolveCorsOrigins } from '../../config/cors';
 
 /**
  * Realtime channel for the multiplayer blackjack tables. Browser subscribes
@@ -11,7 +12,7 @@ import type { Card } from '@scadium/shared';
  */
 @WebSocketGateway({
   namespace: '/blackjack',
-  cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
+  cors: { origin: resolveCorsOrigins(process.env.CORS_ORIGIN), credentials: true },
 })
 export class BlackjackGateway {
   @WebSocketServer()

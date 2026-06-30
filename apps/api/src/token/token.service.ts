@@ -53,7 +53,6 @@ export class TokenService {
         ratePerLamport: p.ratePerLamport,
         cumulativeCapBase: p.cumulativeCapBase.toString(),
       })),
-      totalBurnedScad: engine.totalBurnedScad, // base units (from buy-and-burn)
       totalDistributedUsds: engine.totalDistributedUsds, // USDS base units
       allocation: this.allocation(),
     };

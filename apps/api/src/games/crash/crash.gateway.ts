@@ -1,5 +1,6 @@
 import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server } from 'socket.io';
+import { resolveCorsOrigins } from '../../config/cors';
 
 /**
  * Broadcasts crash round lifecycle events. Clients get a room-less
@@ -9,7 +10,7 @@ import { Server } from 'socket.io';
  */
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3000',
+    origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
     credentials: true,
   },
   namespace: '/crash',
