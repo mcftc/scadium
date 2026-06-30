@@ -36,8 +36,8 @@ export default function AboutPage() {
           <Card className="p-6 space-y-4 text-sm text-foreground-muted">
             <p>
               Scadium is a non-custodial, provably-fair play-to-earn platform built on Solana —
-              every round mines $SCAD. Game results derive from cryptographically committed seeds,
-              and the native{' '}
+              playing mines $SCAD in hourly blocks. Game results derive from cryptographically
+              committed seeds, and the native{' '}
               <span className="text-foreground font-semibold">$SCAD</span> token is fueled by a
               transparent buy-and-burn funded from gaming revenue.
             </p>

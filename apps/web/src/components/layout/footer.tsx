@@ -65,8 +65,8 @@ export function Footer() {
             <Logo />
             <p className="mt-4 text-sm text-foreground-muted max-w-xs">
               <ChainCopy
-                onchain="Non-custodial, provably-fair play-to-earn on Solana — every round mines $SCAD, settled on-chain."
-                playMoney="Non-custodial, provably-fair play-to-earn on Solana — every round mines $SCAD. Play-money beta."
+                onchain="Non-custodial, provably-fair play-to-earn on Solana — playing mines $SCAD in hourly blocks, settled on-chain."
+                playMoney="Non-custodial, provably-fair play-to-earn on Solana — playing mines $SCAD in hourly blocks. Play-money beta."
               />
             </p>
           </div>
@@ -92,8 +92,7 @@ export function Footer() {
         </div>
         <div className="border-t border-border/50 py-6 flex flex-col md:flex-row justify-between gap-4 text-xs text-foreground-muted">
           <p>
-            © {new Date().getFullYear()} Scadium. For entertainment purposes. 18+. Play
-            responsibly.
+            © {new Date().getFullYear()} Scadium. For entertainment purposes. 18+. Play responsibly.
           </p>
           <LicensingLine />
         </div>

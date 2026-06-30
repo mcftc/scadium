@@ -8,7 +8,7 @@ export const metadata = { title: 'FAQ' };
 const faqs: { q: string; a: ReactNode }[] = [
   {
     q: 'What is Scadium?',
-    a: 'A non-custodial, provably-fair play-to-earn platform on Solana where every round mines $SCAD. You sign in with your wallet (SIWS) and every game result can be reproduced from committed seeds.',
+    a: 'A non-custodial, provably-fair play-to-earn platform on Solana where playing mines $SCAD in hourly blocks. You sign in with your wallet (SIWS) and every game result can be reproduced from committed seeds.',
   },
   {
     q: 'How do deposits work?',

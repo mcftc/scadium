@@ -23,7 +23,7 @@ export function HeroSection() {
           </h1>
 
           <p className="mt-6 text-lg md:text-xl text-foreground-muted max-w-2xl">
-            Provably-fair, on-chain games — every round mines $SCAD.{' '}
+            Provably-fair, on-chain games — playing mines $SCAD in hourly blocks.{' '}
             <ChainCopy
               onchain="Non-custodial — connect your wallet and play, your funds stay in your control."
               playMoney="Connect your wallet to sign in and play — earn $SCAD as you go. On-chain mode is coming."

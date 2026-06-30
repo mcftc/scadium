@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     template: '%s · Scadium',
   },
   description:
-    'Scadium is a non-custodial, provably-fair platform of on-chain games on Solana. Play-to-earn — every round mines $SCAD. Connect your wallet and start.',
+    'Scadium is a non-custodial, provably-fair platform of on-chain games on Solana. Play-to-earn — playing mines $SCAD in hourly blocks. Connect your wallet and start.',
   keywords: [
     'Solana',
     'on-chain games',
