@@ -129,9 +129,10 @@ describe('SCAD Engine — stake, distribute, lock', () => {
     expect(claims).toBe(1);
   });
 
-  it('uses the configured 6% dividend slice (Vault NGR rebalance)', () => {
-    // Rebalanced 10%→6% when the SCAD Vault took its own NGR slice; total
-    // redistribution (dividend + buyback + vault) stays ≤ 20% — see VAULT.
-    expect(ENGINE.DIVIDEND_NGR_BPS).toBe(600);
+  it('uses the configured 12% dividend slice (pure-mining tokenomics)', () => {
+    // Finalized tokenomics: $SCAD is a pure mining token — buy-and-burn removed,
+    // its slice folded into the dividend (now 12%). Total NGR redistribution
+    // (dividend 12% + vault 8% + buyback 0%) stays ≤ 20% — see ENGINE/VAULT.
+    expect(ENGINE.DIVIDEND_NGR_BPS).toBe(1200);
   });
 });

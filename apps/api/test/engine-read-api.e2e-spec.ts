@@ -42,7 +42,7 @@ describe('Engine v2 read API (integration, real Postgres)', () => {
     await prisma.$disconnect();
   });
 
-  it('state() reports phase, emission, the current block reward, and the last block', async () => {
+  it('state() reports halving era, emission, the current block reward, and the last block', async () => {
     // Mine a block so there is emission + a settled block to report.
     const period = periodForHour(Date.now() - 60_000);
     const stale = await prisma.engineBlock.findUnique({ where: { period } });
@@ -54,7 +54,7 @@ describe('Engine v2 read API (integration, real Postgres)', () => {
     await svc.mineBlock();
 
     const state = await svc.state();
-    expect(state.phase).toBeGreaterThanOrEqual(1);
+    expect(state.era).toBeGreaterThanOrEqual(0); // 0-indexed halving era (era 0 = years 0–4)
     expect(BigInt(state.totalEmittedScad)).toBeGreaterThan(0n);
     expect(BigInt(state.remainingPoolScad)).toBeGreaterThan(0n);
     expect(BigInt(state.currentBlockRewardScad)).toBeGreaterThan(0n);

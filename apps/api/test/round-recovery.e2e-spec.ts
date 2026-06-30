@@ -53,12 +53,12 @@ describe('round recovery on boot (integration, real Postgres)', () => {
     await recover(makeCrashEngine());
 
     // u1: full stake refunded (0 + 100). u2: locked payout + remaining (180 + 40).
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: u1.id } })).playBalanceLamports).toBe(
-      100n,
-    );
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: u2.id } })).playBalanceLamports).toBe(
-      220n,
-    );
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: u1.id } })).playBalanceLamports,
+    ).toBe(100n);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: u2.id } })).playBalanceLamports,
+    ).toBe(220n);
     expect((await prisma.crashRound.findUniqueOrThrow({ where: { id: round.id } })).status).toBe(
       'busted',
     );
@@ -121,9 +121,9 @@ describe('round recovery on boot (integration, real Postgres)', () => {
 
     await recover(makeLotteryEngine(), 'recoverStrandedDraws');
 
-    expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: draw.id } })).status).not.toBe(
-      'open',
-    );
+    expect(
+      (await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: draw.id } })).status,
+    ).not.toBe('open');
   });
 
   it('blackjack: unfinished round → seat stakes refunded with ledger, table back to waiting', async () => {
@@ -159,9 +159,9 @@ describe('round recovery on boot (integration, real Postgres)', () => {
     expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).playBalanceLamports).toBe(
       150n,
     );
-    expect((await prisma.blackjackTable.findUniqueOrThrow({ where: { id: table.id } })).status).toBe(
-      'waiting',
-    );
+    expect(
+      (await prisma.blackjackTable.findUniqueOrThrow({ where: { id: table.id } })).status,
+    ).toBe('waiting');
     expect(
       await prisma.balanceLedger.count({
         where: { userId: u.id, reason: 'blackjack_recovery_refund' },
@@ -193,8 +193,14 @@ describe('round recovery on boot (integration, real Postgres)', () => {
         endedAt: null,
         stateJson: {
           seats: [
-            { userId: u0.id, bet: { mainLamports: '1000', side21p3Lamports: '0', sidePerfectPairsLamports: '0' } },
-            { userId: u1.id, bet: { mainLamports: '500', side21p3Lamports: '0', sidePerfectPairsLamports: '0' } },
+            {
+              userId: u0.id,
+              bet: { mainLamports: '1000', side21p3Lamports: '0', sidePerfectPairsLamports: '0' },
+            },
+            {
+              userId: u1.id,
+              bet: { mainLamports: '500', side21p3Lamports: '0', sidePerfectPairsLamports: '0' },
+            },
           ],
         },
       },
@@ -231,16 +237,32 @@ describe('round recovery on boot (integration, real Postgres)', () => {
       closeAt: Date.now() + 30_000,
       activeSeat: 0,
       seats: new Map<number, unknown>([
-        [0, mkSeat(0, u0.id, u0.walletAddress, 1_000n, [{ rank: '10', suit: 'H' }, { rank: '6', suit: 'S' }])],
-        [1, mkSeat(1, u1.id, u1.walletAddress, 500n, [{ rank: '10', suit: 'D' }, { rank: '9', suit: 'C' }])],
+        [
+          0,
+          mkSeat(0, u0.id, u0.walletAddress, 1_000n, [
+            { rank: '10', suit: 'H' },
+            { rank: '6', suit: 'S' },
+          ]),
+        ],
+        [
+          1,
+          mkSeat(1, u1.id, u1.walletAddress, 500n, [
+            { rank: '10', suit: 'D' },
+            { rank: '9', suit: 'C' },
+          ]),
+        ],
       ]),
-      dealerCards: [{ rank: '7', suit: 'D' }, { rank: '5', suit: 'C' }],
+      dealerCards: [
+        { rank: '7', suit: 'D' },
+        { rank: '5', suit: 'C' },
+      ],
       dealerHidden: true,
       deckIndex: 4,
       dealLog: [],
       roundDbId: round.id,
       seedId: seed.id,
       serverSeed: 'srv-dbl',
+      dealSeed: 'srv-dbl', // off-chain mode deals from dealSeed (= serverSeed); drawCard reads t.dealSeed
       serverSeedHash: 'hash-dbl',
       clientSeed: 'cli-dbl',
       nonce: 0,
@@ -268,15 +290,15 @@ describe('round recovery on boot (integration, real Postgres)', () => {
     await recover(makeBlackjackEngine());
 
     // Seat 0 gets the DOUBLED stake back (2000), not the original 1000.
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: u0.id } })).playBalanceLamports).toBe(
-      2_000n,
-    );
-    expect((await prisma.user.findUniqueOrThrow({ where: { id: u1.id } })).playBalanceLamports).toBe(
-      500n,
-    );
-    expect((await prisma.blackjackTable.findUniqueOrThrow({ where: { id: table.id } })).status).toBe(
-      'waiting',
-    );
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: u0.id } })).playBalanceLamports,
+    ).toBe(2_000n);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: u1.id } })).playBalanceLamports,
+    ).toBe(500n);
+    expect(
+      (await prisma.blackjackTable.findUniqueOrThrow({ where: { id: table.id } })).status,
+    ).toBe('waiting');
     expect(
       await prisma.balanceLedger.count({
         where: { userId: u0.id, reason: 'blackjack_recovery_refund' },
