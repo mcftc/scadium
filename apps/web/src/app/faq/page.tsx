@@ -25,7 +25,7 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'What is $SCAD?',
-    a: 'The native reward token. You mine it by playing; 20% of net gaming revenue buys $SCAD from the pool and burns it.',
+    a: 'The native reward token (1B fixed supply). You mine it by playing — each hour an emission block is split across players by playrate. Up to 20% of net gaming revenue flows back as buy-and-burn (6%), staking dividends (6%, paid in USDS) and vault yield (8%).',
   },
   {
     q: 'How do free lottery tickets work?',

@@ -11,6 +11,7 @@ import { api } from '@/lib/api-client';
 import { buildSwapTx, quoteSwap } from '@/lib/swap';
 import { cn } from '@/lib/cn';
 import { solscanTx } from '@/lib/explorer';
+import { ENGINE } from '@scadium/shared';
 
 interface PoolInfo {
   enabled: boolean;
@@ -225,7 +226,8 @@ export function TradePanel() {
                   <span className="font-mono font-bold text-foreground">
                     {burns.data ? fmtScad(burns.data.totalBurned) : '…'} SCAD
                   </span>{' '}
-                  — 20% of net gaming revenue, bought from this pool and burned.
+                  — a {ENGINE.BUYBACK_NGR_BPS / 100}% buy-and-burn of net gaming revenue, bought
+                  from this pool and burned.
                 </div>
                 {(burns.data?.burns ?? []).map((b) => (
                   <div
