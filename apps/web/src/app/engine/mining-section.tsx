@@ -22,12 +22,22 @@ const fmtNum = (n: number, dp = 0) =>
 /** Live mm:ss countdown to the next hourly block. */
 function useCountdown(msInitial: number | undefined): string {
   const [ms, setMs] = useState(msInitial ?? 0);
+
+  // Re-sync to the authoritative value when a new poll changes it — React's
+  // documented "adjust state during render" pattern, instead of resetting inside
+  // the effect (react-hooks/set-state-in-effect).
+  const [synced, setSynced] = useState(msInitial);
+  if (msInitial != null && msInitial !== synced) {
+    setSynced(msInitial);
+    setMs(msInitial);
+  }
+
   useEffect(() => {
     if (msInitial == null) return;
-    setMs(msInitial);
     const id = setInterval(() => setMs((m) => Math.max(0, m - 1000)), 1000);
     return () => clearInterval(id);
   }, [msInitial]);
+
   const total = Math.floor(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;

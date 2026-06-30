@@ -85,7 +85,9 @@ export function TowerPreview() {
       }
     }
     return out;
-  }, [traps, currentRow, picks, bust, celebrate, ended]);
+    // `bust`/`celebrate` are intentionally excluded — they only feed `ended`
+    // (already a dep), and the cell states read `ended`, not those values.
+  }, [traps, currentRow, picks, ended]);
 
   const currentMult = currentRow > 0 ? towerMultiplier(currentRow) : 0;
   const nextMult = !ended && currentRow < ROWS ? towerMultiplier(currentRow + 1) : null;
@@ -151,7 +153,8 @@ export function TowerPreview() {
           New tower
         </button>
         <span className="text-sm text-foreground-muted">
-          {COLS} tiles/row · {TRAPS_PER_ROW} trap · climb {currentRow}/{ROWS} — click a tile in the lit row
+          {COLS} tiles/row · {TRAPS_PER_ROW} trap · climb {currentRow}/{ROWS} — click a tile in the
+          lit row
         </span>
       </div>
     </div>

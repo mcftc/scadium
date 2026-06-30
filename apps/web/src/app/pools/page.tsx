@@ -1,4 +1,5 @@
 import { Container } from '@/components/ui/container';
+import { EngineSubNav } from '@/components/layout/engine-subnav';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { PoolsPanel } from './pools-panel';
 
@@ -16,6 +17,7 @@ export default function PoolsPage() {
             Provide SCAD + SOL liquidity and earn passive income from swap fees.
           </p>
         </div>
+        <EngineSubNav />
         <AuthGate>
           <PoolsPanel />
         </AuthGate>

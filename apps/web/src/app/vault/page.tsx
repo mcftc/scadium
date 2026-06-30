@@ -1,4 +1,5 @@
 import { Container } from '@/components/ui/container';
+import { EngineSubNav } from '@/components/layout/engine-subnav';
 import { VaultDashboard } from './vault-dashboard';
 
 export const metadata = { title: 'SCAD Vault' };
@@ -22,6 +23,8 @@ export default function VaultPage() {
             the longer the term, the higher the APR. Your earnings tick in real time.
           </p>
         </div>
+
+        <EngineSubNav />
 
         <VaultDashboard />
       </div>

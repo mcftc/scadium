@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
@@ -106,24 +106,31 @@ export function useMiningLeaderboard(limit = 10) {
  * holding the polled value steady (no animation).
  */
 export function useLiveEmittedScad(state: EngineState | undefined): number {
-  const [display, setDisplay] = useState(0);
-  const base = useRef({ emitted: 0, ratePerMs: 0, at: 0 });
+  const emitted = state ? Number(BigInt(state.totalEmittedScad) / 1_000_000_000n) : 0; // whole $SCAD
+  const [display, setDisplay] = useState(emitted);
+
+  // Snap the display to the freshly-polled value when it changes — React's
+  // documented "adjust state during render" pattern, which avoids resetting
+  // state inside the effect (react-hooks/set-state-in-effect).
+  const [synced, setSynced] = useState(emitted);
+  if (synced !== emitted) {
+    setSynced(emitted);
+    setDisplay(emitted);
+  }
 
   useEffect(() => {
     if (!state) return;
-    const emitted = Number(BigInt(state.totalEmittedScad) / 1_000_000_000n); // whole $SCAD
-    const blockReward = Number(BigInt(state.currentBlockRewardScad) / 1_000_000_000n);
-    base.current = { emitted, ratePerMs: blockReward / 3_600_000, at: performance.now() };
-    setDisplay(emitted);
-
+    const ratePerMs = Number(BigInt(state.currentBlockRewardScad) / 1_000_000_000n) / 3_600_000;
     const reduce =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduce || base.current.ratePerMs <= 0) return;
+    if (reduce || ratePerMs <= 0) return;
 
+    // Interpolate upward from the polled value at the per-second emission rate.
+    const start = Number(BigInt(state.totalEmittedScad) / 1_000_000_000n);
+    const at = performance.now();
     const id = setInterval(() => {
-      const b = base.current;
-      setDisplay(b.emitted + b.ratePerMs * (performance.now() - b.at));
+      setDisplay(start + ratePerMs * (performance.now() - at));
     }, 120);
     return () => clearInterval(id);
   }, [state]);

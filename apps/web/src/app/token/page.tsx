@@ -1,4 +1,5 @@
 import { Container } from '@/components/ui/container';
+import { EngineSubNav } from '@/components/layout/engine-subnav';
 import { TokenDashboard } from './token-dashboard';
 
 export const metadata = { title: '$SCAD Token' };
@@ -20,6 +21,8 @@ export default function TokenPage() {
             unlocks.
           </p>
         </div>
+
+        <EngineSubNav />
 
         <TokenDashboard />
       </div>

@@ -58,7 +58,7 @@ const footerSections = [
 
 export function Footer() {
   return (
-    <footer className="mt-24 border-t border-border/50 bg-surface/30">
+    <footer className="mt-24 border-t border-border/50 bg-surface/30 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0">
       <Container>
         <div className="py-12 grid grid-cols-2 md:grid-cols-5 gap-8">
           <div className="col-span-2 md:col-span-1">

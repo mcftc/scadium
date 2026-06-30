@@ -100,8 +100,8 @@ const affiliateLinks: { href: string; label: string; icon: LucideIcon }[] = [
 ];
 
 /**
- * Top bar: logo + Games dropdown (all 9 games, live chips for the stateful
- * ones) + Buy + SCAD Engine dropdown on the left; Rewards, balance, avatar on
+ * Top bar: logo + Games dropdown (all 12 games, live chips for the stateful
+ * ones) + Trade + SCAD Engine link on the left; Rewards, balance, avatar on
  * the right. The promo strip renders under the bar.
  */
 export function Header() {
@@ -115,7 +115,7 @@ export function Header() {
     <header className="sticky top-0 z-50 border-b border-border/50 bg-background/90 backdrop-blur-xl">
       <Container>
         <div className="flex h-14 items-center justify-between gap-2 sm:gap-3">
-          {/* Left: Logo + Games dropdown + Buy + Engine + Leaderboard */}
+          {/* Left: Logo + Games dropdown + Trade + Engine + Leaderboard */}
           <div className="flex min-w-0 items-center gap-2 lg:gap-3">
             <Link href="/crash" aria-label="Scadium home" className="shrink-0">
               <Logo />
@@ -140,10 +140,6 @@ export function Header() {
                         onClick={close}
                       />
                     ))}
-                    <div className="my-1 border-t border-border/50" />
-                    <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-foreground-muted/70">
-                      Instant
-                    </div>
                     {instantGames.map((g) => (
                       <GameMenuItem
                         key={g.key}
@@ -168,12 +164,21 @@ export function Header() {
                 )}
               >
                 <ShoppingCart className="h-4 w-4 text-primary-400" />
-                Buy
+                Trade
               </Link>
 
-              <NavDropdown label="SCAD Engine" active={onEngine} width="w-56">
-                {(close) => <LinkMenu links={engineLinks} pathname={pathname} onClick={close} />}
-              </NavDropdown>
+              <Link
+                href="/engine"
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold whitespace-nowrap transition-all',
+                  onEngine
+                    ? 'bg-surface-elevated text-primary-400 ring-1 ring-primary-400/30'
+                    : 'text-foreground hover:bg-surface-elevated hover:text-primary-300',
+                )}
+              >
+                <Zap className="h-4 w-4 text-primary-400" />
+                SCAD Engine
+              </Link>
 
               <NavDropdown label="Affiliates" active={onAffiliates} width="w-56">
                 {(close) => <LinkMenu links={affiliateLinks} pathname={pathname} onClick={close} />}
@@ -294,4 +299,3 @@ function GameMenuItem({
     </Link>
   );
 }
-
