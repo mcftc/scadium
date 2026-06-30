@@ -24,17 +24,18 @@ test.describe('$SCAD whitepaper tokenomics', () => {
     // The stale "Future rewards: 40%" bucket is gone.
     await expect(page.getByText(/Future rewards/i)).toHaveCount(0);
 
-    // Revenue redistribution streams (6% burn / 6% dividends / 8% vault = 20%).
-    await expect(page.getByText(/buy & burn/i).first()).toBeVisible();
+    // Revenue redistribution: $SCAD has NO buy-and-burn (removed) — the whole
+    // slice goes to holders: 12% staking dividends + 8% vault = 20% of NGR.
+    await expect(page.getByText(/no buy-and-burn/i).first()).toBeVisible();
+    await expect(page.getByText(/buy & burn/i)).toHaveCount(0);
     await expect(page.getByText(/staking dividends/i)).toBeVisible();
     await expect(page.getByText(/vault yield/i)).toBeVisible();
     await expect(page.getByText(/of net gaming revenue/i).first()).toBeVisible();
 
-    // Emission MUST reflect the SCAD Engine v2 Proof-of-Play block-mining model
-    // (BlockMiningService) — NOT the removed per-bet "128 $SCAD per 1 SOL
-    // wagered" mint. Cashback (32/SOL net loss) survives as a separate accrual.
+    // Emission MUST be the Proof-of-Play 4-year-halving mining model — NOT the
+    // removed per-bet "128 $SCAD per 1 SOL wagered" mint nor the old phase model.
     await expect(page.getByText(/Proof-of-Play mining/i).first()).toBeVisible();
-    await expect(page.getByText(/emitted in hourly blocks/i)).toBeVisible();
+    await expect(page.getByText(/halves every 4 years/i)).toBeVisible();
     // The engine economy must be documented: USDS staking dividends + the term Vault.
     await expect(page.getByText(/USDS/).first()).toBeVisible();
     await expect(page.getByText(/Vault/i).first()).toBeVisible();

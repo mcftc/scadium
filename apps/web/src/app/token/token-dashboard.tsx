@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Flame,
   Coins,
   TrendingUp,
   Droplets,
@@ -13,10 +12,10 @@ import {
   PieChart,
   Sparkles,
 } from 'lucide-react';
-import { SCAD, ENGINE, blockRewardFor } from '@scadium/shared';
+import { SCAD, MINING, blockRewardAt, emissionEraAt, msToNextHalving } from '@scadium/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api-client';
-import { solscanToken, solscanTx } from '@/lib/explorer';
+import { solscanToken } from '@/lib/explorer';
 
 const TOTAL_SUPPLY = SCAD.TOTAL_SUPPLY;
 
@@ -25,17 +24,6 @@ interface PoolInfo {
   scadMint?: string;
   priceUsd?: number;
   tvlUsd?: number;
-}
-interface BurnRow {
-  id: string;
-  scadBurned: string;
-  solSpent: string;
-  burnSignature: string | null;
-  createdAt: string;
-}
-interface BurnsResponse {
-  totalBurned: string;
-  burns: BurnRow[];
 }
 interface AllocSlice {
   key: string;
@@ -69,26 +57,13 @@ const ALLOC_COLORS: Record<string, string> = {
 
 const toWhole = (base: string | bigint) => Number(BigInt(base)) / 10 ** SCAD.DECIMALS;
 const fmtNum = (n: number, max = 2) => n.toLocaleString(undefined, { maximumFractionDigits: max });
-const shortSig = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
-const relTime = (iso: string) => {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return `${Math.floor(s)}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-};
 
-/** Live stats + tokenomics + buy-and-burn feed for the $SCAD token page. */
+/** Live stats + tokenomics for the $SCAD token page. */
 export function TokenDashboard() {
   const pool = useQuery({
     queryKey: ['swap', 'pool'],
     queryFn: () => api<PoolInfo>('/swap/pool'),
     refetchInterval: 15_000,
-  });
-  const burns = useQuery({
-    queryKey: ['swap', 'burns'],
-    queryFn: () => api<BurnsResponse>('/swap/burns?limit=100'),
-    refetchInterval: 60_000,
   });
   const stats = useQuery({
     queryKey: ['token', 'stats'],
@@ -98,30 +73,14 @@ export function TokenDashboard() {
 
   const enabled = pool.data?.enabled ?? false;
   const price = enabled ? (pool.data?.priceUsd ?? null) : null;
-  const burnedWhole = burns.data ? toWhole(burns.data.totalBurned) : null;
-  const circulating = burnedWhole != null ? TOTAL_SUPPLY - burnedWhole : null;
-  const marketCap = price != null && circulating != null ? price * circulating : null;
-
-  const rows = burns.data?.burns ?? [];
-  // eslint-disable-next-line react-hooks/purity -- snapshots the wall clock once to tally burns from the last 24h; a render-time read of "now" is the intended semantics (display-only stat, no money/fairness).
-  const now24h = Date.now();
-  const burned24h = rows
-    .filter((b) => now24h - new Date(b.createdAt).getTime() < 86_400_000)
-    .reduce((s, b) => s + toWhole(b.scadBurned), 0);
-  // Cumulative burned over time (chronological) for the area chart.
-  const chrono = [...rows].reverse();
-  const cumulative: number[] = [];
-  let run = 0;
-  for (const b of chrono) {
-    run += toWhole(b.scadBurned);
-    cumulative.push(run);
-  }
+  const circulating = TOTAL_SUPPLY;
+  const marketCap = price != null ? price * circulating : null;
 
   const offDash = pool.isLoading ? '…' : '—';
 
   return (
     <>
-      <div className="grid md:grid-cols-4 gap-4 max-w-4xl mx-auto mb-4">
+      <div className="grid md:grid-cols-3 gap-4 max-w-4xl mx-auto mb-4">
         <StatCard
           icon={Coins}
           label="Price"
@@ -136,12 +95,6 @@ export function TokenDashboard() {
           icon={Droplets}
           label="TVL"
           value={enabled && pool.data?.tvlUsd != null ? `$${fmtNum(pool.data.tvlUsd, 0)}` : offDash}
-        />
-        <StatCard
-          icon={Flame}
-          label="Burned"
-          value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'}
-          accent="text-danger"
         />
       </div>
 
@@ -166,113 +119,31 @@ export function TokenDashboard() {
         </Link>
       </div>
 
-      <div className="max-w-4xl mx-auto grid gap-4 lg:grid-cols-2">
-        <SupplyCard
-          circulating={circulating}
-          burned={burnedWhole}
-          mint={enabled ? pool.data?.scadMint : undefined}
-        />
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Flame className="h-4 w-4 text-danger" />
-              Buy &amp; Burn
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <MiniStat
-                label="Total burned"
-                value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'}
-              />
-              <MiniStat label="24h burned" value={fmtNum(burned24h, 0)} />
-              <MiniStat label="Burn events" value={String(rows.length)} />
-            </div>
-            <BurnChart points={cumulative} />
-            <p className="text-[11px] text-foreground-muted text-center">
-              {ENGINE.BUYBACK_NGR_BPS / 100}% of net gaming revenue buys $SCAD from the pool and
-              burns it.
-            </p>
-          </CardContent>
-        </Card>
+      <div className="max-w-4xl mx-auto">
+        <SupplyCard circulating={circulating} mint={enabled ? pool.data?.scadMint : undefined} />
       </div>
 
       <div className="max-w-4xl mx-auto mt-4 grid gap-4 lg:grid-cols-2">
-        <EmissionCard stats={stats.data} burnedWhole={burnedWhole} />
+        <EmissionCard stats={stats.data} />
         <DistributionCard alloc={stats.data?.allocation} />
       </div>
-
-      <Card className="max-w-4xl mx-auto mt-4">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Flame className="h-4 w-4 text-danger" />
-            Burn history
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {rows.length === 0 ? (
-            <div className="px-6 py-10 text-center text-sm text-foreground-muted">
-              Burns run automatically as the house takes revenue.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs uppercase tracking-wider text-foreground-muted">
-                    <th className="text-left font-medium px-6 py-3">Burned</th>
-                    <th className="text-right font-medium px-6 py-3">SOL spent</th>
-                    <th className="text-right font-medium px-6 py-3">When</th>
-                    <th className="text-right font-medium px-6 py-3">Tx</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((b) => (
-                    <tr key={b.id} className="border-b border-border/30 last:border-0">
-                      <td className="px-6 py-3 font-mono text-danger">
-                        -{fmtNum(toWhole(b.scadBurned), 0)} SCAD
-                      </td>
-                      <td className="px-6 py-3 text-right font-mono text-foreground-muted">
-                        {fmtNum(Number(BigInt(b.solSpent)) / 1e9, 4)}
-                      </td>
-                      <td className="px-6 py-3 text-right text-xs text-foreground-muted">
-                        {relTime(b.createdAt)}
-                      </td>
-                      <td className="px-6 py-3 text-right">
-                        {b.burnSignature ? (
-                          <a
-                            href={solscanTx(b.burnSignature)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-primary-400 hover:underline font-mono"
-                          >
-                            {shortSig(b.burnSignature)} <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : (
-                          <span className="text-xs text-foreground-muted">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </>
   );
 }
 
 /** P2E emission halving progress + current phase/rate + value flows. */
-function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole: number | null }) {
+function EmissionCard({ stats }: { stats?: TokenStats }) {
   const emittedWhole = stats ? toWhole(stats.totalEmittedScad) : null;
   const poolWhole = stats ? toWhole(stats.p2ePoolBase) : 500_000_000;
-  const toNextWhole = stats ? toWhole(stats.toNextHalvingBase) : null;
-  // SCAD Engine v2: emission is the HOURLY block reward (halving by phase), not a
-  // per-bet rate. Derived from the engine constant so it matches BlockMiningService.
+  // SCAD Engine: emission is the HOURLY block reward, halving every 4 years
+  // (time-based, Bitcoin-style). Derived from the engine constants so it matches
+  // BlockMiningService. Render-time wall-clock reads are display-only (no money).
+  // eslint-disable-next-line react-hooks/purity -- 4-year-halving era/reward/countdown at call time; display-only.
+  const now = Date.now();
+  const era = emissionEraAt(now);
+  const yrToHalving = msToNextHalving(now) / 31_536_000_000;
   const blockRewardWhole = stats
-    ? toWhole(blockRewardFor(BigInt(stats.totalEmittedScad)).toString())
+    ? toWhole(blockRewardAt(now, BigInt(stats.totalEmittedScad)).toString())
     : null;
   const distributedUsds = stats ? Number(BigInt(stats.totalDistributedUsds)) / 1e6 : null;
   const pct = emittedWhole != null && poolWhole > 0 ? (emittedWhole / poolWhole) * 100 : 0;
@@ -296,9 +167,11 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
             </div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] uppercase tracking-wider text-foreground-muted">Phase</div>
+            <div className="text-[10px] uppercase tracking-wider text-foreground-muted">
+              Halving era
+            </div>
             <div className="font-mono font-semibold">
-              {stats ? `${stats.currentPhase} / ${stats.phaseCount}` : '…'}
+              {stats ? `Era ${era + 1} · ${MINING.YEARS_PER_HALVING}yr` : '…'}
             </div>
           </div>
         </div>
@@ -321,17 +194,10 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
             label="Block reward"
             value={blockRewardWhole != null ? `${fmtNum(blockRewardWhole, 0)} / hr` : '…'}
           />
-          <MiniStat
-            label="To next halving"
-            value={toNextWhole != null ? (toNextWhole > 0 ? fmtNum(toNextWhole, 0) : 'ended') : '…'}
-          />
+          <MiniStat label="Next halving" value={stats ? `~${yrToHalving.toFixed(1)} yr` : '…'} />
         </div>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 text-center">
-          <MiniStat
-            label="Bought & burned"
-            value={burnedWhole != null ? fmtNum(burnedWhole, 0) : '…'}
-          />
+        <div className="grid grid-cols-1 gap-2 border-t border-border pt-3 text-center">
           <MiniStat
             label="USDS distributed"
             value={distributedUsds != null ? `$${fmtNum(distributedUsds, 0)}` : '…'}
@@ -339,8 +205,8 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
         </div>
         <p className="text-[11px] text-foreground-muted text-center">
           {blockRewardWhole != null
-            ? `Proof-of-Play: each hour mints a ${fmtNum(blockRewardWhole, 0)} $SCAD block (halving by phase), split across players by play-rate.`
-            : 'Proof-of-Play: an hourly $SCAD block, split by play-rate, halving by phase.'}
+            ? `Proof-of-Play: each hour mints a ${fmtNum(blockRewardWhole, 0)} $SCAD block (halving every 4 years), split across players by play-rate.`
+            : 'Proof-of-Play: an hourly $SCAD block, split by play-rate, halving every 4 years.'}
         </p>
       </CardContent>
     </Card>
@@ -400,15 +266,7 @@ function DistributionCard({ alloc }: { alloc?: AllocSlice[] }) {
   );
 }
 
-function SupplyCard({
-  circulating,
-  burned,
-  mint,
-}: {
-  circulating: number | null;
-  burned: number | null;
-  mint?: string;
-}) {
+function SupplyCard({ circulating, mint }: { circulating: number | null; mint?: string }) {
   return (
     <Card>
       <CardHeader>
@@ -435,13 +293,6 @@ function SupplyCard({
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-3 text-xs">
-          <span className="text-foreground-muted">Burned (deflationary)</span>
-          <span className="font-mono font-semibold text-danger">
-            {burned != null ? `-${fmtNum(burned, 0)}` : '…'}
-          </span>
-        </div>
-
         <div className="border-t border-border pt-3">
           <div className="text-[10px] uppercase tracking-wider text-foreground-muted mb-1">
             Mint address
@@ -463,47 +314,6 @@ function SupplyCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-/** Cumulative-burned area chart (inline SVG, no chart dependency). */
-function BurnChart({ points }: { points: number[] }) {
-  if (points.length < 2) {
-    return (
-      <div className="flex h-24 items-center justify-center rounded-lg border border-border/50 bg-background text-[11px] text-foreground-muted">
-        Cumulative burn appears here as revenue is taken.
-      </div>
-    );
-  }
-  const n = points.length;
-  const max = points[n - 1] || 1;
-  const x = (i: number) => (i / (n - 1)) * 100;
-  const y = (v: number) => 100 - (v / max) * 96 - 2;
-  const line = points.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(' ');
-  const area = `0,100 ${line} 100,100`;
-  return (
-    <div className="relative h-24 w-full overflow-hidden rounded-lg border border-border/50 bg-background">
-      <svg
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        className="absolute inset-0 h-full w-full"
-      >
-        <defs>
-          <linearGradient id="burnfill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
-            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon points={area} fill="url(#burnfill)" />
-        <polyline
-          points={line}
-          fill="none"
-          stroke="#f59e0b"
-          strokeWidth="1.5"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-    </div>
   );
 }
 

@@ -18,7 +18,7 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'What is $SCADIUM?',
-    a: 'The native reward token (1B fixed supply). Mined by Proof-of-Play: each hour an emission block (10,000 $SCAD at launch, halving as the 500M Play-to-Earn pool drains) is split across players by playrate — no hashrate, just playrate. Allocation: 50% Play-to-Earn, 10% community, 10% liquidity, 15% treasury, 10% team, 5% strategic. Up to 20% of net gaming revenue flows back as buy-and-burn (6%), staking dividends (6%) and vault yield (8%).',
+    a: 'The native reward token: 1B fixed supply, 500M mineable. Mined by Proof-of-Play — each hour an emission block (halving every 4 years, Bitcoin-style) is split across players by playrate, no hashrate. Allocation: 50% mineable, 10% community, 10% liquidity, 15% treasury, 10% team, 5% strategic. There is NO buy-and-burn; up to 20% of net gaming revenue flows back to holders as staking dividends (12%, in USDS) and vault yield (8%).',
   },
   {
     q: 'How does earning $SCAD work?',

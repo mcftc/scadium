@@ -4,14 +4,13 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
-import { ExternalLink, Flame } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { buildSwapTx, quoteSwap } from '@/lib/swap';
 import { cn } from '@/lib/cn';
 import { solscanTx } from '@/lib/explorer';
-import { ENGINE } from '@scadium/shared';
 
 interface PoolInfo {
   enabled: boolean;
@@ -33,23 +32,12 @@ interface TradeRow {
   priceUsd: number;
   blockTime: number | null;
 }
-interface BurnsResponse {
-  totalBurned: string;
-  burns: {
-    id: string;
-    scadBurned: string;
-    solSpent: string;
-    burnSignature: string | null;
-    createdAt: string;
-  }[];
-}
-
 const fmtScad = (base: string | bigint) =>
   (Number(BigInt(base)) / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const fmtSol = (base: string | bigint) => (Number(BigInt(base)) / 1e9).toFixed(4);
 const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
 
-/** Buy & Sell screen — chart-lite, swap form, on-chain trades + burns. */
+/** Buy & Sell screen — chart-lite, swap form, on-chain trades. */
 export function TradePanel() {
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
@@ -57,7 +45,6 @@ export function TradePanel() {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [amount, setAmount] = useState('0.1');
   const [slippage, setSlippage] = useState('2.5');
-  const [tab, setTab] = useState<'trades' | 'burns'>('trades');
   const [busy, setBusy] = useState(false);
   const [lastSig, setLastSig] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +58,6 @@ export function TradePanel() {
     queryKey: ['swap', 'trades'],
     queryFn: () => api<TradeRow[]>('/swap/trades'),
     refetchInterval: 12_000,
-  });
-  const burns = useQuery({
-    queryKey: ['swap', 'burns'],
-    queryFn: () => api<BurnsResponse>('/swap/burns'),
-    refetchInterval: 60_000,
   });
 
   // Quote: input is SOL when buying, SCAD when selling.
@@ -156,98 +138,48 @@ export function TradePanel() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setTab('trades')}
-                className={cn(
-                  'text-sm font-semibold',
-                  tab === 'trades' ? 'text-foreground' : 'text-foreground-muted',
-                )}
-              >
-                All Trades
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab('burns')}
-                className={cn(
-                  'text-sm font-semibold inline-flex items-center gap-1',
-                  tab === 'burns' ? 'text-foreground' : 'text-foreground-muted',
-                )}
-              >
-                <Flame className="h-3.5 w-3.5" />
-                Token Burns
-              </button>
+              <span className="text-sm font-semibold text-foreground">All Trades</span>
             </div>
           </CardHeader>
           <CardContent className="p-0 overflow-x-auto">
-            {tab === 'trades' ? (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border uppercase tracking-wider text-foreground-muted">
-                    <th className="text-left px-4 py-2 font-medium">Type</th>
-                    <th className="text-right px-4 py-2 font-medium">SCAD</th>
-                    <th className="text-right px-4 py-2 font-medium">SOL</th>
-                    <th className="text-right px-4 py-2 font-medium">Price</th>
-                    <th className="text-right px-4 py-2 font-medium">Tx</th>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border uppercase tracking-wider text-foreground-muted">
+                  <th className="text-left px-4 py-2 font-medium">Type</th>
+                  <th className="text-right px-4 py-2 font-medium">SCAD</th>
+                  <th className="text-right px-4 py-2 font-medium">SOL</th>
+                  <th className="text-right px-4 py-2 font-medium">Price</th>
+                  <th className="text-right px-4 py-2 font-medium">Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(trades.data ?? []).map((t) => (
+                  <tr key={t.signature} className="border-b border-border/30">
+                    <td
+                      className={cn(
+                        'px-4 py-2 font-semibold',
+                        t.side === 'buy' ? 'text-success' : 'text-danger',
+                      )}
+                    >
+                      {t.side === 'buy' ? 'Buy' : 'Sell'}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">{fmtScad(t.scadAmount)}</td>
+                    <td className="px-4 py-2 text-right font-mono">{fmtSol(t.solAmount)}</td>
+                    <td className="px-4 py-2 text-right font-mono">${t.priceUsd.toFixed(6)}</td>
+                    <td className="px-4 py-2 text-right">
+                      <TxLink sig={t.signature} />
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {(trades.data ?? []).map((t) => (
-                    <tr key={t.signature} className="border-b border-border/30">
-                      <td
-                        className={cn(
-                          'px-4 py-2 font-semibold',
-                          t.side === 'buy' ? 'text-success' : 'text-danger',
-                        )}
-                      >
-                        {t.side === 'buy' ? 'Buy' : 'Sell'}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono">{fmtScad(t.scadAmount)}</td>
-                      <td className="px-4 py-2 text-right font-mono">{fmtSol(t.solAmount)}</td>
-                      <td className="px-4 py-2 text-right font-mono">${t.priceUsd.toFixed(6)}</td>
-                      <td className="px-4 py-2 text-right">
-                        <TxLink sig={t.signature} />
-                      </td>
-                    </tr>
-                  ))}
-                  {trades.data?.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-foreground-muted">
-                        No trades yet — be the first.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            ) : (
-              <div>
-                <div className="px-4 py-3 text-xs text-foreground-muted border-b border-border/30">
-                  Total burned:{' '}
-                  <span className="font-mono font-bold text-foreground">
-                    {burns.data ? fmtScad(burns.data.totalBurned) : '…'} SCAD
-                  </span>{' '}
-                  — a {ENGINE.BUYBACK_NGR_BPS / 100}% buy-and-burn of net gaming revenue, bought
-                  from this pool and burned.
-                </div>
-                {(burns.data?.burns ?? []).map((b) => (
-                  <div
-                    key={b.id}
-                    className="flex items-center justify-between px-4 py-2 border-b border-border/30 text-xs"
-                  >
-                    <span className="font-mono text-danger">-{fmtScad(b.scadBurned)} SCAD</span>
-                    <span className="font-mono text-foreground-muted">
-                      {fmtSol(b.solSpent)} SOL
-                    </span>
-                    {b.burnSignature ? <TxLink sig={b.burnSignature} /> : <span>—</span>}
-                  </div>
                 ))}
-                {burns.data?.burns.length === 0 && (
-                  <div className="px-4 py-8 text-center text-foreground-muted text-xs">
-                    No burns yet — they run automatically as the house takes revenue.
-                  </div>
+                {trades.data?.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-foreground-muted">
+                      No trades yet — be the first.
+                    </td>
+                  </tr>
                 )}
-              </div>
-            )}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       </div>

@@ -34,9 +34,9 @@ describe('vault money math', () => {
       expect(ngrRedistributionBps()).toBeLessThanOrEqual(2000);
     });
 
-    it('matches the locked 6 / 6 / 8 split (= exactly 20%)', () => {
-      expect(ENGINE.DIVIDEND_NGR_BPS).toBe(600);
-      expect(ENGINE.BUYBACK_NGR_BPS).toBe(600);
+    it('matches the locked 12 / 0 / 8 split (= exactly 20%, no buy-and-burn)', () => {
+      expect(ENGINE.DIVIDEND_NGR_BPS).toBe(1200); // absorbed the old 6% buyback
+      expect(ENGINE.BUYBACK_NGR_BPS).toBe(0); // buy-and-burn removed
       expect(VAULT.YIELD_NGR_BPS).toBe(800);
       expect(ngrRedistributionBps()).toBe(2000);
     });

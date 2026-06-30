@@ -413,16 +413,22 @@ export const USDS = {
 // bc.game's "engine" adapted: earned $SCAD is staked, and a share of casino Net
 // Gaming Revenue (NGR = wagered − paid out) is paid HOURLY to stakers, pro-rata
 // to their staked balance, in USDS. Staking auto-engages on reward claim and is
-// time-locked. Buy-and-burn keeps a parallel (smaller) NGR slice.
+// time-locked. There is NO buy-and-burn — $SCAD is a pure Proof-of-Play mining
+// token; the entire staker slice is paid to holders (no deflationary burn).
 export const ENGINE = {
   /**
    * Share of NGR routed to the (liquid) Engine staker dividend pool, in bps
-   * (= 6%, was 10%). Rebalanced when the SCAD Vault took its own NGR slice so
-   * the total redistribution stays ≤ 20% — see `VAULT` / `ngrRedistributionBps`.
+   * (= 12%). Absorbed the former buy-and-burn slice when buy-and-burn was removed
+   * (6% dividend + 6% buyback → 12% dividend). Total redistribution stays ≤ 20% —
+   * see `VAULT` / `ngrRedistributionBps`.
    */
-  DIVIDEND_NGR_BPS: 600,
-  /** Share of NGR routed to buy-and-burn, in bps (= 6%, was 10% → 20%). */
-  BUYBACK_NGR_BPS: 600,
+  DIVIDEND_NGR_BPS: 1200,
+  /**
+   * Buy-and-burn is REMOVED (= 0). $SCAD has no deflationary burn — it is a pure
+   * mining token. Kept at 0 (not deleted) so `buybackBudgetLamports` /
+   * `ngrRedistributionBps` and their callers resolve to a clean no-op.
+   */
+  BUYBACK_NGR_BPS: 0,
   /** Distribution round cadence — one round per hour. */
   DISTRIBUTION_INTERVAL_MS: 60 * 60 * 1000,
   /**
@@ -468,6 +474,55 @@ export function blockRewardFor(totalEmittedBase: bigint): bigint {
   const { phase } = emissionPhaseFor(totalEmittedBase);
   const reward = ENGINE.BLOCK_REWARD_PHASE1_BASE >> BigInt(phase - 1); // halve per phase
   return reward < remaining ? reward : remaining;
+}
+
+// ---------- Year-based emission (4-year halving, Bitcoin-style) ----------
+// $SCAD is mined in hourly blocks whose subsidy HALVES every 4 years. Era 0
+// (years 0–4) emits HALF the 500M P2E pool; each era halves, so the pool drains
+// over a long Bitcoin-style tail. The halving is TIME-based (not pool-cap): it
+// advances with the calendar, independent of play volume. This is the active
+// emission authority (`emissionPhaseFor`/`blockRewardFor` are legacy, retained
+// only for the vestigial per-SOL earn-rate readout).
+export const MINING = {
+  /** Mining genesis (UTC) — era / halving are measured from here. */
+  GENESIS_MS: Date.UTC(2026, 6, 1), // 2026-07-01
+  /** Halving period: 4 years. */
+  YEARS_PER_HALVING: 4,
+  HOURS_PER_HALVING: 4 * 365 * 24, // 35,040
+  MS_PER_HALVING: 4 * 365 * 24 * 60 * 60 * 1000,
+} as const;
+
+/**
+ * Era-0 hourly block subsidy (SCAD base units): half the P2E pool spread evenly
+ * across the first 4-year era. Each subsequent era halves it, so the geometric
+ * sum (½ + ¼ + …) drains the whole pool. ≈ 7,134 $SCAD / hour at launch.
+ */
+export const GENESIS_BLOCK_REWARD_BASE = SCAD.P2E_POOL_BASE / 2n / BigInt(MINING.HOURS_PER_HALVING);
+
+/** Halving era index for a timestamp: 0 before/at genesis, +1 every 4 years. */
+export function emissionEraAt(nowMs: number): number {
+  const elapsed = nowMs - MINING.GENESIS_MS;
+  if (elapsed <= 0) return 0;
+  return Math.floor(elapsed / MINING.MS_PER_HALVING);
+}
+
+/**
+ * The hourly block subsidy at `nowMs` under the 4-year halving, clamped to the
+ * P2E pool remaining after `totalEmittedBase`. Returns 0n once the pool is
+ * exhausted. This is what `BlockMiningService` mints each hour.
+ */
+export function blockRewardAt(nowMs: number, totalEmittedBase: bigint): bigint {
+  const remaining = SCAD.P2E_POOL_BASE - totalEmittedBase;
+  if (remaining <= 0n) return 0n;
+  const reward = GENESIS_BLOCK_REWARD_BASE >> BigInt(emissionEraAt(nowMs));
+  return reward < remaining ? reward : remaining;
+}
+
+/** ms until the next 4-year halving from `nowMs`. */
+export function msToNextHalving(nowMs: number): number {
+  const era = emissionEraAt(nowMs);
+  const nextAt = MINING.GENESIS_MS + (era + 1) * MINING.MS_PER_HALVING;
+  return Math.max(0, nextAt - nowMs);
 }
 
 /**

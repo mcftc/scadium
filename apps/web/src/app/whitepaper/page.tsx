@@ -1,19 +1,27 @@
 import Link from 'next/link';
-import { SCAD, ENGINE, VAULT, WAGER, LAMPORTS_PER_SOL } from '@scadium/shared';
+import {
+  SCAD,
+  ENGINE,
+  VAULT,
+  WAGER,
+  MINING,
+  GENESIS_BLOCK_REWARD_BASE,
+  LAMPORTS_PER_SOL,
+} from '@scadium/shared';
 import { Container } from '@/components/ui/container';
 
 export const metadata = { title: '$SCAD Whitepaper' };
 
 // Derive EVERY tokenomics figure straight from the engine's single source of
 // truth (`packages/shared/src/constants.ts`) so this page can never drift from
-// the live numbers the API serves (it did — it used to hard-code a stale 217M
-// supply, a per-bet "128/SOL" mint and a 20% burn from a pre-Engine-v2 model).
+// the live numbers the API serves. $SCAD is a pure Proof-of-Play MINING token:
+// 1B fixed supply, a 4-year-halving emission, NO buy-and-burn.
 const M = (whole: number) => `${Math.round(whole / 1_000_000)}M`;
 const fmt = (whole: number) => whole.toLocaleString('en-US');
 const PCT = (frac: number) => `${Math.round(frac * 100)}%`;
 
 const ALLOC = [
-  { label: 'Play-to-Earn emission', frac: SCAD.ALLOC_P2E },
+  { label: 'Play-to-Earn emission (mineable)', frac: SCAD.ALLOC_P2E },
   { label: 'Community / Airdrop', frac: SCAD.ALLOC_COMMUNITY },
   { label: 'Liquidity', frac: SCAD.ALLOC_LIQUIDITY },
   { label: 'Treasury / Ecosystem / MM', frac: SCAD.ALLOC_TREASURY },
@@ -21,16 +29,19 @@ const ALLOC = [
   { label: 'Strategic', frac: SCAD.ALLOC_STRATEGIC },
 ];
 
-// SCAD Engine v2 (Proof-of-Play): $SCAD is emitted in HOURLY BLOCKS (the per-bet
-// mint was removed), split by play-rate. NGR is redistributed 6/6/8 = 20%.
-const BLOCK_REWARD_WHOLE = Number(ENGINE.BLOCK_REWARD_PHASE1_BASE / 10n ** BigInt(SCAD.DECIMALS));
+// Mining: 4-year halving (Bitcoin-style). Era 0 mints ~this much per hour.
+const BLOCK_REWARD_WHOLE = Number(GENESIS_BLOCK_REWARD_BASE / 10n ** BigInt(SCAD.DECIMALS));
+const HALVING_YEARS = MINING.YEARS_PER_HALVING;
 const BIG_REWARD_PCT = ENGINE.BIG_REWARD_BPS / 100;
 const STAKE_PLAYRATE_PCT = ENGINE.STAKE_PLAYRATE_BPS / 100;
+// Revenue redistribution: NO buy-and-burn. Dividend absorbed it (12%), + 8% vault.
 const DIVIDEND_PCT = ENGINE.DIVIDEND_NGR_BPS / 100;
-const BURN_PCT = ENGINE.BUYBACK_NGR_BPS / 100;
 const VAULT_PCT = VAULT.YIELD_NGR_BPS / 100;
-const REDIST_PCT = DIVIDEND_PCT + BURN_PCT + VAULT_PCT;
-
+const REDIST_PCT = DIVIDEND_PCT + VAULT_PCT;
+// Explicit supply breakdown (the headline numbers).
+const TOTAL = SCAD.TOTAL_SUPPLY;
+const MINEABLE = SCAD.TOTAL_SUPPLY * SCAD.ALLOC_P2E;
+const TEAM = SCAD.TOTAL_SUPPLY * SCAD.ALLOC_TEAM;
 // Loyalty: lifetime wager → a permanent mining play-rate multiplier.
 const WAGER_TIERS = WAGER.TIER_MULTIPLIER.map((mult, i) => ({
   mult,
@@ -48,10 +59,10 @@ const MAX_BOOST = Math.max(...BOOST_TIERS.map((t) => t.mult));
 const CASHBACK = SCAD.CASHBACK_PER_LAMPORT_LOST;
 
 /**
- * $SCAD whitepaper — same structure as solpump's /coin/whitepaper: intro,
- * mission, tokenomics, the SCAD Engine (mining + staking + vault), buy & burn,
- * roadmap, contract, disclaimer. Every number derives from `@scadium/shared`, so
- * the doc is always in lock-step with the engine and /token/stats.
+ * $SCAD whitepaper: intro, mission, tokenomics, the SCAD Engine (mining +
+ * staking + vault), revenue redistribution, roadmap, contract, disclaimer. Every
+ * number derives from `@scadium/shared`, so the doc is always in lock-step with
+ * the engine and /token/stats.
  */
 export default function WhitepaperPage() {
   return (
@@ -84,9 +95,23 @@ export default function WhitepaperPage() {
 
         <Section n="3" title="Tokenomics">
           <p className="mb-2">
-            <strong>$SCAD total supply:</strong> {fmt(SCAD.TOTAL_SUPPLY)} (fixed max,{' '}
-            {M(SCAD.TOTAL_SUPPLY)}). Allocated six ways:
+            $SCAD is a pure <strong>Proof-of-Play mining token</strong> with a fixed supply and{' '}
+            <strong>no buy-and-burn</strong>. At a glance:
           </p>
+          <ul className="list-disc pl-5 space-y-1 mb-3">
+            <li>
+              <strong>Total supply:</strong> {fmt(TOTAL)} (fixed max, {M(TOTAL)})
+            </li>
+            <li>
+              <strong>Mineable (Play-to-Earn):</strong> {M(MINEABLE)} ({PCT(SCAD.ALLOC_P2E)}) —
+              emitted to players over time
+            </li>
+            <li>
+              <strong>Team:</strong> {M(TEAM)} ({PCT(SCAD.ALLOC_TEAM)}) — vested, locked before
+              launch
+            </li>
+          </ul>
+          <p className="mb-2">Full six-way allocation:</p>
           <ul className="list-disc pl-5 space-y-1">
             {ALLOC.map((a) => (
               <li key={a.label}>
@@ -95,13 +120,15 @@ export default function WhitepaperPage() {
             ))}
           </ul>
           <p className="mt-3">
-            <strong>Proof-of-Play mining:</strong> $SCAD is emitted in hourly blocks — not per bet.
-            Each hour, a block subsidy of <strong>{fmt(BLOCK_REWARD_WHOLE)} $SCAD</strong> at launch
-            (halving as the {M(SCAD.TOTAL_SUPPLY * SCAD.ALLOC_P2E)} Play-to-Earn pool drains across
-            seven phases) is split among that hour&apos;s players by <strong>play-rate</strong> —
-            the amount you wagered, scaled by your loyalty tier. {BIG_REWARD_PCT}% of every block is
-            routed to a weighted-random big-reward draw, and staked $SCAD earns a passive play-rate
-            ({STAKE_PLAYRATE_PCT}% of your stake per hour) so holders keep mining even while idle.
+            <strong>Proof-of-Play mining (4-year halving):</strong> $SCAD is emitted in hourly
+            blocks whose subsidy <strong>halves every {HALVING_YEARS} years</strong>, Bitcoin-style.
+            The first era mints ≈ <strong>{fmt(BLOCK_REWARD_WHOLE)} $SCAD per hour</strong> (about
+            half the {M(MINEABLE)} mineable pool over the first {HALVING_YEARS} years); each era
+            halves, draining the pool over a long tail. Every block is split among that hour&apos;s
+            players by <strong>play-rate</strong> (how much you wagered, scaled by your loyalty
+            tier); {BIG_REWARD_PCT}% of every block goes to a weighted-random big-reward draw, and
+            staked $SCAD earns a passive play-rate ({STAKE_PLAYRATE_PCT}% of your stake per hour) so
+            holders keep mining even while idle.
           </p>
           <p className="mt-2">
             <strong>Loyalty mining tiers:</strong> lifetime wager earns a permanent play-rate
@@ -116,7 +143,7 @@ export default function WhitepaperPage() {
           <p className="mb-2">
             The SCAD Engine turns play into yield. Net Gaming Revenue (NGR = bets − wins − rewards)
             is shared back to $SCAD holders through two staking products, funded by a combined{' '}
-            <strong>{DIVIDEND_PCT + VAULT_PCT}% of NGR</strong>:
+            <strong>{REDIST_PCT}% of NGR</strong>:
           </p>
           <ul className="list-disc pl-5 space-y-1">
             <li>
@@ -127,7 +154,7 @@ export default function WhitepaperPage() {
             </li>
             <li>
               <strong>SCAD Vault → term yield.</strong> Lock $SCAD for a fixed term (
-              {VAULT_TERMS.join(' / ')} days) to earn the larger Vault slice (
+              {VAULT_TERMS.join(' / ')} days) to earn the Vault slice (
               <strong>{VAULT_PCT}% of NGR</strong>); longer terms get a bigger share. Early
               withdrawal is allowed but keeps a {VAULT_PENALTY_PCT}% penalty in the pool, lifting
               the yield of everyone who holds to maturity (ERC-4626-style share index).
@@ -141,16 +168,13 @@ export default function WhitepaperPage() {
           </p>
         </Section>
 
-        <Section n="5" title="Revenue Redistribution &amp; Buy &amp; Burn">
+        <Section n="5" title="Revenue Redistribution">
           <p className="mb-2">
-            Up to <strong>{PCT(REDIST_PCT / 100)} of net gaming revenue</strong> flows back to the
-            ecosystem across three streams:
+            <strong>{REDIST_PCT}% of net gaming revenue</strong> flows back to $SCAD holders. There
+            is <strong>no buy-and-burn</strong> — $SCAD is a mining token, not a deflationary one —
+            so the entire redistribution goes to holders across two streams:
           </p>
           <ul className="list-disc pl-5 space-y-1">
-            <li>
-              <strong>{BURN_PCT}% buy &amp; burn</strong> — bought from the SCAD/SOL pool and burnt
-              on a recurring schedule (deflationary)
-            </li>
             <li>
               <strong>{DIVIDEND_PCT}% staking dividends</strong> — paid pro-rata to liquid $SCAD
               stakers in USDS (§4)
@@ -161,12 +185,12 @@ export default function WhitepaperPage() {
             </li>
           </ul>
           <p className="mt-3">
-            The casino keeps ≥{100 - REDIST_PCT}% of NGR. Every burn is two public transactions (the
-            buy and the SPL burn); the live burn feed with transaction hashes is on the{' '}
+            The casino keeps ≥{100 - REDIST_PCT}% of NGR. A SCAD/SOL liquidity pool powers in-app
+            trading (buy/sell on the{' '}
             <Link href="/token" className="text-primary-400 hover:underline">
               token page
             </Link>
-            .
+            ), but no protocol burn is taken from it.
           </p>
         </Section>
 
@@ -178,8 +202,8 @@ export default function WhitepaperPage() {
           </Phase>
           <Phase title="Phase 2 — Token &amp; Rewards">
             $SCAD launch with the SCAD/SOL pool, in-app trading and liquidity provision;
-            Proof-of-Play mining, cashback, daily case and hourly airdrops claimable on-chain;
-            liquid staking for USDS dividends, the term Vault, and automated buy &amp; burn.
+            Proof-of-Play mining (4-year halving), cashback, daily case and hourly airdrops
+            claimable on-chain; liquid staking for USDS dividends and the term Vault.
           </Phase>
           <Phase title="Phase 3 — Expansion">
             Mainnet launch; multi-currency betting (USDC/USDT across all games); additional games

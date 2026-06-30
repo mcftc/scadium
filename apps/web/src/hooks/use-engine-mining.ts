@@ -6,11 +6,15 @@ import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 
 export interface EngineState {
-  phase: number;
+  /** 4-year halving era (0 = years 0–4, 1 = 4–8, …). */
+  era: number;
+  /** Years per halving (= 4). */
+  halvingYears: number;
+  /** ms until the next 4-year halving. */
+  nextHalvingMs: number;
   totalEmittedScad: string;
   remainingPoolScad: string;
   p2ePoolScad: string;
-  toNextHalvingScad: string;
   currentBlockRewardScad: string;
   bigRewardScad: string;
   bigRewardBps: number;

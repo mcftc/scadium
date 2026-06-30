@@ -53,7 +53,7 @@ export function MiningSection() {
           Proof-of-Play Mining
           {state && (
             <span className="ml-auto text-xs font-medium rounded-full bg-surface-elevated px-3 py-1 text-primary-400 ring-1 ring-primary-400/30">
-              Phase {state.phase} · halving
+              Era {state.era + 1} · {state.halvingYears}-yr halving
             </span>
           )}
         </CardTitle>
@@ -96,8 +96,8 @@ export function MiningSection() {
           <MiniStat icon={Timer} label="Next block" value={countdown} />
           <MiniStat
             icon={Layers}
-            label="To next halving"
-            value={state ? `${fmtScad(state.toNextHalvingScad)} SCAD` : '…'}
+            label="Next halving"
+            value={state ? `~${(state.nextHalvingMs / 31_536_000_000).toFixed(1)} yr` : '…'}
           />
         </div>
 

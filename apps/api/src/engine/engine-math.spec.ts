@@ -26,18 +26,18 @@ describe('engine money math', () => {
   });
 
   it('takes DIVIDEND_NGR_BPS of NGR into the USDS pool', () => {
-    // 100 "USD" of NGR → DIVIDEND_NGR_BPS (6%) = $6 → 6 * BASE_PER_USD USDS.
+    // 100 "USD" of NGR → DIVIDEND_NGR_BPS (12%) = $12 → 12 * BASE_PER_USD USDS.
     const ngr = BigInt(JETON.LAMPORTS_PER_USD) * 100n;
-    const expectedUsd = (100 * ENGINE.DIVIDEND_NGR_BPS) / 10_000; // 6
+    const expectedUsd = (100 * ENGINE.DIVIDEND_NGR_BPS) / 10_000; // 12
     expect(dividendPoolUsdsBase(ngr)).toBe(BigInt(expectedUsd * USDS.BASE_PER_USD));
     expect(dividendPoolUsdsBase(0n)).toBe(0n);
   });
 
-  it('takes BUYBACK_NGR_BPS of NGR as the burn budget (now 6%)', () => {
+  it('buy-and-burn is REMOVED: BUYBACK_NGR_BPS = 0, burn budget is always 0', () => {
     const ngr = 1_000_000_000n; // 1 SOL-equivalent lamports
+    expect(ENGINE.BUYBACK_NGR_BPS).toBe(0);
+    expect(buybackBudgetLamports(ngr)).toBe(0n);
     expect(buybackBudgetLamports(ngr)).toBe((ngr * BigInt(ENGINE.BUYBACK_NGR_BPS)) / 10_000n);
-    // 6% — regression guard against the old 10% (NGR/10) after the Vault rebalance.
-    expect(buybackBudgetLamports(ngr)).toBe((ngr * 6n) / 100n);
   });
 
   it('estimates APY from the last round (0 when no stake)', () => {

@@ -3,11 +3,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   ENGINE,
   SCAD,
-  blockRewardFor,
+  MINING,
+  blockRewardAt,
+  emissionEraAt,
+  msToNextHalving,
   activePlayRate,
   blockShare,
   stakePlayRate,
-  emissionPhaseFor,
 } from '@scadium/shared';
 import { sha256, jackpotWinningTicket, weightedWinnerIndex } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,17 +19,17 @@ import { periodForHour } from '../queue/queue.constants';
 const EMISSION_SINGLETON_ID = 'singleton';
 
 /**
- * SCAD Engine v2 — Proof-of-Play hourly mining (E2).
+ * SCAD Engine — Proof-of-Play hourly mining.
  *
- * Each UTC hour is a "block". The block reward is the current halving phase's
- * subsidy (`blockRewardFor`, from the 500M P2E pool) and is split across the
- * hour's miners by PLAY-RATE share — lamports wagered that hour (+ a passive
- * contribution from staked $SCAD, E6). $SCAD is minted ONLY here (the per-bet
- * mint is removed in E3), so this is the single emission authority.
+ * Each UTC hour is a "block". The block subsidy comes from `blockRewardAt(hour)`
+ * — a 4-YEAR-halving (Bitcoin-style) schedule over the 500M P2E pool — and is
+ * split across the hour's miners by PLAY-RATE share (lamports wagered that hour +
+ * a passive contribution from staked $SCAD). $SCAD is minted ONLY here (no
+ * per-bet mint), so this is the single emission authority.
  *
  * Idempotency mirrors DistributionService: one `EngineBlock` per `period`,
  * settled once via the `distributed` guard, so a re-fire never double-mints.
- * The emission cap (`SCAD.P2E_POOL_BASE`) is enforced by `blockRewardFor`
+ * The emission cap (`SCAD.P2E_POOL_BASE`) is enforced by `blockRewardAt`
  * clamping to what's left, and the mint + `EmissionState` bump commit together.
  */
 @Injectable()
@@ -62,9 +64,9 @@ export class BlockMiningService {
       where: { id: EMISSION_SINGLETON_ID },
     });
     const emitted = emission?.totalEmittedScad ?? 0n;
-    const reward = blockRewardFor(emitted);
-
     const { start, end } = this.hourWindow(period);
+    // 4-year-halving subsidy at THIS hour, clamped to the remaining P2E pool.
+    const reward = blockRewardAt(start.getTime(), emitted);
     const { playRates, totalPlayRate } = await this.playRatesForWindow(start, end);
 
     // Nothing to mine (pool exhausted, or no play this hour) → settle an empty
@@ -81,7 +83,9 @@ export class BlockMiningService {
           totalPlayRate,
         },
       });
-      this.logger.log(`block ${period}: no mint (reward=${reward}, totalPlayRate=${totalPlayRate})`);
+      this.logger.log(
+        `block ${period}: no mint (reward=${reward}, totalPlayRate=${totalPlayRate})`,
+      );
       return noop;
     }
 
@@ -210,7 +214,7 @@ export class BlockMiningService {
     const e = await this.prisma.emissionState.findUnique({ where: { id: EMISSION_SINGLETON_ID } });
     const emitted = e?.totalEmittedScad ?? 0n;
     const left = SCAD.P2E_POOL_BASE - emitted;
-    return { emitted, remaining: left > 0n ? left : 0n, ...emissionPhaseFor(emitted) };
+    return { emitted, remaining: left > 0n ? left : 0n };
   }
 
   /** ms until the next top-of-hour block distribution. */
@@ -225,7 +229,7 @@ export class BlockMiningService {
    */
   async state(now = Date.now()) {
     const snap = await this.emissionSnapshot();
-    const blockReward = blockRewardFor(snap.emitted);
+    const blockReward = blockRewardAt(now, snap.emitted);
     const bigReward = (blockReward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
     const lastBlock = await this.prisma.engineBlock.findFirst({
       where: { distributed: true },
@@ -240,11 +244,12 @@ export class BlockMiningService {
       },
     });
     return {
-      phase: snap.phase,
+      era: emissionEraAt(now),
+      halvingYears: MINING.YEARS_PER_HALVING,
+      nextHalvingMs: msToNextHalving(now),
       totalEmittedScad: snap.emitted.toString(),
       remainingPoolScad: snap.remaining.toString(),
       p2ePoolScad: SCAD.P2E_POOL_BASE.toString(),
-      toNextHalvingScad: snap.toNextHalvingBase.toString(),
       currentBlockRewardScad: blockReward.toString(),
       bigRewardScad: bigReward.toString(),
       bigRewardBps: ENGINE.BIG_REWARD_BPS,
@@ -285,7 +290,7 @@ export class BlockMiningService {
     const passive = stakePlayRate(user?.scadiumStaked ?? 0n);
 
     const snap = await this.emissionSnapshot();
-    const blockReward = blockRewardFor(snap.emitted);
+    const blockReward = blockRewardAt(now, snap.emitted);
     const splitPool = blockReward - (blockReward * BigInt(ENGINE.BIG_REWARD_BPS)) / 10_000n;
     const projectedShare = blockShare(myPlayRate, totalPlayRate, splitPool);
     return {
