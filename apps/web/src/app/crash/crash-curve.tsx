@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import type { CrashBet, CrashCashoutMarker, CrashSnapshot } from '@/hooks/use-crash';
 import { cn } from '@/lib/cn';
 import { CrashRocket } from './crash-rocket';
+import { useGameSound } from '@/components/instant/use-game-sound';
 
 /** Canopy colors so concurrent cash-out parachutes stay distinct. */
 const PARACHUTE_HUES = ['#22d3ee', '#a855f7', '#f59e0b', '#22c55e', '#f472b6', '#38bdf8'];
@@ -38,6 +39,30 @@ export function CrashCurve({
     }, 100);
     return () => clearInterval(interval);
   }, [state?.phase, state?.roundId]);
+
+  // Fire the explosion SFX exactly once when a round busts (keyed on roundId so a
+  // re-render in the busted phase doesn't replay it).
+  const { explosion, cashout } = useGameSound();
+  const bustedRound = useRef<string | null>(null);
+  useEffect(() => {
+    if (state?.phase === 'busted' && state.roundId && bustedRound.current !== state.roundId) {
+      bustedRound.current = state.roundId;
+      explosion();
+    }
+  }, [state?.phase, state?.roundId, explosion]);
+
+  // "Kling" when other players parachute out (full or partial cashout). The
+  // markers array resets to empty each round; my OWN cashout is klinged by the
+  // bet panel, so skip it here to avoid a double.
+  const seenCashouts = useRef(0);
+  useEffect(() => {
+    if (cashouts.length < seenCashouts.current) seenCashouts.current = 0; // new round
+    if (cashouts.length > seenCashouts.current) {
+      const fresh = cashouts.slice(seenCashouts.current);
+      seenCashouts.current = cashouts.length;
+      if (fresh.some((c) => c.userId !== myBet?.userId)) cashout();
+    }
+  }, [cashouts, myBet?.userId, cashout]);
 
   if (!state) {
     return (
@@ -150,11 +175,11 @@ export function CrashCurve({
                 Current Payout
               </div>
               <motion.div
-                className="text-4xl md:text-5xl font-black leading-none tracking-tight"
+                className="text-6xl md:text-8xl font-black leading-none tracking-tight"
                 style={{
                   color: m > 2 ? '#9be9f5' : '#e8eaf0',
                   textShadow:
-                    m > 2 ? '0 0 26px rgba(34,211,238,0.35)' : '0 0 18px rgba(255,255,255,0.12)',
+                    m > 2 ? '0 0 40px rgba(34,211,238,0.4)' : '0 0 24px rgba(255,255,255,0.14)',
                 }}
                 animate={{ scale: [1, 1.01, 1] }}
                 transition={{ duration: 0.15 }}
@@ -189,8 +214,8 @@ export function CrashCurve({
                 Busted at
               </div>
               <div
-                className="text-4xl md:text-5xl font-black text-red-500 leading-none tracking-tight"
-                style={{ textShadow: '0 0 30px rgba(239,68,68,0.5)' }}
+                className="text-6xl md:text-8xl font-black text-red-500 leading-none tracking-tight"
+                style={{ textShadow: '0 0 40px rgba(239,68,68,0.55)' }}
               >
                 {m.toFixed(2)}x
               </div>
@@ -304,14 +329,18 @@ function CrashTrail({
   }, []);
 
   // Shared axis scaling — also used to pin cashout markers onto the curve.
+  // The curve fills the canvas: it spreads wide across the width and rides high,
+  // so even low multipliers (the common case) use most of the scene instead of
+  // hugging the bottom-left corner. yMax tracks the ruler's 1.4 headroom factor
+  // so the rocket lines up with the right-edge multiplier ticks.
   const m = Math.max(1.0001, multiplier);
-  const yMax = Math.max(2, m * 1.45); // headroom so the tip sits ~69% up
-  const xRef = Math.max(2.2, m * 1.5); // time scale → keeps rocket off the edge
+  const yMax = Math.max(2, m * 1.4); // headroom so the tip rides ~71% up, ruler-aligned
+  const xRef = Math.max(1.8, m * 1.3); // time scale → spreads the curve across the width
   const lnX = Math.log(xRef);
   const toXY = (v: number) => {
-    const fx = Math.min(0.84, Math.log(Math.max(1.0001, v)) / lnX);
+    const fx = Math.min(0.9, Math.log(Math.max(1.0001, v)) / lnX);
     const fy = Math.max(1.0001, v) / yMax;
-    return { x: 6 + fx * 82, y: 94 - fy * 84 };
+    return { x: 5 + fx * 89, y: 95 - fy * 87 };
   };
 
   const points = useMemo(() => {
@@ -331,7 +360,7 @@ function CrashTrail({
   const last = points[points.length - 1];
   const fillD =
     points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ') +
-    ` L${(last?.x ?? 90).toFixed(2)},94 L6,94 Z`;
+    ` L${(last?.x ?? 90).toFixed(2)},95 L5,95 Z`;
 
   // Trail hue rises with the multiplier: white → cyan → violet → (red on bust)
   const trailColor = busted
@@ -513,7 +542,10 @@ function CrashTrail({
               transform: `rotate(${rocketDeg.toFixed(1)}deg)`,
             }}
           >
-            <CrashRocket size={132} />
+            {/* Scale the rocket to the (now variable, taller) canvas instead of a
+                fixed 132px so it stays a riding accent, not bigger than the
+                payout headline. ~13% of plot height, clamped 64–104px. */}
+            <CrashRocket size={Math.round(Math.min(104, Math.max(64, size.h * 0.12)))} />
           </div>
         </div>
       )}

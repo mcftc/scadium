@@ -62,7 +62,7 @@ export function WheelGame() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
-      <div className="flex-1 min-w-0 space-y-3">
+      <div className="flex-1 min-w-0 space-y-4 lg:min-h-[calc(100vh-12rem)] lg:flex lg:flex-col lg:justify-center">
         <Wheel result={last} tierColor={tierColor} sound={sound} />
         {/* Bucket legend */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -203,16 +203,16 @@ function Wheel({
   const fx = (n: number) => Math.round(n * 1000) / 1000;
 
   return (
-    <Card className="p-6 lg:p-10 flex items-center justify-center">
-      <div className="relative" style={{ width: 320, height: 320 }}>
+    <Card className="p-6 lg:p-12 flex items-center justify-center">
+      <div className="relative w-full max-w-[460px] aspect-square">
         {/* Pointer */}
         <div className="absolute left-1/2 -top-1 z-20 -translate-x-1/2">
-          <div className="h-0 w-0 border-x-[10px] border-x-transparent border-t-[16px] border-t-[#EE86FF]" />
+          <div className="h-0 w-0 border-x-[13px] border-x-transparent border-t-[20px] border-t-[#EE86FF]" />
         </div>
         <svg
           viewBox="0 0 320 320"
-          width={320}
-          height={320}
+          width="100%"
+          height="100%"
           style={{ transform: `rotate(${angle}deg)` }}
         >
           {slices.map((s, i) => {

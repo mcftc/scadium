@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe, useAcceptLegal } from '@/hooks/use-me';
 import { LEGAL_VERSION } from '@/lib/legal/versions';
@@ -15,16 +16,20 @@ const LS_KEY = 'scadium_legal_version';
  * (`User.acceptedLegalVersion`). Mounted below the age gate (lower z-index) so
  * the 18+ confirmation comes first.
  *
- * Default-shown (server + first client render paint the overlay → no hydration
- * mismatch); an effect hides it once a matching acceptance is found.
+ * Hydration-gated (mirrors `AgeGate`): `useLocalStorageValue` returns `null` on
+ * the server and the first client render, so a user who already accepted would
+ * otherwise see the overlay painted into the SSR HTML and flash on EVERY refresh
+ * before the effect re-reads localStorage. We render nothing until hydrated, then
+ * show the gate only when the current version hasn't been accepted. No SSR flash.
  */
 export function LegalGate() {
+  const hydrated = useHydrated();
   const { data: me } = useMe();
   const acceptLegal = useAcceptLegal();
   const localVersion = useLocalStorageValue(LS_KEY);
 
   const accepted = me?.acceptedLegalVersion === LEGAL_VERSION || localVersion === LEGAL_VERSION;
-  if (accepted) return null;
+  if (!hydrated || accepted) return null;
 
   const handleAccept = () => {
     writeLocalStorageValue(LS_KEY, LEGAL_VERSION);

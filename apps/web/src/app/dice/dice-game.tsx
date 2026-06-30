@@ -57,7 +57,7 @@ export function DiceGame() {
   return (
     <div className="flex flex-col lg:flex-row gap-4">
       {/* CENTER: visual */}
-      <div className="flex-1 min-w-0 space-y-3">
+      <div className="flex-1 min-w-0 space-y-4 lg:min-h-[calc(100vh-12rem)] lg:flex lg:flex-col lg:justify-center">
         <DiceTrack
           target={target}
           setTarget={setTarget}
@@ -176,10 +176,10 @@ function DiceTrack({
   }, [betId]);
 
   return (
-    <Card className="p-8 lg:p-12">
-      <div className="relative h-24">
+    <Card className="p-10 lg:p-20">
+      <div className="relative h-40 lg:h-56">
         {/* Track */}
-        <div className="absolute top-1/2 left-0 right-0 h-3 -translate-y-1/2 rounded-full overflow-hidden bg-surface-elevated">
+        <div className="absolute top-1/2 left-0 right-0 h-5 lg:h-6 -translate-y-1/2 rounded-full overflow-hidden bg-surface-elevated">
           <div
             className="absolute inset-y-0 left-0 bg-success/70"
             style={{ width: `${target}%` }}
@@ -194,7 +194,7 @@ function DiceTrack({
           className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-10"
           style={{ left: `${target}%` }}
         >
-          <div className="h-9 w-2 rounded-full bg-primary-400 shadow-[0_0_12px_rgba(238,134,255,0.6)]" />
+          <div className="h-16 lg:h-20 w-2.5 rounded-full bg-primary-400 shadow-[0_0_18px_rgba(238,134,255,0.7)]" />
         </div>
         {/* Landed roll pin */}
         {pin != null && (
@@ -204,7 +204,7 @@ function DiceTrack({
           >
             <div
               className={cn(
-                'flex h-12 w-12 items-center justify-center rounded-full border-2 font-bold text-sm tabular-nums transition-colors',
+                'flex h-20 w-20 items-center justify-center rounded-full border-2 font-bold text-xl tabular-nums transition-colors',
                 rolling && 'animate-instant-shimmer',
                 won == null
                   ? 'border-border bg-surface'
@@ -218,7 +218,7 @@ function DiceTrack({
           </div>
         )}
         {/* Scale labels */}
-        <div className="absolute -bottom-2 left-0 right-0 flex justify-between text-[10px] font-mono text-foreground-muted">
+        <div className="absolute -bottom-1 left-0 right-0 flex justify-between text-xs font-mono text-foreground-muted">
           <span>0</span>
           <span>25</span>
           <span>50</span>
@@ -242,9 +242,9 @@ function DiceTrack({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="p-3 text-center">
-      <div className="text-[10px] uppercase tracking-wider text-foreground-muted">{label}</div>
-      <div className="mt-0.5 font-mono text-sm font-bold">{value}</div>
+    <Card className="p-5 text-center">
+      <div className="text-[11px] uppercase tracking-wider text-foreground-muted">{label}</div>
+      <div className="mt-1 font-mono text-xl font-bold">{value}</div>
     </Card>
   );
 }

@@ -205,67 +205,8 @@ export function Header() {
         </div>
       </Container>
 
-      {/* Mobile / tablet: menu row (dropdowns open as bottom sheets) + the
-          horizontally-scrollable game strip (all games inline for one-tap). */}
-      <div className="lg:hidden border-t border-border/50">
-        <nav className="flex items-center gap-1 px-3 py-1.5">
-          <NavDropdown
-            label="Games"
-            active={onGame}
-            width="w-72"
-            icon={<Gamepad2 className="h-4 w-4 text-primary-400" />}
-          >
-            {(close) => (
-              <div className="space-y-0.5">
-                {statefulGames.map((g) => (
-                  <GameMenuItem
-                    key={g.key}
-                    game={g}
-                    active={pathname.startsWith(g.href)}
-                    chip={liveLabel(live, g.key)}
-                    running={g.key === 'crash' && live?.crash.phase === 'running'}
-                    onClick={close}
-                  />
-                ))}
-                <div className="my-1 border-t border-border/50" />
-                <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-foreground-muted/70">
-                  Instant
-                </div>
-                {instantGames.map((g) => (
-                  <GameMenuItem
-                    key={g.key}
-                    game={g}
-                    active={pathname.startsWith(g.href)}
-                    chip={null}
-                    running={false}
-                    onClick={close}
-                  />
-                ))}
-              </div>
-            )}
-          </NavDropdown>
-
-          <NavDropdown label="SCAD Engine" active={onEngine} width="w-56">
-            {(close) => <LinkMenu links={engineLinks} pathname={pathname} onClick={close} />}
-          </NavDropdown>
-
-          <NavDropdown label="Affiliates" active={onAffiliates} width="w-56">
-            {(close) => <LinkMenu links={affiliateLinks} pathname={pathname} onClick={close} />}
-          </NavDropdown>
-        </nav>
-
-        <nav className="flex items-center gap-1 overflow-x-auto border-t border-border/50 px-3 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {allGames.map((g) => (
-            <GameTab
-              key={g.key}
-              game={g}
-              active={pathname.startsWith(g.href)}
-              chip={liveLabel(live, g.key)}
-              running={g.key === 'crash' && live?.crash.phase === 'running'}
-            />
-          ))}
-        </nav>
-      </div>
+      {/* Mobile/tablet nav lives in the fixed BottomNav (AppShell), so the
+          header stays a slim top bar below lg. */}
 
       <PromoBar />
     </header>
@@ -354,40 +295,3 @@ function GameMenuItem({
   );
 }
 
-function GameTab({
-  game,
-  active,
-  chip,
-  running,
-}: {
-  game: GameItem;
-  active: boolean;
-  chip: string | null;
-  running: boolean;
-}) {
-  const Icon = game.icon;
-  return (
-    <Link
-      href={game.href}
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition-colors',
-        active
-          ? 'bg-surface-elevated text-foreground'
-          : 'text-foreground-muted hover:bg-surface hover:text-foreground',
-      )}
-    >
-      <Icon className={cn('h-4 w-4', active ? 'text-primary-400' : 'text-foreground-muted')} />
-      {game.label}
-      {chip && (
-        <span
-          className={cn(
-            'rounded px-1 py-0.5 text-[9px] font-mono font-bold',
-            running ? 'bg-success/15 text-success' : 'bg-surface text-foreground-muted',
-          )}
-        >
-          {chip}
-        </span>
-      )}
-    </Link>
-  );
-}

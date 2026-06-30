@@ -57,7 +57,7 @@ export function LimboGame() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
-      <div className="flex-1 min-w-0 space-y-3">
+      <div className="flex-1 min-w-0 space-y-4 lg:min-h-[calc(100vh-12rem)] lg:flex lg:flex-col lg:justify-center">
         <LimboReadout
           result={result}
           won={last?.won ?? null}

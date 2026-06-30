@@ -42,7 +42,7 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
     icon: BarChart3,
     title: 'Mine $SCAD',
     description:
-      'Proof-of-Play: every hour an emission block (halving every 4 years) is split across players by playrate — no hashrate, just playrate. No buy-and-burn — up to 20% of net gaming revenue flows back to holders as staking dividends and vault yield.',
+      'Proof-of-Play: every hour an emission block (halving every 4 years) is split across players by playrate — no hashrate, just playrate. Up to 20% of net gaming revenue flows back to holders as staking dividends and vault yield.',
   },
 ];
 

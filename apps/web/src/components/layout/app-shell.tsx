@@ -5,6 +5,7 @@ import { Activity } from 'lucide-react';
 import { captureRef } from '@/lib/ref-capture';
 import { Header } from '@/components/layout/header';
 import { Footer } from '@/components/layout/footer';
+import { BottomNav } from '@/components/layout/bottom-nav';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { AirdropWidget } from '@/components/airdrop/airdrop-widget';
 import { AgeGate } from '@/components/compliance/age-gate';
@@ -59,8 +60,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1">{children}</main>
+        {/* pb-16 keeps page content clear of the fixed mobile bottom nav. */}
+        <main className="min-w-0 flex-1 pb-16 lg:pb-0">{children}</main>
       </div>
+      <BottomNav />
       <Footer />
     </div>
   );

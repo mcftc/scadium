@@ -16,6 +16,7 @@ import { useMe } from '@/hooks/use-me';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { useGameSound } from '@/components/instant/use-game-sound';
+import { SoundToggle } from '@/components/instant/sound-toggle';
 import { ApiError } from '@/lib/api-client';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -45,7 +46,7 @@ export function BlackjackTable() {
   // during render rather than via a setState-in-effect. An explicit user
   // selection wins; otherwise fall back to the first table.
   const tableId = selectedTableId ?? tables.data?.[0]?.id ?? null;
-  const { snapshot: state, refetch } = useBlackjackTable(tableId);
+  const { snapshot: state, lastCard, refetch } = useBlackjackTable(tableId);
   const actions = useBlackjackActions(tableId);
   const sound = useGameSound();
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +58,13 @@ export function BlackjackTable() {
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
   }, []);
+
+  // Card-draw "rustle" on every dealt card — each bj:card event stamps a fresh
+  // `at`, so keying on it fires the cue once per deal.
+  useEffect(() => {
+    if (lastCard?.at) sound.card();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per new deal event (lastCard.at), not when the sound fns identity changes
+  }, [lastCard?.at]);
 
   const mySeat = state?.seats.find((s) => s.userId === me?.id) ?? null;
   const myTurn =
@@ -116,6 +124,7 @@ export function BlackjackTable() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-foreground-muted">{state?.name ?? '…'}</span>
+            <SoundToggle sound={sound} />
             <button
               type="button"
               onClick={() => setRulebookOpen(true)}

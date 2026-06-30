@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Send, MessageCircle, X } from 'lucide-react';
 import { useChat, type ChatMessage } from '@/hooks/use-chat';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
+import { AirdropWidget } from '@/components/airdrop/airdrop-widget';
 import { shortAddress, formatDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
@@ -44,26 +45,42 @@ export function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
 
   return (
     <>
-      {/* Mobile toggle button — hidden on desktop (lg+) where the panel is pinned */}
+      {/* Mobile toggle — a message-box-style pill (hidden on desktop where the
+          panel is pinned in the rail). Sits above the bottom nav (bottom-20). */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          'fixed bottom-5 right-5 z-40 lg:hidden h-12 w-12 rounded-full bg-gradient-primary shadow-glow flex items-center justify-center text-white',
+          'fixed bottom-20 right-4 z-[55] lg:hidden flex items-center gap-2 h-11 rounded-2xl bg-gradient-primary px-4 shadow-glow text-sm font-bold text-white',
           open && 'hidden',
         )}
         aria-label="Open chat"
       >
         <MessageCircle className="h-5 w-5" />
+        Chat
       </button>
+
+      {/* Tap-to-dismiss backdrop (mobile only) so the sheet is always closeable */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[54] bg-black/60 lg:hidden"
+          aria-hidden="true"
+        />
+      )}
 
       <aside
         className={cn(
-          'fixed right-0 top-16 bottom-0 z-30 w-full sm:w-96 bg-surface border-l border-border flex flex-col transition-transform',
-          open ? 'translate-x-0' : 'translate-x-full',
-          'lg:translate-x-0 lg:relative lg:right-auto lg:top-auto lg:bottom-auto lg:w-full lg:h-full lg:border-l-0 lg:bg-transparent lg:z-auto',
+          // Mobile: a partial bottom sheet (≈80vh) that slides up — never the
+          // full screen, and always dismissable via the handle/X/backdrop.
+          'fixed inset-x-0 bottom-0 z-[60] flex h-[80vh] max-h-[80vh] w-full flex-col rounded-t-2xl border-t border-border bg-surface transition-transform',
+          open ? 'translate-y-0' : 'translate-y-full',
+          // Desktop: pinned in the left rail exactly as before.
+          'lg:relative lg:inset-auto lg:z-auto lg:h-full lg:max-h-none lg:w-full lg:translate-y-0 lg:rounded-none lg:border-t-0 lg:bg-transparent',
         )}
       >
+        {/* Drag-handle affordance (mobile only) */}
+        <div className="lg:hidden mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border" />
         <div className="flex items-center justify-between px-4 h-12 border-b border-border">
           <div className="flex items-center gap-2">
             <div
@@ -100,6 +117,12 @@ export function ChatPanel({ defaultOpen = false }: { defaultOpen?: boolean }) {
             {error}
           </div>
         )}
+
+        {/* Airdrop pool bar — on mobile it lives right above the message input
+            (on desktop it stays in the left rail, see AppShell). */}
+        <div className="lg:hidden shrink-0 px-3 pt-3">
+          <AirdropWidget />
+        </div>
 
         <div className="shrink-0 p-3 border-t border-border bg-surface/80">
           <div className="flex gap-2 items-center">

@@ -15,7 +15,7 @@ export const metadata = { title: '$SCAD Whitepaper' };
 // Derive EVERY tokenomics figure straight from the engine's single source of
 // truth (`packages/shared/src/constants.ts`) so this page can never drift from
 // the live numbers the API serves. $SCAD is a pure Proof-of-Play MINING token:
-// 1B fixed supply, a 4-year-halving emission, NO buy-and-burn.
+// 1B fixed supply, a 4-year-halving emission, revenue shared with holders.
 const M = (whole: number) => `${Math.round(whole / 1_000_000)}M`;
 const fmt = (whole: number) => whole.toLocaleString('en-US');
 const PCT = (frac: number) => `${Math.round(frac * 100)}%`;
@@ -34,7 +34,7 @@ const BLOCK_REWARD_WHOLE = Number(GENESIS_BLOCK_REWARD_BASE / 10n ** BigInt(SCAD
 const HALVING_YEARS = MINING.YEARS_PER_HALVING;
 const BIG_REWARD_PCT = ENGINE.BIG_REWARD_BPS / 100;
 const STAKE_PLAYRATE_PCT = ENGINE.STAKE_PLAYRATE_BPS / 100;
-// Revenue redistribution: NO buy-and-burn. Dividend absorbed it (12%), + 8% vault.
+// Revenue redistribution to holders: 12% staking dividend + 8% vault yield = 20% of NGR.
 const DIVIDEND_PCT = ENGINE.DIVIDEND_NGR_BPS / 100;
 const VAULT_PCT = VAULT.YIELD_NGR_BPS / 100;
 const REDIST_PCT = DIVIDEND_PCT + VAULT_PCT;
@@ -95,8 +95,8 @@ export default function WhitepaperPage() {
 
         <Section n="3" title="Tokenomics">
           <p className="mb-2">
-            $SCAD is a pure <strong>Proof-of-Play mining token</strong> with a fixed supply and{' '}
-            <strong>no buy-and-burn</strong>. At a glance:
+            $SCAD is a pure <strong>Proof-of-Play mining token</strong> with a fixed supply. At a
+            glance:
           </p>
           <ul className="list-disc pl-5 space-y-1 mb-3">
             <li>
@@ -172,7 +172,7 @@ export default function WhitepaperPage() {
           <p className="mb-2">
             <strong>{REDIST_PCT}% of net gaming revenue</strong> flows back to $SCAD holders. There
             is <strong>no buy-and-burn</strong> — $SCAD is a mining token, not a deflationary one —
-            so the entire redistribution goes to holders across two streams:
+            so the entire holder slice is paid out across two streams:
           </p>
           <ul className="list-disc pl-5 space-y-1">
             <li>
@@ -190,7 +190,7 @@ export default function WhitepaperPage() {
             <Link href="/token" className="text-primary-400 hover:underline">
               token page
             </Link>
-            ), but no protocol burn is taken from it.
+            ).
           </p>
         </Section>
 

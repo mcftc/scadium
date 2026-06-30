@@ -9,6 +9,8 @@ import { CrashHistory } from './crash-history';
 import { CrashFairness } from './crash-fairness';
 import { useCrash } from '@/hooks/use-crash';
 import { useMe } from '@/hooks/use-me';
+import { useGameSound } from '@/components/instant/use-game-sound';
+import { SoundToggle } from '@/components/instant/sound-toggle';
 
 /**
  * solpump layout: game center (full immersion), bet panel + players RIGHT.
@@ -17,6 +19,7 @@ import { useMe } from '@/hooks/use-me';
 export function CrashGame() {
   const { state, cashouts } = useCrash();
   const { data: me } = useMe();
+  const sound = useGameSound();
   const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
 
   return (
@@ -34,6 +37,8 @@ export function CrashGame() {
             </span>
             <span className="text-[10px] text-white/50">Playing</span>
           </div>
+          {/* Mute toggle (top-right) — sound is on by default; bust plays an explosion. */}
+          <SoundToggle sound={sound} className="absolute top-3 right-3 z-20" />
         </div>
       </div>
 

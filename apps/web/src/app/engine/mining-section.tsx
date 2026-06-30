@@ -178,7 +178,8 @@ export function MiningSection() {
 
         <p className="text-center text-[11px] text-foreground-muted">
           Like a miner contributing hashrate, your play earns $SCAD — no hashrate, just playrate.
-          Each hour&apos;s block is split by play-rate and halves by phase.
+          Each hour&apos;s block is split by play-rate, and the block subsidy halves every 4 years
+          (Bitcoin-style).
         </p>
       </CardContent>
     </Card>
