@@ -52,6 +52,11 @@ pub mod scadium_rng {
 
     /// Cosigner opens a round: publishes the seed commitment + bound game params,
     /// and PINS a future slot whose hash will seed the reveal.
+    // The instruction args mirror the on-chain round commitment 1:1 (game_type,
+    // round_id, seed commitment, client seed, params hash, nonce, target slot);
+    // bundling them into a struct would diverge from the Anchor IDL / the TS
+    // golden-lockstep bindings, so the arg count is intentional here.
+    #[allow(clippy::too_many_arguments)]
     pub fn open_round(
         ctx: Context<OpenRound>,
         game_type: u8,
