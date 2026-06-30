@@ -292,8 +292,9 @@ function StakePanel({
 
         {earnRate && (
           <p className="flex items-center gap-1.5 text-xs text-foreground-muted">
-            <Zap className="h-3.5 w-3.5 text-primary-400" />≈ {scad(earnRate.scadPerSolWagered, 0)}{' '}
-            $SCAD per 1 SOL wagered · tier ×{earnRate.effectiveMultiplier.toFixed(2)}
+            <Zap className="h-3.5 w-3.5 text-primary-400" />
+            Loyalty tier ×{earnRate.effectiveMultiplier.toFixed(2)} play-rate — scales your share of
+            each hourly mining block.
           </p>
         )}
 

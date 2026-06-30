@@ -42,7 +42,7 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
     icon: BarChart3,
     title: 'Mine $SCAD',
     description:
-      'Like a miner solving the next block, every round you play mines $SCAD — no hashrate, just playrate. A buy-and-burn funded by 20% of net revenue backs the token.',
+      'Proof-of-Play: every hour an emission block is split across players by playrate — no hashrate, just playrate. Up to 20% of net gaming revenue flows back via buy-and-burn, staking dividends and vault yield.',
   },
 ];
 

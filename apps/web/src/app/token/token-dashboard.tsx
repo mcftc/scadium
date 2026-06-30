@@ -13,7 +13,7 @@ import {
   PieChart,
   Sparkles,
 } from 'lucide-react';
-import { SCAD, ENGINE } from '@scadium/shared';
+import { SCAD, ENGINE, blockRewardFor } from '@scadium/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/lib/api-client';
 import { solscanToken, solscanTx } from '@/lib/explorer';
@@ -269,6 +269,11 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
   const emittedWhole = stats ? toWhole(stats.totalEmittedScad) : null;
   const poolWhole = stats ? toWhole(stats.p2ePoolBase) : 500_000_000;
   const toNextWhole = stats ? toWhole(stats.toNextHalvingBase) : null;
+  // SCAD Engine v2: emission is the HOURLY block reward (halving by phase), not a
+  // per-bet rate. Derived from the engine constant so it matches BlockMiningService.
+  const blockRewardWhole = stats
+    ? toWhole(blockRewardFor(BigInt(stats.totalEmittedScad)).toString())
+    : null;
   const distributedUsds = stats ? Number(BigInt(stats.totalDistributedUsds)) / 1e6 : null;
   const pct = emittedWhole != null && poolWhole > 0 ? (emittedWhole / poolWhole) * 100 : 0;
 
@@ -313,8 +318,8 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
 
         <div className="grid grid-cols-2 gap-2 text-center">
           <MiniStat
-            label="Current rate"
-            value={stats ? `${stats.currentRatePerLamport} / SOL` : '…'}
+            label="Block reward"
+            value={blockRewardWhole != null ? `${fmtNum(blockRewardWhole, 0)} / hr` : '…'}
           />
           <MiniStat
             label="To next halving"
@@ -333,9 +338,9 @@ function EmissionCard({ stats, burnedWhole }: { stats?: TokenStats; burnedWhole:
           />
         </div>
         <p className="text-[11px] text-foreground-muted text-center">
-          {stats
-            ? `Earning ${stats.currentRatePerLamport} $SCAD per 1 SOL wagered — the rate halves at each phase cap.`
-            : 'Proof-of-Play mints $SCAD on every round; the rate halves by phase.'}
+          {blockRewardWhole != null
+            ? `Proof-of-Play: each hour mints a ${fmtNum(blockRewardWhole, 0)} $SCAD block (halving by phase), split across players by play-rate.`
+            : 'Proof-of-Play: an hourly $SCAD block, split by play-rate, halving by phase.'}
         </p>
       </CardContent>
     </Card>

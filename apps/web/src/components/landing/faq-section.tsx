@@ -18,11 +18,11 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'What is $SCADIUM?',
-    a: 'The native reward token. Mined as you play (128 $SCAD per 1 SOL played) — no hashrate, just playrate. Tokenomics: 50% retroactive airdrops, 40% future drops, 10% team. 20% of net revenue funds buy-and-burn.',
+    a: 'The native reward token (1B fixed supply). Mined by Proof-of-Play: each hour an emission block (10,000 $SCAD at launch, halving as the 500M Play-to-Earn pool drains) is split across players by playrate — no hashrate, just playrate. Allocation: 50% Play-to-Earn, 10% community, 10% liquidity, 15% treasury, 10% team, 5% strategic. Up to 20% of net gaming revenue flows back as buy-and-burn (6%), staking dividends (6%) and vault yield (8%).',
   },
   {
     q: 'How does earning $SCAD work?',
-    a: 'Every round mines $SCAD — the more you play, the more you earn. Each game keeps a small, fully-disclosed edge (5% on Crash/Coinflip, ~0.5% on Blackjack), all publicly verifiable on our Fairness page.',
+    a: 'Playing builds your playrate; each hour the $SCAD mining block is split across players by playrate, so the more you play the bigger your share. Stake $SCAD to keep a passive playrate even while idle. Every house-banked game keeps a small, fully-disclosed 5% edge (Blackjack is rules-based), all verifiable on the Fairness page.',
   },
   {
     q: 'Which wallets are supported?',
