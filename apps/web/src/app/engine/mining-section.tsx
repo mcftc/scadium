@@ -43,9 +43,7 @@ export function MiningSection() {
   const liveEmitted = useLiveEmittedScad(state);
   const countdown = useCountdown(state?.msToNextDistribution);
 
-  const minedPct = state
-    ? (whole(state.totalEmittedScad) / whole(state.p2ePoolScad)) * 100
-    : 0;
+  const minedPct = state ? (whole(state.totalEmittedScad) / whole(state.p2ePoolScad)) * 100 : 0;
 
   return (
     <Card className="overflow-hidden">
@@ -179,8 +177,8 @@ export function MiningSection() {
         </div>
 
         <p className="text-center text-[11px] text-foreground-muted">
-          Like a miner solving the next block, every round you play mines $SCAD — no hashrate, just
-          playrate. Rewards distribute hourly, split by play-rate, halving by phase.
+          Like a miner contributing hashrate, your play earns $SCAD — no hashrate, just playrate.
+          Each hour&apos;s block is split by play-rate and halves by phase.
         </p>
       </CardContent>
     </Card>
