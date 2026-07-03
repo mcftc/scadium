@@ -63,7 +63,25 @@ describe('DiceService.play (unit)', () => {
     expect(betArg.data.status).toBe(expectedWon ? 'won' : 'lost');
     expect(betArg.data.resultJson.roll).toBe(expectedRoll);
     expect(betArg.data.resultJson.target).toBe(target);
+    expect(betArg.data.resultJson.mode).toBe('under');
     expect(res.won).toBe(expectedWon);
     if (expectedWon) expect(res.multiplier).toBe(diceMultiplier(target));
+  });
+
+  it('roll-over mode wins on roll >= target with the over multiplier', async () => {
+    const { svc, tx } = makeService();
+    const target = 50;
+    const expectedRoll = diceRoll(SS, CS, NONCE);
+    const expectedWon = expectedRoll >= target;
+
+    const res = await svc.play({ userId: 'u1', amountLamports: 1_000_000n, target, mode: 'over' });
+
+    const betArg = tx.bet.create.mock.calls[0]![0];
+    expect(betArg.data.status).toBe(expectedWon ? 'won' : 'lost');
+    expect(betArg.data.resultJson.mode).toBe('over');
+    expect(res.won).toBe(expectedWon);
+    if (expectedWon) expect(res.multiplier).toBe(diceMultiplier(target, 'over'));
+    // Same seed, same target: under and over are exact complements.
+    expect(expectedWon).toBe(!(expectedRoll < target));
   });
 });

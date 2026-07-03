@@ -14,7 +14,7 @@ export function NumberPicker({
   onSetDigit,
   disabled,
 }: {
-  digits: number[]; // length 6, each 0..9
+  digits: (number | null)[]; // length 6, each 0..9 — null = not picked yet
   onSetDigit: (index: number, digit: number) => void;
   disabled?: boolean;
 }) {
@@ -31,7 +31,7 @@ export function NumberPicker({
         </div>
         <div className="grid grid-cols-6 gap-1.5">
           {Array.from({ length: 6 }, (_, i) => {
-            const d = digits[i] ?? 0;
+            const d = digits[i] ?? null;
             const isActive = i === active;
             return (
               <button
@@ -42,11 +42,11 @@ export function NumberPicker({
                 className={cn(
                   'aspect-square rounded-lg text-base font-bold font-mono transition-all',
                   isActive
-                    ? 'bg-gradient-primary text-white shadow-lg shadow-primary-400/30 scale-105 ring-2 ring-primary-400/60'
-                    : 'bg-surface-elevated text-foreground hover:text-foreground hover:bg-surface-elevated/80 hover:ring-1 hover:ring-primary-400/40',
+                    ? 'bg-amber-400 text-black shadow-lg shadow-amber-400/30 scale-105 ring-2 ring-amber-400/60'
+                    : 'bg-surface-elevated text-foreground hover:text-foreground hover:bg-surface-elevated/80 hover:ring-1 hover:ring-amber-400/40',
                 )}
               >
-                {d}
+                {d ?? '·'}
               </button>
             );
           })}
@@ -62,7 +62,9 @@ export function NumberPicker({
         </div>
         <div className="grid grid-cols-10 gap-1.5">
           {Array.from({ length: 10 }, (_, n) => {
-            const selected = (digits[active] ?? 0) === n;
+            // Only light the keypad when the active position actually holds a
+            // chosen digit (fresh positions are null, so nothing lights).
+            const selected = digits[active] === n;
             return (
               <button
                 key={n}

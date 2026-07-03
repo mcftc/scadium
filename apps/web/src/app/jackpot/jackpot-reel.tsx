@@ -159,7 +159,7 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
                     {name}
                   </div>
                   <div className="font-mono text-xs text-foreground-muted">
-                    {formatSol(s.p.amountLamports, 2)} SOL
+                    {formatSol(s.p.amountLamports, 2)}
                   </div>
                   <div
                     className="rounded-full px-2.5 py-0.5 text-xs font-black"

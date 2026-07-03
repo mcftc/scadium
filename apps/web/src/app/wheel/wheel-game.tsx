@@ -17,6 +17,7 @@ import { useInstantGame, type InstantSettleResult } from '@/hooks/use-instant-ga
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { ApiError } from '@/lib/api-client';
+import { formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
 /** Color a segment by its multiplier tier. */
@@ -40,6 +41,9 @@ export function WheelGame() {
   const [sol, setSol] = useState('0.1');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
+  // The result is revealed (celebration + win amount) only when the wheel
+  // actually stops — `last` drives the spin, `settled` drives WinEffect.
+  const [settled, setSettled] = useState<InstantSettleResult | null>(null);
 
   const validBet = isValidBetSol(sol, WHEEL.MIN_BET_LAMPORTS);
 
@@ -49,6 +53,7 @@ export function WheelGame() {
       return;
     }
     setError(null);
+    setSettled(null);
     sound.bet();
     try {
       const res = await play.mutateAsync({
@@ -63,7 +68,13 @@ export function WheelGame() {
   return (
     <div className="flex flex-col lg:flex-row gap-4">
       <div className="flex-1 min-w-0 space-y-4 lg:min-h-[calc(100vh-12rem)] lg:flex lg:flex-col lg:justify-center">
-        <Wheel result={last} tierColor={tierColor} sound={sound} />
+        <Wheel
+          result={last}
+          revealed={settled}
+          tierColor={tierColor}
+          sound={sound}
+          onLanded={() => setSettled(last)}
+        />
         {/* Bucket legend */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           {WHEEL_PAYOUT_BUCKETS.map((b) => (
@@ -84,7 +95,7 @@ export function WheelGame() {
             </div>
           ))}
         </div>
-        <WinEffect last={last} sound={sound} />
+        <WinEffect last={settled} sound={sound} />
       </div>
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
@@ -125,12 +136,17 @@ export function WheelGame() {
  */
 function Wheel({
   result,
+  revealed,
   tierColor,
   sound,
+  onLanded,
 }: {
   result: InstantSettleResult | null;
+  /** The parent-owned revealed result — null while the wheel is still moving. */
+  revealed: InstantSettleResult | null;
   tierColor: (m: number) => string;
   sound: ReturnType<typeof useGameSound>;
+  onLanded?: () => void;
 }) {
   const reduce = useReducedMotion();
   const [angle, setAngle] = useState(0);
@@ -151,7 +167,10 @@ function Wheel({
     if (!result || result.betId === lastBetId.current) return;
     lastBetId.current = result.betId;
     const index = result.result?.index as number;
-    if (typeof index !== 'number') return;
+    if (typeof index !== 'number') {
+      onLanded?.(); // never let a malformed result swallow the payout reveal
+      return;
+    }
 
     // Always land the server's exact segment under the top pointer.
     const sliceCenter = index * segAngle + segAngle / 2;
@@ -162,6 +181,7 @@ function Wheel({
     if (reduce) {
       setAngle(target);
       setLandedIndex(index);
+      onLanded?.();
       return;
     }
 
@@ -187,6 +207,7 @@ function Wheel({
       } else {
         setSpinning(false);
         setLandedIndex(index);
+        onLanded?.();
       }
     };
     raf.current = requestAnimationFrame(tick);
@@ -236,16 +257,27 @@ function Wheel({
           })}
           <circle cx={C} cy={C} r={34} fill="#0a0a0f" stroke="#2a2440" strokeWidth={2} />
         </svg>
-        {/* Hub label */}
+        {/* Hub label — shows the outcome only once the wheel has stopped */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span
-            className={cn(
-              'font-mono text-sm font-bold',
-              spinning ? 'text-foreground-muted animate-instant-shimmer' : 'text-foreground/80',
-            )}
-          >
-            {result && !spinning ? `${result.multiplier}×` : 'SPIN'}
-          </span>
+          {revealed && !spinning ? (
+            <span className="flex flex-col items-center leading-tight font-mono font-bold text-foreground/80">
+              <span className="text-sm">{revealed.multiplier}×</span>
+              {revealed.won && (
+                <span className="text-[10px] text-emerald-400">
+                  +{formatSol(revealed.payoutLamports, 3)}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span
+              className={cn(
+                'font-mono text-sm font-bold',
+                spinning ? 'text-foreground-muted animate-instant-shimmer' : 'text-foreground/80',
+              )}
+            >
+              SPIN
+            </span>
+          )}
         </div>
       </div>
     </Card>

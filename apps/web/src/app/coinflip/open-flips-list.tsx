@@ -19,9 +19,12 @@ import type { FlipSort } from './coinflip-lobby';
 export function OpenFlipsList({
   sort,
   onWatch,
+  onJoinFailed,
 }: {
   sort: FlipSort;
   onWatch: (game: CoinflipGame) => void;
+  /** Called when a join request fails so the parent can close the flip modal. */
+  onJoinFailed?: () => void;
 }) {
   const { data, isLoading } = useOpenCoinflips();
   const { isAuthenticated } = useWalletAuth();
@@ -53,15 +56,24 @@ export function OpenFlipsList({
   }
 
   /** Join through the flip theater: open the modal first, then fire the
-   * mutation — the resolved socket event drives the animation inside it. */
+   * mutation — the resolved socket event drives the animation inside it. A
+   * failed join must close the modal again or it hangs on "Waiting for
+   * player…" with no feedback. */
   function joinWithModal(flip: CoinflipGame) {
     if (!isAuthenticated) return openWallet();
     onWatch(flip);
-    joinMutation.mutate(flip.id);
+    joinMutation.mutate(flip.id, { onError: () => onJoinFailed?.() });
   }
+
+  const actionError = joinMutation.error ?? cancelMutation.error;
 
   return (
     <div className="divide-y divide-border/30">
+      {actionError ? (
+        <div className="px-5 py-2.5 text-xs text-danger bg-danger/5">
+          {actionError instanceof Error ? actionError.message : 'Action failed'}
+        </div>
+      ) : null}
       {sorted.map((flip) => {
         const isOwn = me?.id === flip.creatorId;
         const pending =

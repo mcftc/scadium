@@ -30,7 +30,10 @@ export function WinEffect({
     if (!last || last.betId === lastBetId.current) return;
     lastBetId.current = last.betId;
     if (!last.won) {
-      sound?.lose();
+      // Sub-1× multipliers (plinko) still credit bet × multiplier — a partial
+      // return, not a loss: neutral blip instead of the loss thud.
+      if (BigInt(last.payoutLamports) > 0n) sound?.tick(520, 140, 0.05);
+      else sound?.lose();
       return;
     }
     sound?.win(last.multiplier);
@@ -40,19 +43,28 @@ export function WinEffect({
 
   if (!last) return null;
 
+  // Three states: win (net profit), partial return (won=false but a payout was
+  // credited — plinko sub-1× bins), and total loss (no payout at all).
+  const partial = !last.won && BigInt(last.payoutLamports) > 0n;
+
   return (
     <div
       className={cn(
         'rounded-2xl border p-4 flex items-center justify-between transition-colors',
-        last.won ? 'border-success/40 bg-success/5' : 'border-danger/30',
+        last.won ? 'border-success/40 bg-success/5' : partial ? 'border-border' : 'border-danger/30',
       )}
     >
       <div>
         <div className="text-[10px] uppercase tracking-wider text-foreground-muted">
-          {last.won ? `Win · ${last.multiplier}×` : 'Loss'}
+          {last.won ? `Win · ${last.multiplier}×` : partial ? `Partial return · ${last.multiplier}×` : 'Loss'}
         </div>
-        <div className={cn('text-lg font-bold', last.won ? 'text-success' : 'text-danger')}>
-          {last.won ? (
+        <div
+          className={cn(
+            'text-lg font-bold',
+            last.won ? 'text-success' : partial ? 'text-foreground' : 'text-danger',
+          )}
+        >
+          {last.won || partial ? (
             <span>
               +<CountUpSol lamports={last.payoutLamports} animate={!reduce} />
             </span>

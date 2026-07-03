@@ -319,6 +319,61 @@ export async function plinkoDrop(
   return { path, bin };
 }
 
+/** Matches @scadium/fair `mineField` — sorted mine cell indices. */
+export async function mineField(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  cells: number,
+  mines: number,
+): Promise<number[]> {
+  const floats = await floatsFromHmac(serverSeed, clientSeed, nonce, cells);
+  const arr = Array.from({ length: cells }, (_, i) => i);
+  for (let i = cells - 1; i > 0; i -= 1) {
+    const j = Math.floor(floats[cells - 1 - i]! * (i + 1));
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr.slice(0, mines).sort((a, b) => a - b);
+}
+
+/** Matches @scadium/fair `hiloSequence` — uniform card indices in [0, 52). */
+export async function hiloSequence(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  length: number,
+): Promise<number[]> {
+  const floats = await floatsFromHmac(serverSeed, clientSeed, nonce, length);
+  return floats.map((f) => Math.floor(f * 52));
+}
+
+/** Matches @scadium/fair `towerTraps` — sorted trap column indices per row. */
+export async function towerTraps(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  rows: number,
+  columns: number,
+  safePerRow: number,
+): Promise<number[][]> {
+  const trapsPerRow = columns - safePerRow;
+  const floats = await floatsFromHmac(serverSeed, clientSeed, nonce, rows * columns);
+  const out: number[][] = [];
+  for (let r = 0; r < rows; r += 1) {
+    const arr = Array.from({ length: columns }, (_, i) => i);
+    for (let i = columns - 1; i > 0; i -= 1) {
+      const j = Math.floor(floats[r * columns + (columns - 1 - i)]! * (i + 1));
+      const tmp = arr[i]!;
+      arr[i] = arr[j]!;
+      arr[j] = tmp;
+    }
+    out.push(arr.slice(0, trapsPerRow).sort((a, b) => a - b));
+  }
+  return out;
+}
+
 /**
  * Verify a server seed matches its committed hash. Lets the user prove the
  * server didn't swap in a different seed after the fact.

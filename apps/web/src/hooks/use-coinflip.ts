@@ -11,6 +11,7 @@ import { useSocket } from '@/providers/socket-provider';
  * single lobby socket handler can fan events out to whichever modal is open.
  */
 const resolvedListeners = new Map<string, Set<(game: CoinflipGame) => void>>();
+const cancelledListeners = new Map<string, Set<() => void>>();
 
 export function subscribeFlipResolved(
   gameId: string,
@@ -22,6 +23,17 @@ export function subscribeFlipResolved(
   return () => {
     set.delete(cb);
     if (set.size === 0) resolvedListeners.delete(gameId);
+  };
+}
+
+/** Notifies an open spectate modal that its watched flip was cancelled. */
+export function subscribeFlipCancelled(gameId: string, cb: () => void): () => void {
+  const set = cancelledListeners.get(gameId) ?? new Set();
+  set.add(cb);
+  cancelledListeners.set(gameId, set);
+  return () => {
+    set.delete(cb);
+    if (set.size === 0) cancelledListeners.delete(gameId);
   };
 }
 
@@ -88,6 +100,8 @@ export function useOpenCoinflips() {
       qc.setQueryData<CoinflipGame[]>(['coinflip', 'open'], (prev) =>
         prev ? prev.filter((g) => g.id !== id) : prev,
       );
+      // A modal watching this flip must not sit on "Waiting for player…" forever.
+      cancelledListeners.get(id)?.forEach((cb) => cb());
     };
 
     socket.on('flip:created', onCreated);

@@ -5,12 +5,13 @@ import { cn } from '@/lib/cn';
 import { NumberPicker } from './number-picker';
 
 export interface TicketRow {
-  digits: number[]; // length 6, each 0..9
+  digits: (number | null)[]; // length 6, each 0..9 — null = not picked yet
 }
 
-// A 6-digit ticket is ALWAYS valid — any six digits is a complete ticket.
-export function isCompleteTicket(_t: TicketRow): boolean {
-  return true;
+// A ticket is complete once every position holds an explicitly chosen digit
+// (null marks "not picked yet", so a chosen 0 is distinguishable from unset).
+export function isCompleteTicket(t: TicketRow): boolean {
+  return t.digits.every((d) => d != null);
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Card } from '@scadium/shared';
 import { api } from '@/lib/api-client';
@@ -100,10 +100,17 @@ export function useBlackjackTable(tableId: string | null) {
   const socket = useSocket('/blackjack');
   const qc = useQueryClient();
 
+  // Monotonic guard: a REST poll that resolves after a socket snapshot arrived
+  // must not roll the table back (visible as cards briefly "undealing").
+  const lastSocketAt = useRef(0);
   const refetch = useCallback(() => {
     if (!tableId) return;
+    const startedAt = Date.now();
     api<BlackjackTableSnapshot>(`/blackjack/tables/${tableId}`)
-      .then(setSnapshot)
+      .then((snap) => {
+        if (lastSocketAt.current > startedAt) return;
+        setSnapshot(snap);
+      })
       .catch(() => {});
   }, [tableId]);
 
@@ -119,6 +126,7 @@ export function useBlackjackTable(tableId: string | null) {
     if (!socket || !tableId) return;
     const onTable = (p: { tableId: string; snapshot: BlackjackTableSnapshot }) => {
       if (p.tableId !== tableId) return;
+      lastSocketAt.current = Date.now();
       setSnapshot(p.snapshot);
       if (p.snapshot.phase === 'settled') {
         qc.invalidateQueries({ queryKey: ['me'] });

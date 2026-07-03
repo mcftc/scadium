@@ -1,12 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   crashPoint,
   coinflipResult,
   blackjackDeal,
+  mineField,
+  hiloSequence,
+  towerTraps,
   generateServerSeed,
   generateClientSeed,
   commitServerSeed,
 } from '@scadium/fair';
+import { HILO, MINES, TOWER } from '@scadium/shared';
 
 /**
  * Thin wrapper over @scadium/fair so game modules have a single DI-injectable
@@ -45,10 +49,11 @@ export class FairnessService {
    * Used by the /fairness page to prove non-manipulation.
    */
   verify(params: {
-    game: 'crash' | 'coinflip' | 'blackjack';
+    game: 'crash' | 'coinflip' | 'blackjack' | 'mines' | 'hilo' | 'tower';
     serverSeed: string;
     clientSeed: string;
     nonce: number;
+    mines?: number;
   }) {
     const { game, serverSeed, clientSeed, nonce } = params;
     switch (game) {
@@ -58,6 +63,36 @@ export class FairnessService {
         return { game, result: this.coinflip(serverSeed, clientSeed, nonce) };
       case 'blackjack':
         return { game, result: this.blackjack(serverSeed, clientSeed, nonce, 10) };
+      case 'mines': {
+        // The field is a prefix of one Fisher–Yates shuffle, so the wrong mine
+        // count silently returns a plausible-looking subset that won't match the
+        // round the player saw. Require the exact count rather than defaulting.
+        if (params.mines == null) {
+          throw new BadRequestException('mines is required to verify a mines round');
+        }
+        return {
+          game,
+          result: mineField(serverSeed, clientSeed, nonce, MINES.CELLS, params.mines),
+        };
+      }
+      case 'hilo':
+        // Base card + one per possible guess — the full committed sequence.
+        return {
+          game,
+          result: hiloSequence(serverSeed, clientSeed, nonce, HILO.MAX_STEPS + 1),
+        };
+      case 'tower':
+        return {
+          game,
+          result: towerTraps(
+            serverSeed,
+            clientSeed,
+            nonce,
+            TOWER.ROWS,
+            TOWER.COLUMNS,
+            TOWER.SAFE_PER_ROW,
+          ),
+        };
     }
   }
 }

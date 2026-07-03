@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, ChevronDown, Loader2, Repeat } from 'lucide-react';
+import { CRASH } from '@scadium/shared';
+import { isValidBetSol, solToLamportsClamped } from '@/components/instant/bet-amount-input';
 import { useCrashActions, type CrashSnapshot } from '@/hooks/use-crash';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
@@ -32,6 +34,16 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   const [autoBet, setAutoBet] = useState(false);
   const autoBetRef = useRef(autoBet);
   autoBetRef.current = autoBet;
+  // The auto-bet timer fires from a stale render — read the live inputs
+  // through refs so an amount edited during the 400ms window is what's placed.
+  const solRef = useRef(sol);
+  solRef.current = sol;
+  const autoCashoutRef = useRef(autoCashout);
+  autoCashoutRef.current = autoCashout;
+  // Guard against re-placing on the same round: the auto-bet effect re-runs when
+  // `busy` clears, but the server-pushed `myBet` can lag (or be lost on a socket
+  // reconnect), so the myBet guard alone can double-fire within one round.
+  const autoPlacedRoundRef = useRef<string | null>(null);
 
   // Default progressive-cashout % persists across sessions. Read reactively
   // (null on SSR → no hydration mismatch) and apply during render on its edge
@@ -48,6 +60,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   }
 
   const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
+  const validBet = isValidBetSol(sol, CRASH.MIN_BET_LAMPORTS);
   const phase = state?.phase ?? 'waiting';
   const canBet = phase === 'waiting' && !myBet;
   const canCashout = phase === 'running' && myBet && myBet.cashedOutAt === null;
@@ -59,27 +72,47 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   if (scheduled && phase === 'waiting' && myBet) setScheduled(false);
 
   // Auto Bet (Advanced): re-place the same bet whenever a fresh betting
-  // window opens and we don't already have a bet riding or queued.
+  // window opens and we don't already have a bet riding or queued. `busy` must
+  // be a dep: if the effect bails while a request is in flight, it has to
+  // re-run when the request clears or that round is silently skipped.
   useEffect(() => {
-    if (!autoBet || phase !== 'waiting' || myBet || scheduled || busy) return;
+    // Skip an empty/invalid amount so an in-flight field edit can't fire a
+    // silent min-stake bet; and never place twice for the same roundId.
+    if (!autoBet || phase !== 'waiting' || myBet || scheduled || busy || !validBet) return;
+    const roundId = state?.roundId ?? null;
+    if (roundId && autoPlacedRoundRef.current === roundId) return;
     const t = setTimeout(() => {
       if (!autoBetRef.current) return;
-      void onPlace().catch(() => setAutoBet(false));
+      autoPlacedRoundRef.current = roundId;
+      void onPlace().catch(() => {
+        autoPlacedRoundRef.current = null; // let the next window retry after a failure
+        setAutoBet(false);
+      });
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoBet, phase, state?.roundId, myBet, scheduled]);
+  }, [autoBet, phase, state?.roundId, myBet, scheduled, busy, validBet]);
 
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
     }
+    // Defensive: never place a clamped min-stake bet from an empty/invalid field
+    // (the buttons gate on this, but the auto-bet path reaches onPlace directly).
+    if (!isValidBetSol(solRef.current, CRASH.MIN_BET_LAMPORTS)) {
+      setError('Enter a valid bet amount');
+      throw new Error('invalid bet amount');
+    }
     setError(null);
     setBusy(true);
     try {
-      const lamports = String(Math.floor(Number(sol) * 1e9));
-      const target = autoCashout ? Number(autoCashout) : null;
+      const lamports = solToLamportsClamped(
+        solRef.current,
+        CRASH.MIN_BET_LAMPORTS,
+        CRASH.MAX_BET_LAMPORTS,
+      );
+      const target = autoCashoutRef.current ? Number(autoCashoutRef.current) : null;
       sound.bet();
       await placeBet({ amountLamports: lamports, autoCashout: target });
     } catch (e) {
@@ -99,7 +132,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
     setError(null);
     setBusy(true);
     try {
-      const lamports = String(Math.floor(Number(sol) * 1e9));
+      const lamports = solToLamportsClamped(sol, CRASH.MIN_BET_LAMPORTS, CRASH.MAX_BET_LAMPORTS);
       const target = autoCashout ? Number(autoCashout) : null;
       await scheduleBet({ amountLamports: lamports, autoCashout: target });
       setScheduled(true);
@@ -177,7 +210,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
             </button>
             <button
               type="button"
-              onClick={() => setSol('10')}
+              onClick={() => setSol(String(CRASH.MAX_BET_LAMPORTS / 1e9))}
               disabled={!editable}
               className="px-2 rounded-lg bg-surface text-[10px] font-bold text-foreground-muted hover:text-foreground hover:bg-surface-elevated transition-colors disabled:opacity-50"
             >
@@ -290,7 +323,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
         <button
           type="button"
           onClick={() => void onPlace().catch(() => {})}
-          disabled={busy}
+          disabled={busy || (isAuthenticated && !validBet)}
           className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
         >
           {busy ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
@@ -301,7 +334,7 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
         <button
           type="button"
           onClick={onSchedule}
-          disabled={busy || inputsLocked}
+          disabled={busy || inputsLocked || (isAuthenticated && !validBet)}
           className="w-full h-12 rounded-xl bg-primary-400/90 hover:bg-primary-400 text-white font-bold text-sm transition-all shadow-glow-sm disabled:opacity-50"
         >
           {busy ? (

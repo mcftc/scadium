@@ -20,8 +20,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const registry = useRef<Map<string, Socket>>(new Map());
 
   const getSocket = (namespace: string): Socket => {
+    // Reuse any socket that is connected OR still (re)connecting — checking
+    // `connected` alone made two same-commit useSocket() calls race the
+    // handshake and open duplicate connections, leaking the first one.
     const existing = registry.current.get(namespace);
-    if (existing && existing.connected) return existing;
+    if (existing && existing.active) return existing;
     const url = `${env.wsUrl.replace(/\/$/, '')}${namespace}`;
     const sock = io(url, {
       transports: ['websocket'],

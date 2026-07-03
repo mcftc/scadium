@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { CRASH } from '@scadium/shared';
 import type { CrashBet, CrashCashoutMarker, CrashSnapshot } from '@/hooks/use-crash';
 import { cn } from '@/lib/cn';
 import { CrashRocket } from './crash-rocket';
@@ -9,6 +10,25 @@ import { useGameSound } from '@/components/instant/use-game-sound';
 
 /** Canopy colors so concurrent cash-out parachutes stay distinct. */
 const PARACHUTE_HUES = ['#22d3ee', '#a855f7', '#f59e0b', '#22c55e', '#f472b6', '#38bdf8'];
+
+/** Betting-window length in seconds — mirrors the server scheduler exactly. */
+const WINDOW_S = CRASH.BET_WINDOW_MS / 1000;
+
+/**
+ * Shared plot axis for the trail and the ruler. `progress` is the rocket's
+ * flight fraction with a slow launch: p ≈ (m−1)/K near 1×, so the tip crawls
+ * off the pad; because m−1 grows exponentially in time, on-screen velocity
+ * accelerates with the multiplier, then eases out so the rocket parks
+ * top-right at high m (the starfield + rescaling ruler carry the speed).
+ */
+const AXIS_RAMP = 3; // p = 28% @2x, 63% @4x, 86% @7x, 95% @10x
+function crashAxis(multiplier: number) {
+  const m = Math.max(1.0001, multiplier);
+  const progress = 1 - Math.exp(-(m - 1) / AXIS_RAMP);
+  const fxTip = 0.08 + 0.82 * progress; // tip x: 8% → 90% of plot width
+  const fyTip = 0.15 + 0.72 * progress; // tip y: 15% → 87% of plot height
+  return { m, progress, fxTip, fyTip, yMax: m / fyTip };
+}
 
 /**
  * Immersive crash visualizer (solpump structure, our scene):
@@ -28,12 +48,12 @@ export function CrashCurve({
   cashouts?: CrashCashoutMarker[];
   myBet?: CrashBet | null;
 }) {
-  const [countdown, setCountdown] = useState(20);
+  const [countdown, setCountdown] = useState(WINDOW_S);
 
   useEffect(() => {
     if (state?.phase !== 'waiting') return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- countdown is timer-driven display state: this seeds it to 20 at the start of each betting window, after which the interval below animates it down. Not derivable during render.
-    setCountdown(20);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- countdown is timer-driven display state: this seeds it to the betting-window length at the start of each window, after which the interval below animates it down. Not derivable during render.
+    setCountdown(WINDOW_S);
     const interval = setInterval(() => {
       setCountdown((c) => Math.max(0, c - 0.1));
     }, 100);
@@ -329,17 +349,16 @@ function CrashTrail({
   }, []);
 
   // Shared axis scaling — also used to pin cashout markers onto the curve.
-  // The curve fills the canvas: it spreads wide across the width and rides high,
-  // so even low multipliers (the common case) use most of the scene instead of
-  // hugging the bottom-left corner. yMax tracks the ruler's 1.4 headroom factor
-  // so the rocket lines up with the right-edge multiplier ticks.
-  const m = Math.max(1.0001, multiplier);
-  const yMax = Math.max(2, m * 1.4); // headroom so the tip rides ~71% up, ruler-aligned
-  const xRef = Math.max(1.8, m * 1.3); // time scale → spreads the curve across the width
-  const lnX = Math.log(xRef);
+  // The tip is driven by crashAxis' eased progress: the rocket launches slow
+  // from the lower-left, visibly accelerates through 2–4× and parks top-right
+  // at high multipliers. The value axis stays linear (yMax = m / fyTip) so
+  // cashout markers and the right-edge ruler stay consistent with the trail.
+  const { m, fxTip, yMax } = crashAxis(multiplier);
+  const lnM = Math.log(m);
   const toXY = (v: number) => {
-    const fx = Math.min(0.9, Math.log(Math.max(1.0001, v)) / lnX);
-    const fy = Math.max(1.0001, v) / yMax;
+    const vv = Math.max(1.0001, v);
+    const fx = fxTip * Math.min(1, Math.log(vv) / lnM); // time fraction along the flight
+    const fy = vv / yMax;
     return { x: 5 + fx * 89, y: 95 - fy * 87 };
   };
 
@@ -606,8 +625,10 @@ function MultiplierRuler({
   multiplier: number;
   phase: 'waiting' | 'running' | 'busted';
 }) {
-  // Determine the max label to show — always at least 2x, scales up with multiplier
-  const maxLabel = phase === 'waiting' ? 7 : Math.max(2, Math.ceil(multiplier * 1.4));
+  // Determine the max label to show — follows the trail's axis (crashAxis) so
+  // the tick nearest the rocket reads ≈ the live multiplier. At m≈1 the axis
+  // tops out at ~1/0.15 ≈ 7, matching the waiting-phase scale (no jump).
+  const maxLabel = phase === 'waiting' ? 7 : Math.max(2, Math.ceil(crashAxis(multiplier).yMax));
   // Generate tick values from 0 to maxLabel
   const step = maxLabel <= 5 ? 1 : maxLabel <= 15 ? 2 : 5;
   const ticks: number[] = [];

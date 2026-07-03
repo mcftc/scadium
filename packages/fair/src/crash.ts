@@ -32,7 +32,9 @@ export function crashPointFromSlot(
  *   3. If `h % 20 === 0`, return 1.00 (instant bust — ~5% of rounds).
  *   4. Otherwise, return floor((100 * 2^52 - h) / (2^52 - h)) / 100.
  *
- * This yields a house edge of exactly 5% and is fully reproducible by any
+ * The h % 20 instant-bust contributes exactly 5% hold; the survival law makes
+ * the effective edge target-dependent — 5.0% at a 1.01× cash-out rising toward
+ * ~5.95% asymptotically (1 − M·0.95·99/(100M−1)). Fully reproducible by any
  * client that knows the three seed inputs.
  */
 export function crashPoint(serverSeed: string, clientSeed: string, nonce: number): number {

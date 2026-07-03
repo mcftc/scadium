@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { HILO, hiloStepMultiplier, type HiloDirection } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
@@ -26,7 +26,7 @@ import { HiloBoard3D } from './hilo-board-3d';
 export function HiloGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
-  const { start, guess, cashout } = useHilo();
+  const { start, guess, cashout, active: activeQuery, resetActive } = useHilo();
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
@@ -34,6 +34,17 @@ export function HiloGame() {
   const [settle, setSettle] = useState<HiloSettleResult | null>(null);
   const [card, setCard] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  // Resume a server-side open round after a reload/navigation — the stake was
+  // debited at start, and without hydration every new start 409s forever.
+  useEffect(() => {
+    if (round === null && settle === null && activeQuery.data) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration of the server's open round into local round state on mount/refetch; guarded so it never overwrites live play.
+      setRound(activeQuery.data);
+      setCard(activeQuery.data.state.card);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQuery.data]);
 
   const active = round !== null;
   const busy = start.isPending || guess.isPending || cashout.isPending;
@@ -61,6 +72,16 @@ export function HiloGame() {
       setRound(res);
       setCard(res.state.card);
     } catch (e) {
+      // Self-heal a 409: an open round already exists server-side — resume it
+      // instead of leaving the player stuck behind "already in progress".
+      if (e instanceof ApiError && e.status === 409) {
+        const cur = await activeQuery.refetch();
+        if (cur.data) {
+          setRound(cur.data);
+          setCard(cur.data.state.card);
+          return;
+        }
+      }
       setError(e instanceof ApiError ? e.message : 'Could not start the round');
     }
   }
@@ -82,8 +103,22 @@ export function HiloGame() {
         sound.tick(560 + res.state.steps * 50);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Guess failed');
+      handleRoundError(e, 'Guess failed');
     }
+  }
+
+  /**
+   * Self-heal a phantom round (409/404 — settled in another tab): drop the
+   * local round + cached active entry so the board returns to a fresh Start.
+   */
+  function handleRoundError(e: unknown, fallback: string) {
+    if (e instanceof ApiError && (e.status === 409 || e.status === 404)) {
+      setRound(null);
+      resetActive();
+      setError('That round already ended — start a new one.');
+      return;
+    }
+    setError(e instanceof ApiError ? e.message : fallback);
   }
 
   async function onCashout() {
@@ -95,7 +130,7 @@ export function HiloGame() {
       setRound(null);
       sound.cashout();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Cash out failed');
+      handleRoundError(e, 'Cash out failed');
     }
   }
 
@@ -123,7 +158,14 @@ export function HiloGame() {
           <SoundToggle sound={sound} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
           <div className="pointer-events-none absolute left-2 top-2 rounded-xl border border-border bg-background/70 px-3 py-1.5 backdrop-blur sm:left-4 sm:top-4 sm:px-4 sm:py-2">
             <div className="text-xl font-bold text-cyan-300 sm:text-2xl">
-              {active && steps > 0 ? cumMult.toFixed(2) : active ? '1.00' : '0.00'}×
+              {settle
+                ? settle.multiplier.toFixed(2)
+                : active && steps > 0
+                  ? cumMult.toFixed(2)
+                  : active
+                    ? '1.00'
+                    : '0.00'}
+              ×
             </div>
             <div className="text-xs text-foreground-muted">
               {settle

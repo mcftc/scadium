@@ -19,7 +19,7 @@ import {
   useUseFreeTicket,
   type TicketPicks,
 } from '@/hooks/use-lottery';
-import { TicketListBuilder, type TicketRow } from './ticket-list-builder';
+import { TicketListBuilder, isCompleteTicket, type TicketRow } from './ticket-list-builder';
 import { LotteryPageHeader } from './lottery-page-header';
 import { ResultsTab } from './results-tab';
 import { JackpotWinnersTab } from './jackpot-winners-tab';
@@ -27,7 +27,7 @@ import { PrizeTable } from './prize-table';
 import { MyTickets } from './my-tickets';
 import { LotteryFairness } from './lottery-fairness';
 
-const EMPTY_ROW: TicketRow = { digits: [0, 0, 0, 0, 0, 0] };
+const EMPTY_ROW: TicketRow = { digits: [null, null, null, null, null, null] };
 
 function randomDigits(): number[] {
   return Array.from({ length: 6 }, () => Math.floor(Math.random() * 10));
@@ -145,11 +145,12 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     setTickets((cur) => cur.map((t, idx) => (idx === i ? patch(t) : t)));
   }
 
-  // Every 6-digit ticket is always complete (any six digits is valid).
-  const completedCount = tickets.length;
-  const allComplete = true;
+  // A ticket counts as complete only when all six digits are explicitly picked
+  // (Quick Pick fills every card in one tap).
+  const completedCount = tickets.filter(isCompleteTicket).length;
+  const allComplete = completedCount === tickets.length;
   const firstRow = tickets[0];
-  const firstRowReady = firstRow != null;
+  const firstRowReady = firstRow != null && isCompleteTicket(firstRow);
 
   const priceScad = snap?.ticketPriceScad ?? 0;
   const onChain = !!snap?.chain.enabled;
@@ -171,8 +172,11 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     const seen = new Set<string>();
     const picks: TicketPicks[] = [];
     for (const t of tickets) {
-      seen.add(t.digits.join(''));
-      picks.push({ digits: t.digits });
+      // buyAll is gated on allComplete, so nulls can't reach here — the ?? 0
+      // only narrows the type for the API contract (digits: number[]).
+      const digits = t.digits.map((d) => d ?? 0);
+      seen.add(digits.join(''));
+      picks.push({ digits });
     }
     while (picks.length < quantity) {
       const t = randomPicks();
@@ -225,7 +229,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
     setError(null);
     setNotice(null);
     try {
-      await useFree.mutateAsync({ digits: firstRow!.digits });
+      await useFree.mutateAsync({ digits: firstRow!.digits.map((d) => d ?? 0) });
       updateRow(0, () => EMPTY_ROW);
       setNotice('Free ticket entered with your first card picks');
     } catch (e) {

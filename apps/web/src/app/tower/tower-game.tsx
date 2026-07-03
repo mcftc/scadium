@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { TOWER, towerMultiplier } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
@@ -30,13 +30,23 @@ const COLS = TOWER.COLUMNS;
 export function TowerGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
-  const { start, pick, cashout } = useTower();
+  const { start, pick, cashout, active: activeQuery, resetActive } = useTower();
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
   const [round, setRound] = useState<TowerRoundView | null>(null);
   const [settle, setSettle] = useState<TowerSettleResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Resume a server-side open round after a reload/navigation — the stake was
+  // debited at start, and without hydration every new start 409s forever.
+  useEffect(() => {
+    if (round === null && settle === null && activeQuery.data) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration of the server's open round into local round state on mount/refetch; guarded so it never overwrites live play.
+      setRound(activeQuery.data);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQuery.data]);
 
   const active = round !== null;
   const busy = start.isPending || pick.isPending || cashout.isPending;
@@ -80,6 +90,15 @@ export function TowerGame() {
       });
       setRound(res);
     } catch (e) {
+      // Self-heal a 409: an open round already exists server-side — resume it
+      // instead of leaving the player stuck behind "already in progress".
+      if (e instanceof ApiError && e.status === 409) {
+        const cur = await activeQuery.refetch();
+        if (cur.data) {
+          setRound(cur.data);
+          return;
+        }
+      }
       setError(e instanceof ApiError ? e.message : 'Could not start the round');
     }
   }
@@ -99,8 +118,22 @@ export function TowerGame() {
         sound.tick(560 + res.state.currentRow * 55);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Pick failed');
+      handleRoundError(e, 'Pick failed');
     }
+  }
+
+  /**
+   * Self-heal a phantom round (409/404 — settled in another tab): drop the
+   * local round + cached active entry so the board returns to a fresh Start.
+   */
+  function handleRoundError(e: unknown, fallback: string) {
+    if (e instanceof ApiError && (e.status === 409 || e.status === 404)) {
+      setRound(null);
+      resetActive();
+      setError('That round already ended — start a new one.');
+      return;
+    }
+    setError(e instanceof ApiError ? e.message : fallback);
   }
 
   async function onCashout() {
@@ -112,7 +145,7 @@ export function TowerGame() {
       setRound(null);
       sound.cashout();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Cash out failed');
+      handleRoundError(e, 'Cash out failed');
     }
   }
 
@@ -140,7 +173,9 @@ export function TowerGame() {
           />
           <SoundToggle sound={sound} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
           <div className="pointer-events-none absolute left-2 top-2 rounded-xl border border-border bg-background/70 px-3 py-1.5 backdrop-blur sm:left-4 sm:top-4 sm:px-4 sm:py-2">
-            <div className="text-xl font-bold text-emerald-300 sm:text-2xl">{currentMult.toFixed(2)}×</div>
+            <div className="text-xl font-bold text-emerald-300 sm:text-2xl">
+              {(settle ? settle.multiplier : currentMult).toFixed(2)}×
+            </div>
             <div className="text-xs text-foreground-muted">
               {settle
                 ? settle.won

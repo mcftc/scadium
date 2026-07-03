@@ -1,10 +1,25 @@
-import { IsEnum, IsInt, IsString, Min, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { MINES } from '@scadium/shared';
+
+const VERIFY_GAMES = ['crash', 'coinflip', 'blackjack', 'mines', 'hilo', 'tower'] as const;
+export type VerifyGame = (typeof VERIFY_GAMES)[number];
 
 export class VerifyFairnessDto {
-  @ApiProperty({ enum: ['crash', 'coinflip', 'blackjack'] })
-  @IsEnum(['crash', 'coinflip', 'blackjack'])
-  game!: 'crash' | 'coinflip' | 'blackjack';
+  @ApiProperty({ enum: VERIFY_GAMES })
+  @IsEnum(VERIFY_GAMES)
+  game!: VerifyGame;
+
+  @ApiPropertyOptional({
+    description: 'Mines only — the round’s mine count',
+    minimum: MINES.MIN_MINES,
+    maximum: MINES.MAX_MINES,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(MINES.MIN_MINES)
+  @Max(MINES.MAX_MINES)
+  mines?: number;
 
   @ApiProperty({ description: 'Revealed server seed (64 hex chars)' })
   @IsString()

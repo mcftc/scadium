@@ -67,7 +67,7 @@ export default function ResponsibleGamblingPage() {
     rg?.coolOffUntil && new Date(rg.coolOffUntil).getTime() > now
       ? new Date(rg.coolOffUntil)
       : null;
-  const fmtLimit = (v: string | null | undefined) => (v ? `${formatSol(v, 3)} SOL` : '—');
+  const fmtLimit = (v: string | null | undefined) => (v ? formatSol(v, 3) : '—');
 
   return (
     <Container>

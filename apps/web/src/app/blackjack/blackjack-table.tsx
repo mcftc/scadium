@@ -136,8 +136,10 @@ export function BlackjackTable() {
           </div>
         </div>
 
-        {/* Table felt */}
-        <div className="relative overflow-visible" style={{ minHeight: 520 }}>
+        {/* Table felt — the wrapper must track the SVG's aspect ratio (1000×550)
+            so the %-anchored seats and overlays stay ON the felt at every width
+            (a fixed minHeight detached them on narrow screens). */}
+        <div className="relative overflow-visible w-full aspect-[1000/550]">
           <svg
             viewBox="0 0 1000 550"
             className="w-full h-auto"
