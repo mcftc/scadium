@@ -11,10 +11,16 @@
 # and re-run. Deploying ~1.2MB of programs needs ~9-12 SOL.
 #
 # Usage:  ./scripts/devnet-bringup.sh
+#   RPC=<url>             override the devnet RPC (e.g. a third-party endpoint
+#                         when api.devnet.solana.com is unreachable/intercepted)
+#   HOUSE_FLOAT_SOL=<n>   house vault float (default 3 — the full-coverage
+#                         default inside init-house.ts is 250 SOL and silently
+#                         fails on a faucet-funded wallet)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RPC="https://api.devnet.solana.com"
+RPC="${RPC:-https://api.devnet.solana.com}"
+HOUSE_FLOAT_SOL="${HOUSE_FLOAT_SOL:-3}"
 ID_JSON="$HOME/.config/solana/id.json"
 COSIGNER_KP=".keys/cosigner-devnet.json"
 TS="pnpm exec ts-node --project tsconfig.anchor.json -T"
@@ -41,8 +47,8 @@ fi
 # --- 1) build + deploy all four programs -----------------------------------
 echo "==> anchor build (generates .so + IDL, incl. scadium_rng)"
 anchor build
-echo "==> anchor deploy --provider.cluster devnet"
-anchor deploy --provider.cluster devnet
+echo "==> anchor deploy --provider.cluster $RPC"
+anchor deploy --provider.cluster "$RPC"
 
 VAULT_ID=$(solana-keygen pubkey target/deploy/scadium_vault-keypair.json)
 SWAP_ID=$(solana-keygen pubkey target/deploy/scadium_swap-keypair.json)
@@ -68,8 +74,8 @@ spl-token mint "$USDS_MINT" 1000000 --url "$RPC" >/dev/null || true
 echo "==> USDS mint: $USDS_MINT"
 
 # --- 4) program configs: house, lottery, shared RNG ------------------------
-echo "==> init house (scadium_vault)"
-RPC="$RPC" SCAD_MINT="$SCAD_MINT" COSIGNER="$COSIGNER" $TS scripts/init-house.ts || true
+echo "==> init house (scadium_vault, float ${HOUSE_FLOAT_SOL} SOL)"
+RPC="$RPC" SCAD_MINT="$SCAD_MINT" COSIGNER="$COSIGNER" HOUSE_FLOAT_SOL="$HOUSE_FLOAT_SOL" $TS scripts/init-house.ts || true
 echo "==> init lottery (scadium_lottery)"
 RPC="$RPC" LOTTERY_PROGRAM_ID="$LOTTERY_ID" SCAD_MINT="$SCAD_MINT" COSIGNER="$COSIGNER" $TS scripts/setup-lottery.ts || true
 echo "==> init shared RNG (scadium_rng)"
