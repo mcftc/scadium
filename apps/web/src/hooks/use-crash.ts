@@ -56,9 +56,10 @@ export function useCrash() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    // Seed from REST
+    // Seed from REST — but never clobber state a socket event already set
+    // (the fetch can resolve after round-start/bust frames).
     api<CrashSnapshot>('/crash/snapshot')
-      .then(setState)
+      .then((snap) => setState((prev) => prev ?? snap))
       .catch(() => {
         /* noop */
       });

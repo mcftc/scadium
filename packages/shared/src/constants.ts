@@ -38,11 +38,14 @@ export const CRASH = {
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
   MIN_CASHOUT_MULTIPLIER: 1.01,
   MAX_CASHOUT_MULTIPLIER: 1_000_000,
-  BET_WINDOW_MS: 20_000, // 20s betting window between rounds
+  BET_WINDOW_MS: 15_000, // 15s betting window between rounds
   TICK_RATE_HZ: 20,
   GROWTH_RATE: 1.0024, // m(t_ms) = GROWTH_RATE ^ (t_ms / 10)
   INSTANT_BUST_CHANCE: 1 / 20, // matches solpump formula (h % 20 === 0) = 5% hold
-  HOUSE_EDGE, // structural: the h%20 instant-bust IS the 5% edge (see crash.ts)
+  // Nominal edge. The h%20 instant-bust is exactly 5%; the survival law makes
+  // the effective edge target-dependent (5.0% at 1.01× → ~5.95% asymptote) —
+  // see packages/fair/src/crash.ts.
+  HOUSE_EDGE,
 } as const;
 
 // ---------- Blackjack ----------
@@ -64,19 +67,22 @@ export const BLACKJACK = {
   IDLE_ROUNDS_TO_UNSEAT: 3, // sit-outs before a seat is freed
   // Side bet payout multipliers (return = stake × multiplier; outcomes are
   // pure functions of the dealt cards — see @scadium/fair evaluate21Plus3 /
-  // evaluatePerfectPairs).
+  // evaluatePerfectPairs). Tables are tuned for the INFINITE-DECK model
+  // (independent uniform cards), not physical 6-deck odds: exact enumeration
+  // gives 21+3 EV = 0.9531 (4.69% edge) and Perfect Pairs EV = 0.9423 (5.77%
+  // edge) — in line with the platform's 5% hold.
   SIDE_BETS: {
     twentyOnePlusThree: {
       suited_trips: 100,
       straight_flush: 40,
       three_of_a_kind: 30,
       straight: 10,
-      flush: 5,
+      flush: 6,
     },
     perfectPairs: {
       perfect: 25,
-      colored: 10,
-      mixed: 5,
+      colored: 12,
+      mixed: 6,
     },
   },
   /** Worst-case return per lamport staked at a seat (#30) — dominated by the
@@ -857,14 +863,31 @@ export function earlyExitPenalty(assets: bigint): bigint {
 export const DICE = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
-  HOUSE_EDGE,
-  MIN_TARGET: 2, // roll-under target, in [MIN_TARGET, MAX_TARGET]
+  // Dice runs hotter than the platform default on purpose: the industry
+  // convention for crypto dice is a 1% edge (Stake's 99/winChance), and dice
+  // players compare multipliers across sites. Every multiplier stays ≥ 1.01×
+  // across the full [2, 98] target range at this edge.
+  HOUSE_EDGE: 0.01,
+  MIN_TARGET: 2, // target, in [MIN_TARGET, MAX_TARGET] (both modes)
   MAX_TARGET: 98,
+  MODES: ['under', 'over'] as const,
 } as const;
 
-/** Roll-under dice payout: (1-edge) / winChance, winChance = target/100. */
-export function diceMultiplier(target: number, edge = DICE.HOUSE_EDGE): number {
-  return Math.floor(((100 * (1 - edge)) / target) * 100) / 100;
+export type DiceMode = (typeof DICE.MODES)[number];
+
+/**
+ * Dice payout: (1-edge) / winChance.
+ * winChance = target/100 for roll-under, (100-target)/100 for roll-over
+ * (win rule: roll < target for under, roll >= target for over — the two modes
+ * split the 10,000-outcome grid exactly, so chances sum to 1).
+ */
+export function diceMultiplier(
+  target: number,
+  mode: DiceMode = 'under',
+  edge = DICE.HOUSE_EDGE,
+): number {
+  const chancePct = mode === 'over' ? 100 - target : target;
+  return Math.floor(((100 * (1 - edge)) / chancePct) * 100) / 100;
 }
 
 export const LIMBO = {

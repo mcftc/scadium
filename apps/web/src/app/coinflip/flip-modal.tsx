@@ -4,7 +4,11 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ExternalLink, Swords } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
-import { subscribeFlipResolved, type CoinflipGame } from '@/hooks/use-coinflip';
+import {
+  subscribeFlipResolved,
+  subscribeFlipCancelled,
+  type CoinflipGame,
+} from '@/hooks/use-coinflip';
 import { useMe } from '@/hooks/use-me';
 import { shortAddress, formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -30,6 +34,7 @@ export function FlipModal({
   const { data: me } = useMe();
   const [game, setGame] = useState<CoinflipGame | null>(initial);
   const [stage, setStage] = useState<Stage>('waiting');
+  const [cancelled, setCancelled] = useState(false);
 
   // (Re)arm whenever a different game is opened (or the modal re-opens). Settled
   // games replay the flip. Reset during render on the open/initial edge rather
@@ -41,15 +46,22 @@ export function FlipModal({
     setPrevArmKey(armKey);
     setGame(initial);
     setStage(initial?.status === 'completed' ? 'flipping' : 'waiting');
+    setCancelled(false);
   }
 
-  // Live spectate: when the watched open game resolves, run the animation.
+  // Live spectate: when the watched open game resolves, run the animation;
+  // when it gets cancelled, say so instead of waiting forever.
   useEffect(() => {
     if (!open || !game || game.status !== 'open') return;
-    return subscribeFlipResolved(game.id, (resolved) => {
+    const offResolved = subscribeFlipResolved(game.id, (resolved) => {
       setGame(resolved);
       setStage('flipping');
     });
+    const offCancelled = subscribeFlipCancelled(game.id, () => setCancelled(true));
+    return () => {
+      offResolved();
+      offCancelled();
+    };
   }, [open, game]);
 
   if (!game) return null;
@@ -90,7 +102,13 @@ export function FlipModal({
             />
           ) : (
             <div className="flex-1 rounded-xl border border-dashed border-border px-3 py-3 text-center">
-              <div className="text-xs text-foreground-muted animate-pulse">Waiting for player…</div>
+              {cancelled ? (
+                <div className="text-xs font-semibold text-danger">Flip cancelled</div>
+              ) : (
+                <div className="text-xs text-foreground-muted animate-pulse">
+                  Waiting for player…
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -108,13 +126,18 @@ export function FlipModal({
 
         {/* Status line */}
         <div className="text-center min-h-[3.5rem]">
-          {stage === 'waiting' && (
+          {stage === 'waiting' && cancelled && (
+            <p className="text-xs text-danger">
+              The creator cancelled this flip — the stake was refunded.
+            </p>
+          )}
+          {stage === 'waiting' && !cancelled && (
             <p className="text-xs text-foreground-muted">
               Pot{' '}
               <span className="font-mono font-bold text-foreground">
-                {formatSol((BigInt(game.amountLamports) * BigInt(2)).toString(), 3)} SOL
+                {formatSol((BigInt(game.amountLamports) * BigInt(2)).toString(), 3)}
               </span>{' '}
-              · winner takes {formatSol(payout.toString(), 3)} SOL
+              · winner takes {formatSol(payout.toString(), 3)}
             </p>
           )}
           {stage === 'flipping' && (
@@ -138,7 +161,7 @@ export function FlipModal({
                 </span>{' '}
                 <span className="text-foreground-muted">wins</span>{' '}
                 <span className="font-mono font-bold text-success">
-                  +{formatSol(payout.toString(), 3)} SOL
+                  +{formatSol(payout.toString(), 3)}
                 </span>
               </div>
               {iPlayed && (

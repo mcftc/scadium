@@ -78,7 +78,10 @@ export function useJackpot() {
   const qc = useQueryClient();
 
   useEffect(() => {
-    api<JackpotSnapshot>('/jackpot/current').then(setSnap).catch(() => {});
+    // Mount seed only — never clobber state a socket event already set.
+    api<JackpotSnapshot>('/jackpot/current')
+      .then((s) => setSnap((prev) => prev ?? s))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

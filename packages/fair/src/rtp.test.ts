@@ -14,6 +14,7 @@ import {
   PLINKO,
   plinkoPayouts,
   plinkoExpectedValue,
+  diceMultiplier,
 } from '@scadium/shared';
 
 /**
@@ -30,7 +31,6 @@ describe('RTP standardization (95%)', () => {
   });
 
   it('every standardized game points its edge at HOUSE_EDGE', () => {
-    expect(DICE.HOUSE_EDGE).toBe(HOUSE_EDGE);
     expect(LIMBO.HOUSE_EDGE).toBe(HOUSE_EDGE);
     expect(MINES.HOUSE_EDGE).toBe(HOUSE_EDGE);
     expect(HILO.HOUSE_EDGE).toBe(HOUSE_EDGE);
@@ -40,6 +40,24 @@ describe('RTP standardization (95%)', () => {
     // constant must not drift from the formula it documents.
     expect(CRASH.HOUSE_EDGE).toBe(HOUSE_EDGE);
     expect(CRASH.INSTANT_BUST_CHANCE).toBe(HOUSE_EDGE); // 1/20 === 0.05
+  });
+
+  it('dice runs a 1% edge (industry-standard 99/chance) in both modes', () => {
+    // Deliberate exception to the platform 5%: crypto-dice convention is 1%.
+    expect(DICE.HOUSE_EDGE).toBe(0.01);
+    const rtpDice = 1 - DICE.HOUSE_EDGE;
+    for (let target = DICE.MIN_TARGET; target <= DICE.MAX_TARGET; target++) {
+      for (const mode of DICE.MODES) {
+        const chance = (mode === 'over' ? 100 - target : target) / 100;
+        const ev = diceMultiplier(target, mode) * chance;
+        expect(ev, `target=${target} mode=${mode}`).toBeLessThanOrEqual(rtpDice + 1e-9);
+        expect(ev, `target=${target} mode=${mode}`).toBeGreaterThan(rtpDice - 0.02);
+        // No sub-1× "wins" anywhere in the selectable range.
+        expect(diceMultiplier(target, mode), `target=${target} mode=${mode}`).toBeGreaterThanOrEqual(1.01);
+      }
+      // The two modes split the 10,000-outcome grid exactly.
+      expect(100 * target + (10_000 - 100 * target)).toBe(10_000);
+    }
   });
 
   it('coinflip pays 2 × RTP = 1.9× (5% taken upfront)', () => {

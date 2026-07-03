@@ -105,7 +105,11 @@ export function CoinflipLobby() {
                   <div className="text-right">Action</div>
                 </div>
                 {tab === 'open' ? (
-                  <OpenFlipsList sort={sort} onWatch={watch} />
+                  <OpenFlipsList
+                    sort={sort}
+                    onWatch={watch}
+                    onJoinFailed={() => setModalOpen(false)}
+                  />
                 ) : (
                   <RecentFlipsList sort={sort} onWatch={watch} />
                 )}

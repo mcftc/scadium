@@ -15,6 +15,9 @@ import {
   limboResult,
   wheelSpin,
   plinkoDrop,
+  mineField,
+  hiloSequence,
+  towerTraps,
   verifyCommit,
   type DealLogEntry,
 } from '@/lib/fair-browser';
@@ -23,10 +26,14 @@ import {
   LIMBO,
   WHEEL_SEGMENTS,
   PLINKO,
+  MINES,
+  HILO,
+  TOWER,
   plinkoPayouts,
   diceMultiplier,
   wheelMultiplier,
   type Card,
+  type DiceMode,
 } from '@scadium/shared';
 
 type Game =
@@ -38,7 +45,10 @@ type Game =
   | 'dice'
   | 'limbo'
   | 'plinko'
-  | 'wheel';
+  | 'wheel'
+  | 'mines'
+  | 'hilo'
+  | 'tower';
 
 const GAMES: Game[] = [
   'crash',
@@ -50,7 +60,13 @@ const GAMES: Game[] = [
   'limbo',
   'plinko',
   'wheel',
+  'mines',
+  'hilo',
+  'tower',
 ];
+
+const HILO_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const HILO_SUITS = ['♠', '♥', '♦', '♣'];
 
 interface Result {
   game: Game;
@@ -72,7 +88,9 @@ export function VerifierForm() {
   const [slotHash, setSlotHash] = useState(''); // lottery only — draw-time entropy
   const [dealLog, setDealLog] = useState(''); // blackjack only — round deal order / seat deck indices
   const [target, setTarget] = useState(''); // dice / limbo only — chosen target (optional)
+  const [diceMode, setDiceMode] = useState<DiceMode>('under'); // dice only — win rule
   const [rows, setRows] = useState('16'); // plinko only — peg rows
+  const [mineCount, setMineCount] = useState('3'); // mines only — the round's mine count
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +109,7 @@ export function VerifierForm() {
     const sh = q.get('slotHash');
     const tg = q.get('target');
     const rw = q.get('rows');
+    const md = q.get('mode');
     if (ss) setServerSeed(ss);
     if (cs) setClientSeed(cs);
     if (n) setNonce(n);
@@ -98,6 +117,9 @@ export function VerifierForm() {
     if (sh) setSlotHash(sh);
     if (tg) setTarget(tg);
     if (rw) setRows(rw);
+    if (md === 'under' || md === 'over') setDiceMode(md);
+    const mn = q.get('mines');
+    if (mn) setMineCount(mn);
   }, []);
 
   async function compute() {
@@ -134,10 +156,12 @@ export function VerifierForm() {
       } else if (game === 'dice') {
         const roll = await diceRoll(serverSeed, clientSeed, nonceNum);
         const t = target.trim() ? Number(target) : null;
+        const over = diceMode === 'over';
+        const won = t !== null && (over ? roll >= t : roll < t);
         output =
           t !== null && Number.isFinite(t)
-            ? `roll ${roll.toFixed(2)}  ·  target <${t}  →  ${roll < t ? `WIN ${diceMultiplier(t).toFixed(2)}×` : 'LOSS'}`
-            : `roll ${roll.toFixed(2)}  (roll-under: win when roll < target)`;
+            ? `roll ${roll.toFixed(2)}  ·  target ${over ? '≥' : '<'}${t}  →  ${won ? `WIN ${diceMultiplier(t, diceMode).toFixed(2)}×` : 'LOSS'}`
+            : `roll ${roll.toFixed(2)}  (${over ? 'roll-over: win when roll ≥ target' : 'roll-under: win when roll < target'})`;
       } else if (game === 'limbo') {
         const result = await limboResult(serverSeed, clientSeed, nonceNum, LIMBO.HOUSE_EDGE);
         const t = target.trim() ? Math.floor(Number(target) * 100) / 100 : null;
@@ -159,6 +183,29 @@ export function VerifierForm() {
         const mult = payouts[bin] ?? 0;
         const dirs = path.map((d) => (d ? 'R' : 'L')).join('');
         output = `bin ${bin} / ${r}  →  ${mult}×\npath ${dirs}`;
+      } else if (game === 'mines') {
+        const m = parseInt(mineCount, 10);
+        if (!Number.isInteger(m) || m < MINES.MIN_MINES || m > MINES.MAX_MINES) {
+          throw new Error(`Mine count must be in [${MINES.MIN_MINES}, ${MINES.MAX_MINES}]`);
+        }
+        const field = await mineField(serverSeed, clientSeed, nonceNum, MINES.CELLS, m);
+        output = `mines at cells ${field.join(', ')}  (5×5 board, cells 0–24 left-to-right, top-to-bottom)`;
+      } else if (game === 'hilo') {
+        const seq = await hiloSequence(serverSeed, clientSeed, nonceNum, HILO.MAX_STEPS + 1);
+        const cards = seq.map((c) => `${HILO_RANKS[c % 13]}${HILO_SUITS[Math.floor(c / 13)]}`);
+        output = `committed sequence (base card first):\n${cards.join('  ')}`;
+      } else if (game === 'tower') {
+        const traps = await towerTraps(
+          serverSeed,
+          clientSeed,
+          nonceNum,
+          TOWER.ROWS,
+          TOWER.COLUMNS,
+          TOWER.SAFE_PER_ROW,
+        );
+        output = traps
+          .map((cols, r2) => `row ${r2 + 1}: trap at column ${cols.map((c) => c + 1).join(', ')}`)
+          .join('\n');
       } else {
         output = await verifyBlackjack(serverSeed, clientSeed, nonceNum, dealLog);
       }
@@ -252,11 +299,47 @@ export function VerifierForm() {
           </p>
         </div>
       )}
+      {game === 'mines' && (
+        <TextField
+          label={`Mine count (your round's setting, [${MINES.MIN_MINES}, ${MINES.MAX_MINES}])`}
+          value={mineCount}
+          onChange={setMineCount}
+          placeholder="e.g. 3"
+          mono
+        />
+      )}
+      {game === 'dice' && (
+        <div>
+          <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">
+            Win rule (your bet&apos;s mode)
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {DICE.MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setDiceMode(m);
+                  setResult(null);
+                }}
+                className={cn(
+                  'py-2 rounded-lg border text-sm font-semibold capitalize transition-colors',
+                  diceMode === m
+                    ? 'border-primary-400 bg-primary-400/10 text-primary-400'
+                    : 'border-border bg-surface-elevated text-foreground-muted hover:border-primary-400/30',
+                )}
+              >
+                Roll {m}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {(game === 'dice' || game === 'limbo') && (
         <TextField
           label={
             game === 'dice'
-              ? `Roll-under target (optional — your bet's target, [${DICE.MIN_TARGET}, ${DICE.MAX_TARGET}])`
+              ? `Roll-${diceMode} target (optional — your bet's target, [${DICE.MIN_TARGET}, ${DICE.MAX_TARGET}])`
               : `Target multiplier (optional — your bet's target, [${LIMBO.MIN_TARGET}, ${LIMBO.MAX_TARGET}])`
           }
           value={target}

@@ -29,6 +29,9 @@ export function LimboGame() {
   const [target, setTarget] = useState('2.00');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
+  // Celebration gate: WinEffect only sees the result once the count-up locks,
+  // so color/sound/confetti land together at the reveal — not at settle time.
+  const [revealedBetId, setRevealedBetId] = useState<string | null>(null);
 
   const targetNum = Number(target) || LIMBO.MIN_TARGET;
   const winChance = Math.min(100, (1 / targetNum) * (1 - LIMBO.HOUSE_EDGE) * 100);
@@ -61,17 +64,18 @@ export function LimboGame() {
         <LimboReadout
           result={result}
           won={last?.won ?? null}
-          target={last ? targetNum : null}
+          target={last ? ((last.result?.target as number | undefined) ?? null) : null}
           betId={last?.betId ?? null}
           rolling={play.isPending}
           sound={sound}
+          onRevealed={setRevealedBetId}
         />
         <div className="grid grid-cols-3 gap-3">
           <Stat label="Target" value={`${targetNum.toFixed(2)}×`} />
           <Stat label="Payout" value={`${targetNum.toFixed(2)}×`} />
           <Stat label="Win chance" value={`${winChance.toFixed(2)}%`} />
         </div>
-        <WinEffect last={last} sound={sound} />
+        <WinEffect last={last && last.betId === revealedBetId ? last : null} sound={sound} />
       </div>
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
@@ -147,6 +151,7 @@ function LimboReadout({
   betId,
   rolling,
   sound,
+  onRevealed,
 }: {
   result?: number;
   won: boolean | null;
@@ -154,6 +159,7 @@ function LimboReadout({
   betId: string | null;
   rolling: boolean;
   sound: ReturnType<typeof useGameSound>;
+  onRevealed: (betId: string) => void;
 }) {
   const reduce = useReducedMotion();
   const [display, setDisplay] = useState(1);
@@ -168,14 +174,16 @@ function LimboReadout({
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reduced-motion path: snap the display straight to the server's authoritative result. The effect otherwise drives a RAF count-up toward `result`; display/locked are animation state, not derivable during render.
       setDisplay(result);
       setLocked(true);
-      if (won) sound.win(result);
-      else sound.tick(220, 120, 0.04);
+      onRevealed(betId); // WinEffect owns the single win/lose cue
       return;
     }
     setLocked(false);
     // Rapid ease-out count UP from 1.00× to the server's result, then "lock".
+    // The soft riser tracks the climb; the win/lose cue itself belongs to
+    // WinEffect and fires via onRevealed exactly when the number locks.
     const start = performance.now();
     const duration = Math.min(1400, 500 + Math.log2(result + 1) * 220);
+    sound.rise(duration);
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - t, 3);
@@ -184,8 +192,7 @@ function LimboReadout({
         raf.current = requestAnimationFrame(tick);
       } else {
         setLocked(true);
-        if (won) sound.win(result);
-        else sound.tick(220, 120, 0.04);
+        onRevealed(betId);
       }
     };
     raf.current = requestAnimationFrame(tick);
@@ -195,7 +202,9 @@ function LimboReadout({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [betId]);
 
-  const color = won == null ? 'text-foreground' : won ? 'text-success' : 'text-danger';
+  // Neutral while climbing — the green/red verdict lands only at lock, in the
+  // same instant as the WinEffect panel, sound and confetti.
+  const color = !locked || won == null ? 'text-foreground' : won ? 'text-success' : 'text-danger';
   const bigWin = locked && won === true && (result ?? 0) >= 10;
 
   return (

@@ -39,6 +39,8 @@ export function PlinkoGame() {
   const [rows, setRows] = useState<Rows>(12);
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
+  // Result panel + sounds fire only when the ball actually lands in its bin.
+  const [settled, setSettled] = useState<InstantSettleResult | null>(null);
 
   const payouts = plinkoPayouts(rows) ?? [];
   const validBet = isValidBetSol(sol, PLINKO.MIN_BET_LAMPORTS);
@@ -70,8 +72,9 @@ export function PlinkoGame() {
           payouts={payouts}
           binColor={binColor}
           sound={sound}
+          onLanded={setSettled}
         />
-        <WinEffect last={last} sound={sound} />
+        <WinEffect last={settled} sound={sound} />
       </div>
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
@@ -148,12 +151,15 @@ function PlinkoBoard({
   payouts,
   binColor,
   sound,
+  onLanded,
 }: {
   rows: number;
   result: InstantSettleResult | null;
   payouts: number[];
   binColor: (m: number) => string;
   sound: ReturnType<typeof useGameSound>;
+  /** Fired when this result's ball reaches its bin — gates the celebration. */
+  onLanded?: (result: InstantSettleResult) => void;
 }) {
   const reduce = useReducedMotion();
   const [balls, setBalls] = useState<Ball[]>([]);
@@ -167,18 +173,26 @@ function PlinkoBoard({
   useEffect(() => {
     if (!result || result.betId === lastBetId.current) return;
     lastBetId.current = result.betId;
-    const path = (result.result?.path as ('L' | 'R')[] | undefined) ?? null;
+    // The fair engine emits the path as number[] of 0|1 — normalize to L/R
+    // (a string cast here used to make every ball drift down the far-left).
+    const raw = result.result?.path as (number | 'L' | 'R')[] | undefined;
+    const path = raw ? raw.map((d): 'L' | 'R' => (d === 1 || d === 'R' ? 'R' : 'L')) : null;
     const bin = result.result?.bin as number | undefined;
-    if (!path || typeof bin !== 'number') return;
+    if (!path || typeof bin !== 'number') {
+      onLanded?.(result); // malformed result must never swallow the payout reveal
+      return;
+    }
 
     const id = result.betId;
-    const hue = result.won ? '#10b981' : '#EE86FF';
+    // Neutral hue while falling — the outcome is revealed at landing, not mid-air.
+    const hue = '#EE86FF';
     // eslint-disable-next-line react-hooks/set-state-in-effect -- spawns a falling ball for each fresh server result; the effect then drives its RAF descent down the server's authoritative path. Ball/animation state, not derivable during render.
     setBalls((prev) => [...prev.slice(-5), { id, path, bin, hue }]);
 
     if (reduce) {
       setProgress((p) => ({ ...p, [id]: path.length }));
       setPulseBin({ bin, at: Date.now() });
+      onLanded?.(result);
       return;
     }
 
@@ -202,6 +216,7 @@ function PlinkoBoard({
         setProgress((p) => ({ ...p, [id]: path.length }));
         setPulseBin({ bin, at: Date.now() });
         sound.tick(640, 50, 0.05);
+        onLanded?.(result);
       }
     };
     rafs.current[id] = requestAnimationFrame(tick);
@@ -280,20 +295,23 @@ function PlinkoBoard({
           })}
         </div>
 
-        {/* Bins */}
-        <div className="mt-4 flex justify-center gap-1">
-          {payouts.map((m, i) => (
-            <div
-              key={i}
-              className={cn(
-                'flex-1 min-w-0 rounded-md py-1.5 text-center text-[9px] lg:text-[11px] font-bold tabular-nums transition-all',
-                binColor(m),
-                pulseActive === i ? 'ring-2 ring-success animate-bin-pulse' : 'opacity-80',
-              )}
-            >
-              {m}×
-            </div>
-          ))}
+        {/* Bins — horizontally scrollable on narrow screens so 17 labels at 16
+            rows never overlap into an unreadable smear */}
+        <div className="mt-4 overflow-x-auto pb-1">
+          <div className="flex gap-1 w-max min-w-full">
+            {payouts.map((m, i) => (
+              <div
+                key={i}
+                className={cn(
+                  'flex-1 min-w-[30px] rounded-md py-1.5 px-0.5 text-center text-[9px] lg:text-[11px] font-bold tabular-nums transition-all',
+                  binColor(m),
+                  pulseActive === i ? 'ring-2 ring-success animate-bin-pulse' : 'opacity-80',
+                )}
+              >
+                {m}×
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </Card>

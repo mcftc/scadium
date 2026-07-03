@@ -226,6 +226,33 @@ export function useGameSound() {
     noise.stop(now + 0.08);
   }, [ctx, noiseBurst]);
 
+  /**
+   * Low-gain riser for climb/reveal animations (limbo count-up): a soft
+   * triangle glide that stretches to the animation length. Clearly quieter and
+   * rounder than the sawtooth win() sweep so the two never read as the same cue.
+   */
+  const rise = useCallback(
+    (durationMs = 800) => {
+      const ac = ctx();
+      if (!ac) return;
+      const osc = ac.createOscillator();
+      const g = ac.createGain();
+      osc.type = 'triangle';
+      const now = ac.currentTime;
+      const dur = Math.min(2, Math.max(0.2, durationMs / 1000));
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(760, now + dur);
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(0.03, now + 0.03);
+      g.gain.setValueAtTime(0.03, now + dur * 0.7);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      osc.connect(g).connect(ac.destination);
+      osc.start(now);
+      osc.stop(now + dur + 0.02);
+    },
+    [ctx],
+  );
+
   /** Rising sweep on a win, scaled a touch by multiplier for "bigger = brighter". */
   const win = useCallback(
     (multiplier = 1) => {
@@ -248,7 +275,7 @@ export function useGameSound() {
     [ctx],
   );
 
-  return { enabled, toggle, tick, win, bet, cashout, lose, explosion, card };
+  return { enabled, toggle, tick, win, rise, bet, cashout, lose, explosion, card };
 }
 
 export type GameSound = ReturnType<typeof useGameSound>;

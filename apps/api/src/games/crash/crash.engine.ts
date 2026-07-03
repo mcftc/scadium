@@ -32,7 +32,7 @@ type Phase = 'waiting' | 'running' | 'busted';
 // has passed by the time the round starts running and its hash is readable.
 // Read live (not at module load) so it's togglable in tests / at runtime.
 const onchainEntropyOn = (): boolean => process.env.CRASH_ONCHAIN_ENTROPY === 'true';
-const CRASH_ENTROPY_SLOT_DELTA = 50; // ~20s at 400ms/slot
+const CRASH_ENTROPY_SLOT_DELTA = 35; // ~14s at 400ms/slot — must stay under BET_WINDOW_MS so the pinned slot has passed by beginRun()
 const CRASH_LOCK_KEY = 'lock:engine:crash';
 const CRASH_MIRROR_KEY = 'round:crash:current';
 const CRASH_LOCK_TTL_MS = 10_000;

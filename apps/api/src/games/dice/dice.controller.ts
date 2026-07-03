@@ -22,6 +22,7 @@ export class DiceController {
       userId: user.userId,
       amountLamports: BigInt(dto.amountLamports),
       target: dto.target,
+      mode: dto.mode ?? 'under',
     });
   }
 }

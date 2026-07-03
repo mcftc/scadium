@@ -6,6 +6,9 @@ import { coinflipResult } from './coinflip';
 import { blackjackDeal } from './blackjack';
 import { jackpotRoll, jackpotWinningTicket } from './jackpot';
 import { lotteryDraw, lotteryFinalEntropy, padClientSeed32 } from './lottery';
+import { mineField } from './mines';
+import { hiloSequence } from './hilo';
+import { towerTraps } from './tower';
 
 // Browser (WebCrypto) engine — the EXACT file shipped to the client verifier.
 // Runs here under Node's global WebCrypto (Node ≥ 19), so a divergence between
@@ -62,6 +65,19 @@ describe('cross-implementation parity (golden vectors)', () => {
         const draw = await browser.lotteryDraw(v.serverSeed, v.clientSeed, v.slotHashHex, v.nonce);
         expect(draw.digits).toEqual(v.lottery.digits);
         expect(draw.encoded).toBe(v.lottery.encoded);
+      });
+
+      // ---- stateful-game derivations agree bit-for-bit ---------------------
+      it('Node and browser agree on mines / hilo / tower derivations', async () => {
+        expect(await browser.mineField(v.serverSeed, v.clientSeed, v.nonce, 25, 3)).toEqual(
+          mineField(v.serverSeed, v.clientSeed, v.nonce, 25, 3),
+        );
+        expect(await browser.hiloSequence(v.serverSeed, v.clientSeed, v.nonce, 26)).toEqual(
+          hiloSequence(v.serverSeed, v.clientSeed, v.nonce, 26),
+        );
+        expect(await browser.towerTraps(v.serverSeed, v.clientSeed, v.nonce, 8, 3, 2)).toEqual(
+          towerTraps(v.serverSeed, v.clientSeed, v.nonce, 8, 3, 2),
+        );
       });
 
       // ---- ...therefore Node and browser agree bit-for-bit ----------------

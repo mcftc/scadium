@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
-import { DICE, diceMultiplier } from '@scadium/shared';
+import { DICE, diceMultiplier, type DiceMode } from '@scadium/shared';
 import { Card } from '@/components/ui/card';
 import {
   BetAmountInput,
@@ -22,16 +22,17 @@ import { cn } from '@/lib/cn';
 export function DiceGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
-  const play = useInstantGame<{ amountLamports: string; target: number }>('dice');
+  const play = useInstantGame<{ amountLamports: string; target: number; mode: DiceMode }>('dice');
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
   const [target, setTarget] = useState(50);
+  const [mode, setMode] = useState<DiceMode>('under');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
 
-  const winChance = target / 100;
-  const multiplier = diceMultiplier(target);
+  const winChance = (mode === 'over' ? 100 - target : target) / 100;
+  const multiplier = diceMultiplier(target, mode);
   const validBet = isValidBetSol(sol, DICE.MIN_BET_LAMPORTS);
 
   async function onPlace() {
@@ -45,6 +46,7 @@ export function DiceGame() {
       const res = await play.mutateAsync({
         amountLamports: solToLamportsClamped(sol, DICE.MIN_BET_LAMPORTS, DICE.MAX_BET_LAMPORTS),
         target,
+        mode,
       });
       setLast(res);
     } catch (e) {
@@ -61,6 +63,7 @@ export function DiceGame() {
         <DiceTrack
           target={target}
           setTarget={setTarget}
+          mode={mode}
           roll={roll}
           won={last?.won ?? null}
           betId={last?.betId ?? null}
@@ -69,7 +72,7 @@ export function DiceGame() {
         />
         <div className="grid grid-cols-3 gap-3">
           <Stat label="Multiplier" value={`${multiplier.toFixed(2)}×`} />
-          <Stat label="Roll under" value={target.toFixed(0)} />
+          <Stat label={mode === 'over' ? 'Roll over' : 'Roll under'} value={target.toFixed(0)} />
           <Stat label="Win chance" value={`${(winChance * 100).toFixed(2)}%`} />
         </div>
         <WinEffect last={last} sound={sound} />
@@ -87,8 +90,26 @@ export function DiceGame() {
           />
 
           <div>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-elevated p-1 mb-3">
+              {DICE.MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  disabled={play.isPending}
+                  className={cn(
+                    'h-8 rounded-md text-xs font-bold uppercase tracking-wider transition-colors',
+                    mode === m
+                      ? 'bg-primary-500/30 text-foreground'
+                      : 'text-foreground-muted hover:text-foreground',
+                  )}
+                >
+                  Roll {m}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center justify-between text-xs uppercase tracking-wider text-foreground-muted mb-2">
-              <span>Roll under</span>
+              <span>{mode === 'over' ? 'Roll over' : 'Roll under'}</span>
               <span className="font-mono text-foreground">{target}</span>
             </div>
             <input
@@ -124,10 +145,11 @@ export function DiceGame() {
   );
 }
 
-/** Number line with the roll-under threshold marker + the landed roll pin. */
+/** Number line with the roll threshold marker + the landed roll pin. */
 function DiceTrack({
   target,
   setTarget,
+  mode,
   roll,
   won,
   betId,
@@ -136,6 +158,7 @@ function DiceTrack({
 }: {
   target: number;
   setTarget: (n: number) => void;
+  mode: DiceMode;
   roll?: number;
   won: boolean | null;
   betId: string | null;
@@ -178,14 +201,21 @@ function DiceTrack({
   return (
     <Card className="p-10 lg:p-20">
       <div className="relative h-40 lg:h-56">
-        {/* Track */}
+        {/* Track — the win zone (green) sits below the target for roll-under,
+            above it for roll-over */}
         <div className="absolute top-1/2 left-0 right-0 h-5 lg:h-6 -translate-y-1/2 rounded-full overflow-hidden bg-surface-elevated">
           <div
-            className="absolute inset-y-0 left-0 bg-success/70"
+            className={cn(
+              'absolute inset-y-0 left-0',
+              mode === 'under' ? 'bg-success/70' : 'bg-danger/40',
+            )}
             style={{ width: `${target}%` }}
           />
           <div
-            className="absolute inset-y-0 right-0 bg-danger/40"
+            className={cn(
+              'absolute inset-y-0 right-0',
+              mode === 'under' ? 'bg-danger/40' : 'bg-success/70',
+            )}
             style={{ width: `${100 - target}%` }}
           />
         </div>
@@ -234,7 +264,7 @@ function DiceTrack({
         value={target}
         onChange={(e) => setTarget(Number(e.target.value))}
         className="mt-6 w-full accent-primary-400 lg:hidden"
-        aria-label="Roll-under target"
+        aria-label={mode === 'over' ? 'Roll-over target' : 'Roll-under target'}
       />
     </Card>
   );

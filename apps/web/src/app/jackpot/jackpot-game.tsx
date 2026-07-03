@@ -68,11 +68,8 @@ export function JackpotGame() {
       });
     };
     socket.on('jackpot:result', onResult);
-    const logAny = (event: string) => console.debug('[jp socket]', event);
-    socket.onAny(logAny);
     return () => {
       socket.off('jackpot:result', onResult);
-      socket.offAny(logAny);
     };
   }, [socket]);
   const clearReveal = useCallback(() => setReveal(null), []);

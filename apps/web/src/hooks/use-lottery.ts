@@ -158,7 +158,10 @@ export function useLottery() {
   const qc = useQueryClient();
 
   useEffect(() => {
-    api<LotterySnapshot>('/lottery/current').then(setSnap).catch(() => {});
+    // Mount seed only — never clobber state a socket event already set.
+    api<LotterySnapshot>('/lottery/current')
+      .then((s) => setSnap((prev) => prev ?? s))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
