@@ -30,7 +30,7 @@ const COLS = TOWER.COLUMNS;
 export function TowerGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
-  const { start, pick, cashout, active: activeQuery } = useTower();
+  const { start, pick, cashout, active: activeQuery, resetActive } = useTower();
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
@@ -118,8 +118,22 @@ export function TowerGame() {
         sound.tick(560 + res.state.currentRow * 55);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Pick failed');
+      handleRoundError(e, 'Pick failed');
     }
+  }
+
+  /**
+   * Self-heal a phantom round (409/404 — settled in another tab): drop the
+   * local round + cached active entry so the board returns to a fresh Start.
+   */
+  function handleRoundError(e: unknown, fallback: string) {
+    if (e instanceof ApiError && (e.status === 409 || e.status === 404)) {
+      setRound(null);
+      resetActive();
+      setError('That round already ended — start a new one.');
+      return;
+    }
+    setError(e instanceof ApiError ? e.message : fallback);
   }
 
   async function onCashout() {
@@ -131,7 +145,7 @@ export function TowerGame() {
       setRound(null);
       sound.cashout();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Cash out failed');
+      handleRoundError(e, 'Cash out failed');
     }
   }
 

@@ -31,7 +31,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export function MinesGame() {
   const { isAuthenticated } = useWalletAuth();
   const { open: openWallet } = useWalletModal();
-  const { start, pick, cashout, active: activeQuery } = useMines();
+  const { start, pick, cashout, active: activeQuery, resetActive } = useMines();
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
@@ -144,6 +144,9 @@ export function MinesGame() {
       for (const cell of tiles) {
         if (!autoRunningRef.current) return; // stopped — leave the round for manual play
         await sleep(350); // paces the reveal animation and stays under the bet throttle
+        // Re-check AFTER the delay: a Stop pressed during the sleep must cancel
+        // the pending reveal, or one more tile flips (and can bust) post-Stop.
+        if (!autoRunningRef.current) return;
         const r = await pick.mutateAsync({ roundId: res.roundId, cell });
         if (isMinesSettled(r)) {
           setSettle(r);
@@ -161,7 +164,7 @@ export function MinesGame() {
       setRound(null);
       sound.cashout();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Auto round failed');
+      handleRoundError(e, 'Auto round failed');
     } finally {
       setAutoRunning(false);
       autoRunningRef.current = false;
@@ -184,8 +187,24 @@ export function MinesGame() {
         sound.tick(560 + res.state.revealed.length * 45);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Pick failed');
+      handleRoundError(e, 'Pick failed');
     }
+  }
+
+  /**
+   * If a pick/cashout hits a round that no longer exists server-side (409/404 —
+   * e.g. this client hydrated a round that was settled in another tab), drop the
+   * phantom round and its cached active entry so the board returns to a fresh
+   * Start state instead of wedging on a Cashout button that can never succeed.
+   */
+  function handleRoundError(e: unknown, fallback: string) {
+    if (e instanceof ApiError && (e.status === 409 || e.status === 404)) {
+      setRound(null);
+      resetActive();
+      setError('That round already ended — start a new one.');
+      return;
+    }
+    setError(e instanceof ApiError ? e.message : fallback);
   }
 
   async function onCashout() {
@@ -197,7 +216,7 @@ export function MinesGame() {
       setRound(null);
       sound.cashout();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Cash out failed');
+      handleRoundError(e, 'Cash out failed');
     }
   }
 

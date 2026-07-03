@@ -40,6 +40,10 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   solRef.current = sol;
   const autoCashoutRef = useRef(autoCashout);
   autoCashoutRef.current = autoCashout;
+  // Guard against re-placing on the same round: the auto-bet effect re-runs when
+  // `busy` clears, but the server-pushed `myBet` can lag (or be lost on a socket
+  // reconnect), so the myBet guard alone can double-fire within one round.
+  const autoPlacedRoundRef = useRef<string | null>(null);
 
   // Default progressive-cashout % persists across sessions. Read reactively
   // (null on SSR → no hydration mismatch) and apply during render on its edge
@@ -72,19 +76,33 @@ export function CrashBetPanel({ state }: { state: CrashSnapshot | null }) {
   // be a dep: if the effect bails while a request is in flight, it has to
   // re-run when the request clears or that round is silently skipped.
   useEffect(() => {
-    if (!autoBet || phase !== 'waiting' || myBet || scheduled || busy) return;
+    // Skip an empty/invalid amount so an in-flight field edit can't fire a
+    // silent min-stake bet; and never place twice for the same roundId.
+    if (!autoBet || phase !== 'waiting' || myBet || scheduled || busy || !validBet) return;
+    const roundId = state?.roundId ?? null;
+    if (roundId && autoPlacedRoundRef.current === roundId) return;
     const t = setTimeout(() => {
       if (!autoBetRef.current) return;
-      void onPlace().catch(() => setAutoBet(false));
+      autoPlacedRoundRef.current = roundId;
+      void onPlace().catch(() => {
+        autoPlacedRoundRef.current = null; // let the next window retry after a failure
+        setAutoBet(false);
+      });
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoBet, phase, state?.roundId, myBet, scheduled, busy]);
+  }, [autoBet, phase, state?.roundId, myBet, scheduled, busy, validBet]);
 
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
+    }
+    // Defensive: never place a clamped min-stake bet from an empty/invalid field
+    // (the buttons gate on this, but the auto-bet path reaches onPlace directly).
+    if (!isValidBetSol(solRef.current, CRASH.MIN_BET_LAMPORTS)) {
+      setError('Enter a valid bet amount');
+      throw new Error('invalid bet amount');
     }
     setError(null);
     setBusy(true);

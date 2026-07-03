@@ -1,0 +1,546 @@
+{
+  "address": "3cPWLMPmbu9z5dKmAxXBqMsW3Uo1JYV9SMM4UR68HQCm",
+  "metadata": {
+    "name": "scadium_rng",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Scadium shared on-chain RNG: commit→reveal + SlotHashes entropy for ALL games"
+  },
+  "instructions": [
+    {
+      "name": "init_rng",
+      "docs": [
+        "One-time config: register the cosigner allowed to open/settle rounds."
+      ],
+      "discriminator": [
+        128,
+        10,
+        13,
+        125,
+        25,
+        105,
+        125,
+        91
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  110,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "cosigner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "open_round",
+      "docs": [
+        "Cosigner opens a round: publishes the seed commitment + bound game params,",
+        "and PINS a future slot whose hash will seed the reveal."
+      ],
+      "discriminator": [
+        66,
+        235,
+        123,
+        240,
+        8,
+        35,
+        185,
+        159
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  110,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true
+        },
+        {
+          "name": "cosigner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "game_type",
+          "type": "u8"
+        },
+        {
+          "name": "round_id",
+          "type": "u64"
+        },
+        {
+          "name": "server_seed_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "client_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "game_params_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "nonce",
+          "type": "u32"
+        },
+        {
+          "name": "target_slot",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "settle_round",
+      "docs": [
+        "Cosigner reveals the seed; the program re-derives `final_entropy` ITSELF",
+        "from the PINNED slot's hash so the cosigner cannot grind the outcome by",
+        "choosing when to reveal."
+      ],
+      "discriminator": [
+        40,
+        101,
+        18,
+        1,
+        31,
+        129,
+        52,
+        77
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  110,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true
+        },
+        {
+          "name": "cosigner",
+          "signer": true
+        },
+        {
+          "name": "slot_hashes",
+          "docs": [
+            "(the full sysvar is too large for Anchor's typed deserialization)."
+          ],
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "game_type",
+          "type": "u8"
+        },
+        {
+          "name": "round_id",
+          "type": "u64"
+        },
+        {
+          "name": "server_seed",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "RngConfig",
+      "discriminator": [
+        83,
+        214,
+        125,
+        102,
+        196,
+        170,
+        195,
+        136
+      ]
+    },
+    {
+      "name": "Round",
+      "discriminator": [
+        87,
+        127,
+        165,
+        51,
+        73,
+        78,
+        116,
+        174
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "RoundOpened",
+      "discriminator": [
+        99,
+        173,
+        228,
+        72,
+        142,
+        57,
+        109,
+        178
+      ]
+    },
+    {
+      "name": "RoundSettled",
+      "discriminator": [
+        249,
+        225,
+        66,
+        54,
+        157,
+        200,
+        234,
+        222
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotCosigner",
+      "msg": "Signer is not the registered cosigner"
+    },
+    {
+      "code": 6001,
+      "name": "WrongRound",
+      "msg": "Round id / game type mismatch"
+    },
+    {
+      "code": 6002,
+      "name": "RoundClosed",
+      "msg": "Round is not open"
+    },
+    {
+      "code": 6003,
+      "name": "SeedMismatch",
+      "msg": "Revealed seed does not match the commitment"
+    },
+    {
+      "code": 6004,
+      "name": "TargetSlotNotFuture",
+      "msg": "Pinned target slot must be in the future"
+    },
+    {
+      "code": 6005,
+      "name": "TargetSlotNotAvailable",
+      "msg": "SlotHashes entry for the pinned slot is unavailable"
+    }
+  ],
+  "types": [
+    {
+      "name": "RngConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "cosigner",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Round",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_type",
+            "type": "u8"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "server_seed_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "client_seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "game_params_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nonce",
+            "type": "u32"
+          },
+          {
+            "name": "target_slot",
+            "type": "u64"
+          },
+          {
+            "name": "revealed_seed",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "slot_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "final_entropy",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "RoundStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundOpened",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_type",
+            "type": "u8"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "server_seed_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "client_seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "game_params_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nonce",
+            "type": "u32"
+          },
+          {
+            "name": "target_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundSettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_type",
+            "type": "u8"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "server_seed_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "revealed_seed",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "slot_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "entropy",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Settled"
+          }
+        ]
+      }
+    }
+  ]
+}

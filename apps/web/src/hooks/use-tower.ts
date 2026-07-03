@@ -100,5 +100,8 @@ export function useTower() {
     onSuccess: settleSync,
   });
 
-  return { start, pick, cashout, active };
+  /** Drop the cached active round (used to self-heal a stale/phantom round). */
+  const resetActive = () => qc.setQueryData(['tower', 'active'], null);
+
+  return { start, pick, cashout, active, resetActive };
 }

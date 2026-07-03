@@ -103,5 +103,8 @@ export function useHilo() {
     onSuccess: settleSync,
   });
 
-  return { start, guess, cashout, active };
+  /** Drop the cached active round (used to self-heal a stale/phantom round). */
+  const resetActive = () => qc.setQueryData(['hilo', 'active'], null);
+
+  return { start, guess, cashout, active, resetActive };
 }

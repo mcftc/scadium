@@ -56,10 +56,17 @@ export function useCrash() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    // Seed from REST — but never clobber state a socket event already set
-    // (the fetch can resolve after round-start/bust frames).
+    // Seed from REST — but never clobber live phase/multiplier/bets a socket
+    // event already set. If a round-start frame won the race it created state
+    // with an empty history (the gateway sends nothing on connect), so still
+    // backfill the last-20 bust history from the REST snapshot.
     api<CrashSnapshot>('/crash/snapshot')
-      .then((snap) => setState((prev) => prev ?? snap))
+      .then((snap) =>
+        setState((prev) => {
+          if (!prev) return snap;
+          return prev.history?.length ? prev : { ...prev, history: snap.history };
+        }),
+      )
       .catch(() => {
         /* noop */
       });

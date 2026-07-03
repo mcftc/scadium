@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   crashPoint,
   coinflipResult,
@@ -63,11 +63,18 @@ export class FairnessService {
         return { game, result: this.coinflip(serverSeed, clientSeed, nonce) };
       case 'blackjack':
         return { game, result: this.blackjack(serverSeed, clientSeed, nonce, 10) };
-      case 'mines':
+      case 'mines': {
+        // The field is a prefix of one Fisher–Yates shuffle, so the wrong mine
+        // count silently returns a plausible-looking subset that won't match the
+        // round the player saw. Require the exact count rather than defaulting.
+        if (params.mines == null) {
+          throw new BadRequestException('mines is required to verify a mines round');
+        }
         return {
           game,
-          result: mineField(serverSeed, clientSeed, nonce, MINES.CELLS, params.mines ?? 3),
+          result: mineField(serverSeed, clientSeed, nonce, MINES.CELLS, params.mines),
         };
+      }
       case 'hilo':
         // Base card + one per possible guess — the full committed sequence.
         return {
