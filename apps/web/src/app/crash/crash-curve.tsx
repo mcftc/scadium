@@ -16,15 +16,19 @@ const WINDOW_S = CRASH.BET_WINDOW_MS / 1000;
 
 /**
  * Shared plot axis for the trail and the ruler. `progress` is the rocket's
- * flight fraction with a slow launch: p ≈ (m−1)/K near 1×, so the tip crawls
- * off the pad; because m−1 grows exponentially in time, on-screen velocity
- * accelerates with the multiplier, then eases out so the rocket parks
- * top-right at high m (the starfield + rescaling ruler carry the speed).
+ * flight fraction. A bare saturating exp `1−exp(−(m−1)/K)` is STEEPEST at m≈1,
+ * so the rocket bolts off the pad — the opposite of the wanted feel. We compose
+ * it with an ease-in (`LAUNCH_EASE`) so near 1× progress ≈ ((m−1)/K)^E ≈ 0: the
+ * rocket barely crawls at launch, visibly ACCELERATES through the mid
+ * multipliers (2–8×), then eases out to park top-right at high m (the starfield
+ * + rescaling ruler carry the remaining sense of speed).
  */
-const AXIS_RAMP = 3; // p = 28% @2x, 63% @4x, 86% @7x, 95% @10x
+const AXIS_RAMP = 3;
+const LAUNCH_EASE = 2; // ease-in on the flight fraction → slow launch, then accelerate
 function crashAxis(multiplier: number) {
   const m = Math.max(1.0001, multiplier);
-  const progress = 1 - Math.exp(-(m - 1) / AXIS_RAMP);
+  // progress ≈ 8% @2x, 40% @4x, 75% @7x, 90% @10x — flat launch, mid-flight accel.
+  const progress = Math.pow(1 - Math.exp(-(m - 1) / AXIS_RAMP), LAUNCH_EASE);
   const fxTip = 0.08 + 0.82 * progress; // tip x: 8% → 90% of plot width
   const fyTip = 0.15 + 0.72 * progress; // tip y: 15% → 87% of plot height
   return { m, progress, fxTip, fyTip, yMax: m / fyTip };
