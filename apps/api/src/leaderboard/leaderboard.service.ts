@@ -1,6 +1,31 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { RACE, racePrizeLamports } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { DEMO_BOT_IDS } from '../games/bots/demo-bots.const';
+import { withSerializable } from '../prisma/with-serializable';
+import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+import { dayPeriodStartMs } from '../queue/queue.constants';
+
+const DAY_MS = 86_400_000;
+const WINDOW_CACHE_MS = 30_000;
+const EXCLUDE_CACHE_MS = 60_000;
+
+/** UTC midnight of the day containing `ms`. */
+const startOfUtcDayMs = (ms: number): number => ms - (ms % DAY_MS);
+/** UTC Monday-00:00 of the ISO week containing `ms`. */
+const startOfIsoWeekMs = (ms: number): number => {
+  const dow = (new Date(ms).getUTCDay() + 6) % 7; // 0 = Monday … 6 = Sunday
+  return startOfUtcDayMs(ms) - dow * DAY_MS;
+};
+
+export interface WindowEntry {
+  rank: number;
+  userId: string;
+  username: string | null;
+  walletAddress: string;
+  volumeLamports: string;
+}
 
 // Demo bots (DEMO_BOTS=1) play every game with a huge balance; keep them off the
 // public leaderboards so they don't top every board.
@@ -15,6 +40,9 @@ const EXCLUDE_BOTS = { notIn: [...DEMO_BOT_IDS] };
 @Injectable()
 export class LeaderboardService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private windowCache = new Map<string, { rows: WindowEntry[]; at: number }>();
+  private excludeCache: { ids: string[]; at: number } | null = null;
 
   async topByVolume(limit = 50) {
     const users = await this.prisma.user.findMany({
@@ -64,6 +92,149 @@ export class LeaderboardService {
       profitLamports: u.totalWon.toString(),
       gamesPlayed: u.gamesPlayed,
     }));
+  }
+
+  /** Bots + banned users — kept off every public board/race. Cached briefly. */
+  private async excludedUserIds(): Promise<string[]> {
+    const now = Date.now();
+    if (this.excludeCache && now - this.excludeCache.at < EXCLUDE_CACHE_MS) {
+      return this.excludeCache.ids;
+    }
+    const banned = await this.prisma.user.findMany({
+      where: { banned: true },
+      select: { id: true },
+    });
+    const ids = [...DEMO_BOT_IDS, ...banned.map((b) => b.id)];
+    this.excludeCache = { ids, at: now };
+    return ids;
+  }
+
+  /**
+   * Top wagerers by volume within a time window (the daily/weekly boards + the
+   * race read from here). Sums `amountLamports` over settled Bet rows in the
+   * window per user, excludes bots/banned, joins display fields. `end` is
+   * exclusive; omit it for an open-ended "since window start" board.
+   */
+  private async topByWindowVolume(
+    start: Date,
+    end: Date | undefined,
+    limit: number,
+  ): Promise<WindowEntry[]> {
+    const exclude = await this.excludedUserIds();
+    const grouped = await this.prisma.bet.groupBy({
+      by: ['userId'],
+      where: {
+        createdAt: end ? { gte: start, lt: end } : { gte: start },
+        status: { in: ['won', 'lost'] },
+        userId: { notIn: exclude },
+      },
+      _sum: { amountLamports: true },
+      orderBy: { _sum: { amountLamports: 'desc' } },
+      take: limit,
+    });
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: grouped.map((g) => g.userId) } },
+      select: { id: true, username: true, walletAddress: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return grouped.map((g, i) => {
+      const u = byId.get(g.userId);
+      return {
+        rank: i + 1,
+        userId: g.userId,
+        username: u?.username ?? null,
+        walletAddress: u?.walletAddress ?? '',
+        volumeLamports: (g._sum.amountLamports ?? BigInt(0)).toString(),
+      };
+    });
+  }
+
+  /** Daily (UTC day) or weekly (UTC ISO week) board by wagered volume. Cached. */
+  async windowedTop(
+    period: 'daily' | 'weekly',
+    limit: number = RACE.BOARD_SIZE,
+  ): Promise<WindowEntry[]> {
+    const key = `${period}:${limit}`;
+    const hit = this.windowCache.get(key);
+    if (hit && Date.now() - hit.at < WINDOW_CACHE_MS) return hit.rows;
+    const now = Date.now();
+    const start = period === 'daily' ? startOfUtcDayMs(now) : startOfIsoWeekMs(now);
+    const rows = await this.topByWindowVolume(new Date(start), undefined, limit);
+    this.windowCache.set(key, { rows, at: now });
+    return rows;
+  }
+
+  /**
+   * Live daily-race standings: today's top wagerers with the prize each rank
+   * would win from the fixed pool, plus the pool total and the UTC-midnight
+   * reset. Prizes are indicative until the day completes and `settleRace` pays.
+   */
+  async raceStandings(limit: number = RACE.BOARD_SIZE) {
+    const entries = await this.windowedTop('daily', limit);
+    return {
+      resetAt: startOfUtcDayMs(Date.now()) + DAY_MS,
+      poolLamports: BigInt(RACE.DAILY_POOL_LAMPORTS).toString(),
+      prizeRanks: RACE.PAYOUT_BPS.length,
+      entries: entries.map((e) => ({
+        ...e,
+        prizeLamports: racePrizeLamports(e.rank - 1).toString(),
+      })),
+    };
+  }
+
+  /**
+   * Settle a COMPLETED UTC day's race: pay each of the top wagerers their prize
+   * from the fixed pool into the play balance (ledgered). Idempotent — the
+   * `RaceResult` row create (unique on `[raceDay, userId]`) is the guarded claim
+   * BEFORE the credit, so a re-run (or a concurrent settle across replicas) pays
+   * each winner at most once. Only ranks within the payout curve earn.
+   */
+  async settleRace(raceDay: string): Promise<{ raceDay: string; paid: number; totalLamports: string }> {
+    if ((await this.prisma.raceResult.count({ where: { raceDay } })) > 0) {
+      return { raceDay, paid: 0, totalLamports: '0' }; // already settled (fast path)
+    }
+    const dayStart = dayPeriodStartMs(raceDay);
+    const winners = await this.topByWindowVolume(
+      new Date(dayStart),
+      new Date(dayStart + DAY_MS),
+      RACE.PAYOUT_BPS.length,
+    );
+    let paid = 0;
+    let total = BigInt(0);
+    for (const w of winners) {
+      const prize = racePrizeLamports(w.rank - 1);
+      if (prize <= BigInt(0)) continue;
+      const credited = await withSerializable(this.prisma, async (tx) => {
+        let rr: { id: string };
+        try {
+          rr = await tx.raceResult.create({
+            data: {
+              raceDay,
+              userId: w.userId,
+              rank: w.rank,
+              volumeLamports: BigInt(w.volumeLamports),
+              prizeLamports: prize,
+            },
+            select: { id: true },
+          });
+        } catch (e) {
+          // Already paid this user for this day (concurrent settle / re-run).
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return false;
+          throw e;
+        }
+        await applyBalanceDelta(tx, w.userId, prize, {
+          reason: 'race_prize',
+          refType: 'RaceResult',
+          refId: rr.id,
+        });
+        return true;
+      });
+      if (credited) {
+        paid += 1;
+        total += prize;
+      }
+    }
+    return { raceDay, paid, totalLamports: total.toString() };
   }
 
   /**

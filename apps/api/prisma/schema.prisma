@@ -1034,6 +1034,22 @@ model LeaderboardSnapshot {
   @@index([period, capturedAt, rank])
 }
 
+// Daily-race payout ledger (#roadmap-5). One row per (raceDay, winner); the
+// @@unique makes the settle idempotent — a re-run can't pay a user twice for the
+// same completed UTC day (the row create is the guarded claim before the credit).
+model RaceResult {
+  id             String   @id @default(uuid()) @db.Uuid
+  raceDay        String // UTC 'YYYYMMDD'
+  userId         String   @db.Uuid
+  rank           Int
+  volumeLamports BigInt
+  prizeLamports  BigInt
+  paidAt         DateTime @default(now())
+
+  @@unique([raceDay, userId])
+  @@index([raceDay, rank])
+}
+
 // Dead-letter record for a game settlement that exhausted its serializable
 // retries. The round is left non-terminal so a recovery worker (Phase H) can
 // re-settle it; payloadJson captures a JSON-safe summary (BigInts stringified)

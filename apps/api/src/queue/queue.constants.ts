@@ -56,6 +56,32 @@ export function lastCompletedHourPeriod(ms: number): string {
 /** 10-minute bucket index for the buy-and-burn cadence. */
 export const tenMinuteBucket = (ms: number): number => Math.floor(ms / 600_000);
 
+/** UTC day key `YYYYMMDD` for the day containing `ms` (daily-race period). */
+export function dayPeriod(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}`;
+}
+
+/**
+ * UTC `YYYYMMDD` key of the most recently COMPLETED day at `ms`. The daily-race
+ * settle MUST target this (not `dayPeriod(now)`) so it pays a whole, finished
+ * day whose Bet rows are fixed — the standings can't shift mid-settle.
+ */
+export function lastCompletedDayPeriod(ms: number): string {
+  const startOfCurrentDay = ms - (ms % 86_400_000);
+  return dayPeriod(startOfCurrentDay - 1);
+}
+
+/** Parse a `YYYYMMDD` day key back to the ms of its UTC midnight. */
+export function dayPeriodStartMs(period: string): number {
+  return Date.UTC(
+    Number(period.slice(0, 4)),
+    Number(period.slice(4, 6)) - 1,
+    Number(period.slice(6, 8)),
+  );
+}
+
 // ---- jobId builders (one per repeatable job) -------------------------------
 
 export const airdropDistributeJobId = (period: string): string => `airdrop:distribute:${period}`;
@@ -66,3 +92,4 @@ export const reconcileJobId = (bucketTs: number): string => `reconcile:${bucketT
 export const distributionRoundJobId = (period: string): string => `distribution:${period}`;
 export const vaultAccrualJobId = (period: string): string => `vault-accrual:${period}`;
 export const blockMiningJobId = (period: string): string => `block-mining:${period}`;
+export const raceSettleJobId = (dayPeriodKey: string): string => `race-settle:${dayPeriodKey}`;

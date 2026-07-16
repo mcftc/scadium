@@ -16,6 +16,7 @@ import {
   queueConnection,
   withRedisLock,
   QUEUE_NAMES,
+  lastCompletedDayPeriod,
 } from '@scadium/api';
 
 /**
@@ -65,7 +66,20 @@ async function bootstrap(): Promise<void> {
       },
       { connection },
     ),
-    new Worker(QUEUE_NAMES.leaderboard, async () => leaderboard.snapshot('hourly'), { connection }),
+    new Worker(
+      QUEUE_NAMES.leaderboard,
+      async () => {
+        await leaderboard.snapshot('hourly');
+        // Daily race: settle the last COMPLETED UTC day. Idempotent (the
+        // RaceResult unique guard pays each winner once) + Redis-locked so
+        // replicas don't duplicate the work; safe to run every hour — it pays
+        // once when the day first completes, then no-ops.
+        await withRedisLock(redis.client, 'lock:race-settle', 9 * 60_000, () =>
+          leaderboard.settleRace(lastCompletedDayPeriod(Date.now())),
+        );
+      },
+      { connection },
+    ),
     new Worker(
       QUEUE_NAMES.reconcile,
       // #30: the solvency monitor rides the reconcile cadence — gauge + alert

@@ -1,6 +1,6 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { parseLimit } from '../common/parse-limit';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { LeaderboardService } from './leaderboard.service';
 
 @ApiTags('leaderboard')
@@ -18,5 +18,23 @@ export class LeaderboardController {
   @ApiOperation({ summary: 'Top players by total profit' })
   topByProfit(@Query('limit') limit?: string) {
     return this.lb.topByProfit(parseLimit(limit, 50, 100));
+  }
+
+  @Get('window')
+  @ApiOperation({ summary: 'Windowed board by wagered volume (today / this week)' })
+  @ApiQuery({ name: 'period', enum: ['daily', 'weekly'], required: true })
+  @ApiQuery({ name: 'limit', required: false })
+  windowedTop(@Query('period') period?: string, @Query('limit') limit?: string) {
+    if (period !== 'daily' && period !== 'weekly') {
+      throw new BadRequestException("period must be 'daily' or 'weekly'");
+    }
+    return this.lb.windowedTop(period, parseLimit(limit, 50, 100));
+  }
+
+  @Get('race')
+  @ApiOperation({ summary: 'Live daily-race standings, prize pool and UTC-midnight reset' })
+  @ApiQuery({ name: 'limit', required: false })
+  race(@Query('limit') limit?: string) {
+    return this.lb.raceStandings(parseLimit(limit, 50, 100));
   }
 }

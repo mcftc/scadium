@@ -1153,3 +1153,29 @@ export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
   jackpot: { rtp: '95%', note: '5% rake' },
   lottery: { rtp: 'Pari-mutuel', note: '20% burned' },
 };
+
+// ---------- Daily race + windowed leaderboards (#roadmap-5) ----------
+/**
+ * The daily race is a volume competition over the UTC day: the top wagerers
+ * split a fixed play-money prize pool, settled once the day completes. Windowed
+ * leaderboards (daily/weekly) rank by wagered volume in the window. Prizes are
+ * play-money SOL credited to the play balance (ledgered), mirroring the airdrop.
+ */
+export const RACE = {
+  /** Fixed daily prize pool (play-money lamports) split across the top ranks. */
+  DAILY_POOL_LAMPORTS: 50 * LAMPORTS_PER_SOL,
+  /**
+   * Prize weights for ranks 1..N in basis points of the pool (must sum to
+   * ≤ 10000). Length = number of paid positions; ranks beyond it win nothing.
+   */
+  PAYOUT_BPS: [3000, 2000, 1400, 1000, 800, 600, 500, 300, 200, 200] as const,
+  /** How many entries the board/race returns. */
+  BOARD_SIZE: 100,
+} as const;
+
+/** Prize (lamports) for a 0-indexed rank in the daily race; 0n beyond the curve. */
+export function racePrizeLamports(rankIndex: number): bigint {
+  const bps = RACE.PAYOUT_BPS[rankIndex];
+  if (bps === undefined) return 0n;
+  return (BigInt(RACE.DAILY_POOL_LAMPORTS) * BigInt(bps)) / 10_000n;
+}

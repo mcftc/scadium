@@ -12,6 +12,7 @@ export {
   type QueueName,
   periodForHour,
   tenMinuteBucket,
+  lastCompletedDayPeriod,
   airdropDistributeJobId,
   burnJobId,
   leaderboardJobId,
