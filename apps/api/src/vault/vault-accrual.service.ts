@@ -9,7 +9,7 @@ import {
 } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
-import { periodForHour } from '../queue/queue.constants';
+import { lastCompletedHourPeriod } from '../queue/queue.constants';
 
 /**
  * SCAD Vault — hourly yield accrual (the Vault analogue of the Engine's
@@ -52,7 +52,7 @@ export class VaultAccrualService {
    * a settled round returns immediately.
    */
   async accrue(): Promise<{ period: string; poolCount: number; yieldScad: string }> {
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const noop = { period, poolCount: 0, yieldScad: '0' };
 
     const existing = await this.prisma.vaultAccrualRound.findUnique({ where: { period } });

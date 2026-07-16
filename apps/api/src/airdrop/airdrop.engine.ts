@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
-import { periodForHour } from '../queue/queue.constants';
+import { lastCompletedHourPeriod, periodForHour } from '../queue/queue.constants';
 import { RgService } from '../responsible-gambling/rg.service';
 import { AirdropGateway } from './airdrop.gateway';
 
@@ -142,7 +142,7 @@ export class AirdropEngine implements OnModuleInit {
   ): Promise<{ participantCount: number; totalLamports: string }> {
     // The pool being distributed is the hour that JUST ended when fired by
     // the timer; when forced mid-hour it's the current one.
-    const period = this.periodFor(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const pool = await this.prisma.airdropPool.findUnique({ where: { period } });
     const result = { participantCount: 0, totalLamports: '0' };
 

@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { QueueService } from '../queue/queue.service';
-import { periodForHour } from '../queue/queue.constants';
+import { lastCompletedHourPeriod } from '../queue/queue.constants';
 import { AirdropEngine } from './airdrop.engine';
 
 /**
@@ -62,7 +62,7 @@ export class AirdropService {
     // keyed on the hour being distributed, so a concurrent timer-fire collapses
     // into this one job; `userId` flows through so the worker writes the
     // `forced_airdrop` audit row in the same payout transaction.
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     await this.queue.enqueueAirdropDistribute(period, userId);
     return { enqueued: true, period };
   }

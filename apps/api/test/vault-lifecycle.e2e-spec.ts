@@ -4,7 +4,7 @@ import { VAULT, lamportsToScadBase, vaultYieldSliceLamports } from '@scadium/sha
 import { VaultService } from '../src/vault/vault.service';
 import { VaultAccrualService } from '../src/vault/vault-accrual.service';
 import { ReconciliationService } from '../src/reconciliation/reconciliation.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -19,7 +19,7 @@ describe('SCAD Vault — lifecycle (V8)', () => {
   const reconcile = new ReconciliationService(prisma as never, { enabled: false } as never);
   const userIds: string[] = [];
 
-  const period = periodForHour(Date.now() - 60_000);
+  const period = lastCompletedHourPeriod(Date.now());
   const windowStart = new Date(
     Date.parse(
       `${period.slice(0, 4)}-${period.slice(4, 6)}-${period.slice(6, 8)}T${period.slice(8, 10)}:00:00Z`,

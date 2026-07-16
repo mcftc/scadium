@@ -3,7 +3,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { Queue, Worker } from 'bullmq';
 import { AirdropEngine } from '../src/airdrop/airdrop.engine';
 import { queueConnection } from '../src/queue/queue.connection';
-import { airdropDistributeJobId, periodForHour } from '../src/queue/queue.constants';
+import { airdropDistributeJobId, lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma, gw } from './engine-harness';
 
 /**
@@ -28,8 +28,8 @@ describe('airdrop distribute — enqueue twice, pay once (issue #11)', () => {
 
   it('pays the pool once across two duplicate-jobId enqueues', async () => {
     // The hour the engine will distribute = the one that just ended.
-    const period = periodForHour(Date.now() - 60_000);
-    const hourStart = new Date(Math.floor((Date.now() - 60_000) / 3_600_000) * 3_600_000);
+    const period = lastCompletedHourPeriod(Date.now());
+    const hourStart = new Date((Math.floor(Date.now() / 3_600_000) * 3_600_000 - 3_600_000));
     const inHour = new Date(hourStart.getTime() + 5 * 60_000);
 
     // Fresh, undistributed pool for that hour.

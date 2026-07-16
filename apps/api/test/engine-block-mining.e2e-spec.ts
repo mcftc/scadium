@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { BlockMiningService } from '../src/engine/block-mining.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -37,7 +37,7 @@ describe('Engine v2 block mining (integration, real Postgres)', () => {
         amountLamports: wager,
         payoutLamports: 0n,
         status: 'lost',
-        createdAt: new Date(Date.now() - 60_000),
+        createdAt: new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 30 * 60_000),
       },
     });
     return u.id;
@@ -46,7 +46,7 @@ describe('Engine v2 block mining (integration, real Postgres)', () => {
   it('splits the block reward by play-rate and credits $SCAD; re-run is idempotent', async () => {
     // A prior local run (same hour) may have already settled this period's block;
     // clear it so we mine fresh. CI runs on a clean DB so this is a no-op there.
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const stale = await prisma.engineBlock.findUnique({ where: { period } });
     if (stale) {
       await prisma.engineBlockShare.deleteMany({ where: { blockId: stale.id } });

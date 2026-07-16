@@ -39,6 +39,20 @@ export function periodForHour(ms: number): string {
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}`;
 }
 
+/**
+ * UTC `YYYYMMDDHH` key of the most recently COMPLETED clock hour at `ms`.
+ *
+ * Hourly settle jobs (airdrop pool, staker dividends, block mining, vault
+ * accrual) MUST target this, not `periodForHour(now)` — the worker fires them
+ * every ~5 minutes, so settling the in-progress hour would lock in only the
+ * first minutes of NGR/play-rate and, for the airdrop, reject the rest of the
+ * hour's tips (#H11). At 10:05 → the 09:00 hour; exactly at 10:00:00 → 09:00.
+ */
+export function lastCompletedHourPeriod(ms: number): string {
+  const startOfCurrentHour = ms - (ms % 3_600_000);
+  return periodForHour(startOfCurrentHour - 1);
+}
+
 /** 10-minute bucket index for the buy-and-burn cadence. */
 export const tenMinuteBucket = (ms: number): number => Math.floor(ms / 600_000);
 

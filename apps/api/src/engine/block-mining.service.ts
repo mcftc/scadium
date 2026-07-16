@@ -14,7 +14,7 @@ import {
 import { sha256, jackpotWinningTicket, weightedWinnerIndex } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
-import { periodForHour } from '../queue/queue.constants';
+import { lastCompletedHourPeriod, periodForHour } from '../queue/queue.constants';
 
 const EMISSION_SINGLETON_ID = 'singleton';
 
@@ -53,7 +53,7 @@ export class BlockMiningService {
    * immediately.
    */
   async mineBlock(): Promise<{ period: string; rewardScad: string; participantCount: number }> {
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const noop = { period, rewardScad: '0', participantCount: 0 };
 
     const existing = await this.prisma.engineBlock.findUnique({ where: { period } });

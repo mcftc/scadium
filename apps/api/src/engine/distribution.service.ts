@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ENGINE, dividendPoolUsdsBase } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
-import { periodForHour } from '../queue/queue.constants';
+import { lastCompletedHourPeriod } from '../queue/queue.constants';
 
 /**
  * SCAD Engine — hourly GGR dividend distribution (bc.game's "distribution
@@ -41,7 +41,7 @@ export class DistributionService {
    * returns immediately.
    */
   async distribute(): Promise<{ period: string; participantCount: number; poolUsds: string }> {
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const noop = { period, participantCount: 0, poolUsds: '0' };
 
     // One round row per hour; if it's already settled, stop.

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { stakePlayRate } from '@scadium/shared';
 import { BlockMiningService } from '../src/engine/block-mining.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -25,7 +25,7 @@ describe('Engine v2 staking as passive play-rate (integration, real Postgres)', 
   });
 
   it('a staker with no hourly wager still mines a block share from their stake', async () => {
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const stale = await prisma.engineBlock.findUnique({ where: { period } });
     if (stale) {
       await prisma.engineBlockShare.deleteMany({ where: { blockId: stale.id } });
@@ -54,7 +54,7 @@ describe('Engine v2 staking as passive play-rate (integration, real Postgres)', 
         amountLamports: 50n * E9,
         payoutLamports: 0n,
         status: 'lost',
-        createdAt: new Date(Date.now() - 60_000),
+        createdAt: new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 30 * 60_000),
       },
     });
 

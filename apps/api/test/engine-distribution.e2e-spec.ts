@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ENGINE } from '@scadium/shared';
 import { StakingService } from '../src/staking/staking.service';
 import { DistributionService } from '../src/engine/distribution.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -18,8 +18,8 @@ describe('SCAD Engine — stake, distribute, lock', () => {
   const staking = new StakingService(prisma as never, { enabled: false } as never);
   const distribution = new DistributionService(prisma as never);
 
-  const period = periodForHour(Date.now() - 60_000);
-  const hourStart = new Date(Math.floor((Date.now() - 60_000) / 3_600_000) * 3_600_000);
+  const period = lastCompletedHourPeriod(Date.now());
+  const hourStart = new Date((Math.floor(Date.now() / 3_600_000) * 3_600_000 - 3_600_000));
   let userId: string;
 
   beforeAll(async () => {

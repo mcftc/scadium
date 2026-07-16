@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { sha256 } from '@scadium/fair';
 import { ENGINE } from '@scadium/shared';
 import { BlockMiningService } from '../src/engine/block-mining.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -28,7 +28,7 @@ describe('Engine v2 big-reward draw (integration, real Postgres)', () => {
   });
 
   it('awards the big-reward slice to a weighted-random participant with a stored proof', async () => {
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const stale = await prisma.engineBlock.findUnique({ where: { period } });
     if (stale) {
       await prisma.engineBlockShare.deleteMany({ where: { blockId: stale.id } });
@@ -49,7 +49,7 @@ describe('Engine v2 big-reward draw (integration, real Postgres)', () => {
           amountLamports: wager,
           payoutLamports: 0n,
           status: 'lost',
-          createdAt: new Date(Date.now() - 60_000),
+          createdAt: new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 30 * 60_000),
         },
       });
       ids.push(u.id);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { ENGINE } from '@scadium/shared';
 import { BlockMiningService } from '../src/engine/block-mining.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { prisma } from './engine-harness';
 
 /**
@@ -44,7 +44,7 @@ describe('Engine v2 read API (integration, real Postgres)', () => {
 
   it('state() reports halving era, emission, the current block reward, and the last block', async () => {
     // Mine a block so there is emission + a settled block to report.
-    const period = periodForHour(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     const stale = await prisma.engineBlock.findUnique({ where: { period } });
     if (stale) {
       await prisma.engineBlockShare.deleteMany({ where: { blockId: stale.id } });

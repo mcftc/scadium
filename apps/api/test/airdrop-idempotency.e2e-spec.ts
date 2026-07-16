@@ -4,7 +4,7 @@ import { prisma, TEST_DB_URL } from './engine-harness';
 import { AirdropEngine } from '../src/airdrop/airdrop.engine';
 import type { AirdropGateway } from '../src/airdrop/airdrop.gateway';
 import type { RgService } from '../src/responsible-gambling/rg.service';
-import { periodForHour } from '../src/queue/queue.constants';
+import { lastCompletedHourPeriod, periodForHour } from '../src/queue/queue.constants';
 
 /**
  * #216 — `AirdropEngine.distribute()` checked `pool.distributed` BEFORE the tx and
@@ -37,7 +37,7 @@ describe('airdrop distribute idempotency — #216', () => {
   });
 
   // distribute() settles the hour that JUST ended (Date.now() - 60s).
-  const endedPeriod = () => periodForHour(Date.now() - 60_000);
+  const endedPeriod = () => lastCompletedHourPeriod(Date.now());
   const nextPeriod = () => periodForHour(Date.now() + 3_600_000 - 60_000);
 
   it('a no-eligible pool rolls over EXACTLY once, even called twice / concurrently', async () => {
