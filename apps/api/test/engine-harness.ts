@@ -30,6 +30,9 @@ export const offChain = { enabled: false, lotteryEnabled: false } as never;
 /** No-op proof-of-wager stub: settlement specs don't assert $SCAD accrual, so the
  *  engines' `proofOfWager.accrue()` call is a harmless no-op here. */
 export const pow = () => ({ accrue: async () => 0n }) as never;
+/** No-op affiliates stub: settlement specs don't assert referral commission, so
+ *  the engines' `creditReferral()` call is a harmless no-op here (#47). */
+export const affiliatesStub = () => ({ creditReferral: async () => undefined }) as never;
 
 /** A user with a known play balance + globally-unique wallet/refCode (no resetDb). */
 export async function makeUser(balance: bigint) {
@@ -68,7 +71,9 @@ export const realPow = () => new ProofOfWagerService(prisma as never);
  *  actually mints $SCAD + ledgers it). */
 export const makeCrashEngineWithPow = () =>
   new CrashEngine(prisma as never, gw(), offChain, realPow());
-export const makeJackpotEngine = () => new JackpotEngine(prisma as never, gw(), offChain, pow());
-export const makeLotteryEngine = () => new LotteryEngine(prisma as never, gw(), offChain, pow());
+export const makeJackpotEngine = () =>
+  new JackpotEngine(prisma as never, gw(), offChain, pow(), affiliatesStub());
+export const makeLotteryEngine = () =>
+  new LotteryEngine(prisma as never, gw(), offChain, pow(), affiliatesStub());
 export const makeBlackjackEngine = () =>
-  new BlackjackEngine(prisma as never, gw(), offChain, pow());
+  new BlackjackEngine(prisma as never, gw(), offChain, pow(), affiliatesStub());

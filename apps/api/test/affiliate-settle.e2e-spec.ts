@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { prisma } from './engine-harness';
+import { prisma, realPow } from './engine-harness';
 import { AffiliatesService } from '../src/affiliates/affiliates.service';
+import { DiceService } from '../src/games/dice/dice.service';
+import { SeedManagerService } from '../src/fairness/seed-manager.service';
 
 const SOL = 1_000_000_000n;
 const aff = new AffiliatesService(prisma as never);
@@ -44,5 +46,33 @@ describe('affiliate write-path (#47, integration, real Postgres)', () => {
     const u = await mkUser({});
     await aff.creditReferral(prisma as never, u.id, 5n * SOL);
     expect(await prisma.referral.findUnique({ where: { refereeId: u.id } })).toBeNull();
+  });
+
+  // #47 coverage — the money bug was that only crash + coinflip credited
+  // referrers; the other 10 games earned the referrer nothing. Drive a REAL
+  // dice play (the shared instant-settle path used by dice/limbo/wheel/plinko)
+  // and assert the referrer is now credited end-to-end.
+  it('a referred player’s dice bet credits the referrer through settlement', async () => {
+    const referrer = await mkUser({ signupIpHash: 'ip-ref' });
+    const referee = await mkUser({ referredById: referrer.id, signupIpHash: 'ip-ee' });
+    await prisma.user.update({
+      where: { id: referee.id },
+      data: { playBalanceLamports: SOL },
+    });
+
+    const dice = new DiceService(
+      prisma as never,
+      new SeedManagerService(prisma as never),
+      { assertCanWager: async () => undefined } as never,
+      realPow(),
+      aff,
+    );
+    const stake = SOL / 10n; // 0.1 SOL
+    await dice.play({ userId: referee.id, amountLamports: stake, target: 50, mode: 'under' });
+
+    const row = await prisma.referral.findUniqueOrThrow({ where: { refereeId: referee.id } });
+    expect(row.referrerId).toBe(referrer.id);
+    expect(row.volumeLamports).toBe(stake);
+    expect(row.commissionLamports).toBe((stake * 5n) / 100n); // tier 0 = 5%
   });
 });

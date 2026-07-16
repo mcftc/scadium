@@ -4,7 +4,7 @@ import { HILO, hiloStepMultiplier, type HiloDirection } from '@scadium/shared';
 import { SeedManagerService } from '../src/fairness/seed-manager.service';
 import { HiloService } from '../src/games/hilo/hilo.service';
 import { isSettled, type RoundState } from '../src/games/instant/stateful-round';
-import { prisma, makeUser, realPow } from './engine-harness';
+import { prisma, makeUser, realPow, affiliatesStub } from './engine-harness';
 
 /**
  * Hi-Lo backend spec (#287): full round lifecycle over real Postgres, driving
@@ -24,6 +24,7 @@ function buildService() {
     new SeedManagerService(prisma as never),
     { assertCanWager: async () => undefined } as never,
     realPow(),
+    affiliatesStub(),
   );
 }
 

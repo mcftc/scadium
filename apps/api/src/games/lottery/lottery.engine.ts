@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
@@ -107,6 +108,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     private readonly gateway: LotteryGateway,
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
+    private readonly affiliates: AffiliatesService,
     private readonly redis?: RedisService,
   ) {
     if (this.redis) {
@@ -684,6 +686,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
             gameType: 'lottery',
             stakeLamports: t.costLamports,
           });
+          // Affiliate commission on this ticket's wager, in-tx (#47 coverage).
+          await this.affiliates.creditReferral(tx, t.userId, t.costLamports);
           await tx.lotteryTicket.update({
             where: { id: t.id },
             data: {

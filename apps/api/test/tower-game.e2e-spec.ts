@@ -4,7 +4,7 @@ import { towerMultiplier, TOWER } from '@scadium/shared';
 import { SeedManagerService } from '../src/fairness/seed-manager.service';
 import { TowerService } from '../src/games/tower/tower.service';
 import { isSettled, type RoundState } from '../src/games/instant/stateful-round';
-import { prisma, makeUser, realPow } from './engine-harness';
+import { prisma, makeUser, realPow, affiliatesStub } from './engine-harness';
 
 /**
  * Tower backend spec (#286): full round lifecycle over real Postgres, driving
@@ -24,6 +24,7 @@ function buildService() {
     new SeedManagerService(prisma as never),
     { assertCanWager: async () => undefined } as never,
     realPow(),
+    affiliatesStub(),
   );
 }
 

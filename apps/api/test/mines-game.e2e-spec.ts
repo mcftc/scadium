@@ -4,7 +4,7 @@ import { minesMultiplier, MINES } from '@scadium/shared';
 import { SeedManagerService } from '../src/fairness/seed-manager.service';
 import { MinesService } from '../src/games/mines/mines.service';
 import { isSettled, type RoundState } from '../src/games/instant/stateful-round';
-import { prisma, makeUser, realPow } from './engine-harness';
+import { prisma, makeUser, realPow, affiliatesStub } from './engine-harness';
 
 /**
  * Mines backend spec (#285): full round lifecycle over real Postgres, driving
@@ -25,6 +25,7 @@ function buildService() {
     new SeedManagerService(prisma as never),
     { assertCanWager: async () => undefined } as never,
     realPow(),
+    affiliatesStub(),
   );
 }
 

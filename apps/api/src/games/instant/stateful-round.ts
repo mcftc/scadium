@@ -5,6 +5,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { SeedManagerService } from '../../fairness/seed-manager.service';
 import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import type { AffiliatesService } from '../../affiliates/affiliates.service';
 import type { OnchainRngService } from '../../solana/onchain-rng.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
@@ -29,6 +30,7 @@ export interface StatefulDeps {
   seeds: SeedManagerService;
   rg: RgService;
   proofOfWager: ProofOfWagerService;
+  affiliates: AffiliatesService;
   /**
    * Shared on-chain RNG driver. When live (scadium_rng deployed + cosigner), the
    * round's committed field (mine layout / card sequence / trap map) is anchored
@@ -311,6 +313,8 @@ export async function advanceStatefulRound(
     // Central Proof-of-Wager accrual (+ leaderboard) in this tx — the engine
     // coverage contract requires every game to call this.
     await deps.proofOfWager.accrue(tx, { userId, gameType, stakeLamports: stake });
+    // Affiliate commission on this wager, in-tx (#47 coverage).
+    await deps.affiliates.creditReferral(tx, userId, stake);
 
     const bet = await tx.bet.create({
       data: {

@@ -10,6 +10,7 @@ import { JACKPOT } from '@scadium/shared';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
@@ -79,6 +80,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     private readonly gateway: JackpotGateway,
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
+    private readonly affiliates: AffiliatesService,
     private readonly redis?: RedisService,
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live the winning ticket is anchored on the ONE scadium_rng program.
@@ -566,6 +568,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
             gameType: 'jackpot',
             stakeLamports: info.amount,
           });
+          // Affiliate commission on this entry's wager, in-tx (#47 coverage).
+          await this.affiliates.creditReferral(tx, userId, info.amount);
           // Credit the play balance through the single mutation point (ledger
           // row in this tx). Only the winner is credited; losers move nothing.
           if (credited > BigInt(0)) {

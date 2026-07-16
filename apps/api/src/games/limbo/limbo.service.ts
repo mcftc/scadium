@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SeedManagerService } from '../../fairness/seed-manager.service';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { settleInstantBet } from '../instant/instant-settle';
 import { OnchainRngService } from '../../solana/onchain-rng.service';
 
@@ -15,6 +16,7 @@ export class LimboService {
     private readonly seeds: SeedManagerService,
     private readonly rg: RgService,
     private readonly proofOfWager: ProofOfWagerService,
+    private readonly affiliates: AffiliatesService,
     // Optional so unit specs can construct the service without the chain layer;
     // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
     @Optional() private readonly onchainRng?: OnchainRngService,
@@ -39,6 +41,7 @@ export class LimboService {
         seeds: this.seeds,
         rg: this.rg,
         proofOfWager: this.proofOfWager,
+      affiliates: this.affiliates,
         onchainRng: this.onchainRng,
       },
       { userId, gameType: 'limbo', amountLamports, gameParams: { target: targetMult } },

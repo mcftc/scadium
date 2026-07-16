@@ -25,6 +25,7 @@ import {
 import { BLACKJACK, type Card } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ChainService } from '../../solana/chain.service';
@@ -130,6 +131,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     private readonly gateway: BlackjackGateway,
     private readonly chain: ChainService,
     private readonly proofOfWager: ProofOfWagerService,
+    private readonly affiliates: AffiliatesService,
     private readonly redis?: RedisService,
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live the round's deck is anchored on the ONE scadium_rng program.
@@ -1095,6 +1097,8 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
             gameType: 'blackjack',
             stakeLamports: d.stake,
           });
+          // Affiliate commission on this seat's wager, in-tx (#47 coverage).
+          await this.affiliates.creditReferral(tx, s.userId, d.stake);
           // Credit the play balance through the single mutation point (ledger
           // row in this tx). Skip a pure loss (payout 0) — no balance movement.
           if (d.payout > BigInt(0)) {

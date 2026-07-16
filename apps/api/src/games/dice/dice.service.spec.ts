@@ -30,7 +30,14 @@ function makeService() {
   } as never;
   const rg = { assertCanWager: vi.fn().mockResolvedValue(undefined) } as never;
   const proofOfWager = { accrue } as never;
-  return { svc: new DiceService(prisma, seeds, rg, proofOfWager), tx, accrue };
+  const creditReferral = vi.fn().mockResolvedValue(undefined);
+  const affiliates = { creditReferral } as never;
+  return {
+    svc: new DiceService(prisma, seeds, rg, proofOfWager, affiliates),
+    tx,
+    accrue,
+    creditReferral,
+  };
 }
 
 describe('DiceService.play (unit)', () => {

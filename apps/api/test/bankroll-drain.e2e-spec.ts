@@ -6,7 +6,7 @@ import { BlackjackEngine } from '../src/games/blackjack/blackjack.engine';
 import { ReconciliationService } from '../src/reconciliation/reconciliation.service';
 import { ExposureGuard } from '../src/common/exposure-guard';
 import { lowBankrollAlertsTotal } from '../src/observability/metrics.registry';
-import { prisma, gw, pow } from './engine-harness';
+import { prisma, gw, pow, affiliatesStub } from './engine-harness';
 
 /**
  * #30 bankroll-drain: with a NEAR-FLOOR house vault, a large-multiplier win
@@ -80,7 +80,7 @@ describe('bankroll drain guard (#30, near-floor house vault)', () => {
   });
 
   it('blackjack: an over-cap seat bet is rejected; clearing a bet releases its hold', async () => {
-    const engine = new BlackjackEngine(prisma as never, gw(), fundedChain(NEAR_FLOOR), pow());
+    const engine = new BlackjackEngine(prisma as never, gw(), fundedChain(NEAR_FLOOR), pow(), affiliatesStub());
     const exposure = new ExposureGuard(NEAR_FLOOR);
     const tableId = randomUUID();
     const userId = randomUUID();

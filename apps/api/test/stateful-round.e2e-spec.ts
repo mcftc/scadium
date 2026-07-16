@@ -88,6 +88,7 @@ describe('stateful-round helper (integration, real Postgres)', () => {
       // RG is gated elsewhere; the helper only needs the choke-point call to pass.
       rg: { assertCanWager: async () => undefined } as never,
       proofOfWager: realPow(),
+      affiliates: { creditReferral: async () => undefined } as never,
     };
   });
   afterAll(async () => {

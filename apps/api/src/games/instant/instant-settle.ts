@@ -5,6 +5,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { SeedManagerService } from '../../fairness/seed-manager.service';
 import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import type { AffiliatesService } from '../../affiliates/affiliates.service';
 import type { OnchainRngService } from '../../solana/onchain-rng.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
@@ -32,6 +33,7 @@ export interface InstantDeps {
   seeds: SeedManagerService;
   rg: RgService;
   proofOfWager: ProofOfWagerService;
+  affiliates: AffiliatesService;
   /**
    * Shared on-chain RNG driver. When present AND live (scadium_rng deployed +
    * cosigner), every instant bet is anchored on-chain: its seed/nonce is reserved
@@ -162,6 +164,9 @@ export async function settleInstantBet(
 
     // 5) Central Proof-of-Wager accrual (+ leaderboard) in this tx.
     await deps.proofOfWager.accrue(tx, { userId, gameType, stakeLamports: amountLamports });
+    // 5b) Affiliate commission: credit the bettor's referrer their tiered cut of
+    //     this wager, in the SAME tx so it's atomic + replay-safe (#47 coverage).
+    await deps.affiliates.creditReferral(tx, userId, amountLamports);
 
     // 6) Unified Bet row with full fairness context (seedId null — instant games
     //    use the rotating ClientSeed state, not a per-round Seed row).
