@@ -19,7 +19,7 @@ export function CrashHistory({
           <div
             key={h.roundId}
             className={cn(
-              'shrink-0 px-3 py-1 rounded-lg text-xs font-bold font-mono border',
+              'shrink-0 px-3 py-1 rounded-lg text-xs font-semibold font-display tabular-nums border',
               huge
                 ? 'bg-primary-400/20 border-primary-400/50 text-primary-400'
                 : big

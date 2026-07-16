@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Inter, Chakra_Petch } from 'next/font/google';
 import './globals.css';
 import { Providers } from '@/providers';
 import { AppShell } from '@/components/layout/app-shell';
@@ -7,6 +7,17 @@ import { AppShell } from '@/components/layout/app-shell';
 const inter = Inter({
   subsets: ['latin'],
   variable: '--font-geist-sans',
+  display: 'swap',
+});
+
+// Signature display face for hero numbers / game headings (crash multiplier,
+// leaderboards, big stats). Angular, techy, tabular figures — gives Scadium a
+// distinct crypto-gaming identity vs the generic body sans, and the tabular
+// numerals keep the animated crash multiplier from jittering as digits change.
+const chakra = Chakra_Petch({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-display',
   display: 'swap',
 });
 
@@ -48,7 +59,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${chakra.variable} dark`} suppressHydrationWarning>
       <body className="min-h-screen font-sans">
         <Providers>
           <AppShell>{children}</AppShell>

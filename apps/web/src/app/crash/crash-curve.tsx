@@ -167,7 +167,7 @@ export function CrashCurve({
                 key={Math.ceil(countdown)}
                 initial={{ scale: 1.4, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="text-8xl md:text-[10rem] font-black text-white/90 leading-none"
+                className="font-display text-8xl md:text-[10rem] font-bold text-white/90 leading-none tabular-nums"
                 style={{ textShadow: '0 0 60px rgba(168,85,247,0.5)' }}
               >
                 {Math.ceil(countdown)}
@@ -199,7 +199,7 @@ export function CrashCurve({
                 Current Payout
               </div>
               <motion.div
-                className="text-6xl md:text-8xl font-black leading-none tracking-tight"
+                className="font-display text-7xl md:text-[11rem] font-bold leading-none tracking-tight tabular-nums"
                 style={{
                   color: m > 2 ? '#9be9f5' : '#e8eaf0',
                   textShadow:
@@ -209,7 +209,8 @@ export function CrashCurve({
                 transition={{ duration: 0.15 }}
                 key={Math.floor(m * 10)}
               >
-                {m.toFixed(2)}x
+                {m.toFixed(2)}
+                <span className="text-4xl md:text-7xl text-current/60 font-medium">x</span>
               </motion.div>
               {/* My live profit (solpump green chip under the payout) */}
               {myProfitSol !== null && (
@@ -238,10 +239,11 @@ export function CrashCurve({
                 Busted at
               </div>
               <div
-                className="text-6xl md:text-8xl font-black text-red-500 leading-none tracking-tight"
+                className="font-display text-7xl md:text-[11rem] font-bold text-red-500 leading-none tracking-tight tabular-nums"
                 style={{ textShadow: '0 0 40px rgba(239,68,68,0.55)' }}
               >
-                {m.toFixed(2)}x
+                {m.toFixed(2)}
+                <span className="text-4xl md:text-7xl text-red-500/60 font-medium">x</span>
               </div>
             </motion.div>
           )}

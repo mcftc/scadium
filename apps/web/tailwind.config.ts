@@ -37,6 +37,8 @@ const config: Config = {
       fontFamily: {
         sans: ['var(--font-geist-sans)', 'Inter', 'system-ui', 'sans-serif'],
         mono: ['var(--font-geist-mono)', 'ui-monospace', 'monospace'],
+        // Signature display face for hero numbers + game headings (#crash-identity).
+        display: ['var(--font-display)', 'var(--font-geist-sans)', 'sans-serif'],
       },
       backgroundImage: {
         'gradient-primary': 'linear-gradient(135deg, #EE86FF 0%, #6F5FCC 100%)',
