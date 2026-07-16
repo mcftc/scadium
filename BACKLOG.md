@@ -52,6 +52,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 ## Tier 5 — Hygiene (low)
 
+- [ ] **Pre-existing (not this branch): `apps/web/src/components/chain/chain-copy.test.tsx` has 7 failing assertions**, latent because **CI never runs web vitest** (only Playwright `test:e2e`, `ci.yml:327`) — `pnpm test` (turbo) surfaces them. Two causes: (a) 4 AboutPage cases throw `ReferenceError: IntersectionObserver is not defined` (jsdom polyfill gap — `game-stage.tsx` uses it); a `vitest.setup` polyfill fixes those cleanly. (b) 3 cases (Footer "instant on-chain settlement", GamesGrid "every bet is on-chain", HeroSection "your SOL stays in your control") assert on-chain phrases that exist in **neither origin/main nor HEAD** — the #42 copy-gating test is out of sync with the actual copy. Fixing (b) is a product-copy decision (add the gated copy back vs update the test); it interacts with H17's honesty direction. Also worth wiring web vitest into CI so this can't rot again.
+
 - [~] Avatar `avatarUrl`: ✅ tightened validation — only base64 raster (png/jpeg/webp/gif) data URLs, http(s), or empty; SVG/script payloads rejected (stored-XSS); 120 KB cap kept. Test: `update-profile-avatar.spec.ts`. Move-to-bucket deferred to the Railway migration.
 - [x] List endpoints: ✅ shared `parseLimit()` helper (`common/parse-limit.ts`) applied to all 16 list-controller sites — NaN/blank→fallback, fractional truncated, clamped to [1,max]. Test: `parse-limit.spec.ts`.
 - [ ] BigInt-in-JSON: latent only (raw-BigInt methods have no callers) — wire serialization before exposing them.
