@@ -1129,3 +1129,27 @@ export const BLOCKED_COUNTRIES = ['US', 'GB', 'FR', 'DE', 'ES', 'NL'] as const;
 // The composite version a user accepts (ToS/AML/Privacy/Cookie). Bump this to
 // re-trigger the blocking legal-acceptance gate for everyone (#48).
 export const LEGAL_VERSION = '2026-06-15';
+
+// ---------- Published per-game RTP (UI transparency, #roadmap-2) ----------
+const rtpPct = (edge: number): string => `${Math.round((1 - edge) * 100)}%`;
+/**
+ * Return-to-player published on each game page + the landing grid — the SINGLE
+ * SOURCE so the marketing figure can never drift from the payout math (solpump's
+ * named trust failure). Edge-based games derive from their HOUSE_EDGE; blackjack
+ * RTP is emergent from the rule set (optimal basic strategy); lottery/jackpot are
+ * pari-mutuel (pooled prizes minus rake/burn — no per-bet RTP).
+ */
+export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
+  crash: { rtp: rtpPct(CRASH.HOUSE_EDGE) },
+  coinflip: { rtp: rtpPct(COINFLIP.HOUSE_EDGE) },
+  dice: { rtp: rtpPct(DICE.HOUSE_EDGE) },
+  limbo: { rtp: rtpPct(LIMBO.HOUSE_EDGE) },
+  wheel: { rtp: rtpPct(HOUSE_EDGE) },
+  plinko: { rtp: rtpPct(HOUSE_EDGE) },
+  mines: { rtp: rtpPct(MINES.HOUSE_EDGE) },
+  tower: { rtp: rtpPct(TOWER.HOUSE_EDGE) },
+  hilo: { rtp: rtpPct(HILO.HOUSE_EDGE) },
+  blackjack: { rtp: '99.5%', note: 'optimal basic strategy' },
+  jackpot: { rtp: '95%', note: '5% rake' },
+  lottery: { rtp: 'Pari-mutuel', note: '20% burned' },
+};

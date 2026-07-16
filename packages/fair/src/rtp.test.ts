@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  GAME_RTP,
   HOUSE_EDGE,
   RTP,
   COINFLIP,
@@ -78,5 +79,27 @@ describe('RTP standardization (95%)', () => {
       expect(ev, `rows=${rows}`).toBeLessThanOrEqual(RTP + 1e-9);
       expect(ev, `rows=${rows}`).toBeGreaterThan(RTP - 0.02);
     }
+  });
+});
+
+describe('GAME_RTP published figures (single source, #roadmap-2)', () => {
+  it('covers all 12 game types', () => {
+    const games = [
+      'crash', 'coinflip', 'blackjack', 'lottery', 'jackpot',
+      'dice', 'limbo', 'wheel', 'plinko', 'mines', 'tower', 'hilo',
+    ];
+    for (const g of games) expect(GAME_RTP[g], `GAME_RTP.${g}`).toBeDefined();
+  });
+
+  it('edge-based games publish exactly (1 - HOUSE_EDGE) — never overstated', () => {
+    expect(GAME_RTP.crash!.rtp).toBe('95%');
+    expect(GAME_RTP.coinflip!.rtp).toBe('95%');
+    expect(GAME_RTP.limbo!.rtp).toBe('95%');
+    expect(GAME_RTP.mines!.rtp).toBe('95%');
+    expect(GAME_RTP.tower!.rtp).toBe('95%');
+    expect(GAME_RTP.hilo!.rtp).toBe('95%');
+    expect(GAME_RTP.wheel!.rtp).toBe('95%');
+    expect(GAME_RTP.plinko!.rtp).toBe('95%');
+    expect(GAME_RTP.dice!.rtp).toBe('99%'); // deliberate 1% edge
   });
 });

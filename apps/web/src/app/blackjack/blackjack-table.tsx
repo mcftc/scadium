@@ -20,6 +20,7 @@ import { SoundToggle } from '@/components/instant/sound-toggle';
 import { ApiError } from '@/lib/api-client';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { HouseEdgeBadge } from '@/components/game/house-edge-badge';
 import { CardFace } from './card-face';
 
 const SEAT_POSITIONS: React.CSSProperties[] = [
@@ -123,6 +124,7 @@ export function BlackjackTable() {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            <HouseEdgeBadge game="blackjack" />
             <span className="text-xs font-bold text-foreground-muted">{state?.name ?? '…'}</span>
             <SoundToggle sound={sound} />
             <button

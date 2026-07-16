@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ShieldCheck, ExternalLink, Lock, Unlock } from 'lucide-react';
+import { GAME_RTP } from '@scadium/shared';
 import type { LotterySnapshot } from '@/hooks/use-lottery';
 
 /**
@@ -21,8 +22,18 @@ export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
       `&slotHash=${last.slotHash}`
     : '/fairness';
 
+  const rtp = GAME_RTP['lottery'];
+
   return (
     <div className="rounded-2xl border border-border bg-surface/60 p-4 space-y-3">
+      {rtp && (
+        <div className="flex items-center justify-between rounded-lg bg-background/40 px-2.5 py-1.5 text-[11px]">
+          <span className="uppercase tracking-wider text-foreground-muted">
+            Return to player{rtp.note ? ` · ${rtp.note}` : ''}
+          </span>
+          <span className="font-display tabular-nums font-semibold text-success">{rtp.rtp}</span>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h3 className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
           <ShieldCheck className="h-3.5 w-3.5 text-success" />

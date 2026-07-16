@@ -8,6 +8,7 @@ import { RecentFlipsList } from './recent-flips-list';
 import { FlipModal } from './flip-modal';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
+import { HouseEdgeBadge } from '@/components/game/house-edge-badge';
 import type { CoinflipGame } from '@/hooks/use-coinflip';
 
 export type FlipSort = 'price' | 'newest';
@@ -40,6 +41,9 @@ export function CoinflipLobby() {
               Pick a side and flip
             </p>
             <h1 className="text-3xl md:text-5xl font-black tracking-tight">COINFLIP</h1>
+            <div className="mt-2">
+              <HouseEdgeBadge game="coinflip" />
+            </div>
           </div>
           {isAuthenticated ? (
             <CreateFlipBar />
