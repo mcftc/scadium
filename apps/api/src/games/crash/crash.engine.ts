@@ -359,6 +359,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   async cashOut(
     userId: string,
     percent = 100,
+    atMultiplier?: number,
   ): Promise<{ payoutLamports: bigint; multiplier: number; remainingLamports: bigint }> {
     if (this.current.phase !== 'running') {
       throw new Error('Cash out only allowed while running');
@@ -370,14 +371,25 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       throw new Error('Already cashed out');
     }
 
-    const m = this.currentMultiplier();
-    if (m >= this.current.bustPoint) throw new Error('Too late — round already busting');
+    // An AUTO cashout settles at the player's COMMITTED target (`atMultiplier`,
+    // already validated < bustPoint by the caller): tick granularity or the
+    // per-bet DB awaits must never push the live multiplier past bust and void a
+    // win the player had already locked in. A MANUAL cashout uses the live
+    // multiplier and still races the bust — that's the player's own timing.
+    const live = this.currentMultiplier();
+    if (atMultiplier === undefined && live >= this.current.bustPoint) {
+      throw new Error('Too late — round already busting');
+    }
+    const m = atMultiplier ?? live;
 
     const portion =
       pct >= 100 ? bet.amountLamports : (bet.amountLamports * BigInt(pct)) / BigInt(100);
     if (portion <= BigInt(0)) throw new Error('Position too small to split');
 
-    const payout = (portion * BigInt(Math.floor(m * 100))) / BigInt(100);
+    // Round, not floor: `m` is a 2-decimal value (Number(x.toFixed(2))), so
+    // `m * 100` is an integer up to float error — flooring 202.9999… paid 2.02×
+    // for a 2.03× cashout. Round recovers the intended hundredths.
+    const payout = (portion * BigInt(Math.round(m * 100))) / BigInt(100);
     bet.amountLamports -= portion;
     bet.payoutLamports += payout;
     if (bet.amountLamports === BigInt(0)) bet.cashedOutAt = m; // fully out
@@ -614,10 +626,16 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         bet.cashedOutAt === null &&
         bet.amountLamports > BigInt(0) &&
         bet.autoCashout !== null &&
-        m >= bet.autoCashout
+        m >= bet.autoCashout &&
+        // Only a target strictly below the committed bust is a win; at/above it
+        // the round busts first (bust wins ties). This tick runs BEFORE the
+        // bust check, so even a tick that jumped straight past bust still pays
+        // every winning target here first.
+        bet.autoCashout < this.current.bustPoint
       ) {
         try {
-          await this.cashOut(bet.userId);
+          // Settle at the committed target, not the sampled/overshot `m`.
+          await this.cashOut(bet.userId, 100, bet.autoCashout);
         } catch (e) {
           this.logger.error(
             `crash auto-cashout failed for user ${bet.userId} @ ${m}x (round ${this.current.id}): ${
