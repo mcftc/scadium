@@ -456,15 +456,27 @@ export class CoinflipService {
         throw new BadRequestException('Only open flips can be cancelled');
       }
 
+      // Compare-and-swap the status open→cancelled so a cancel racing a join
+      // can never BOTH refund the creator and let the flip resolve. The read
+      // above is a non-locking snapshot; the guarded updateMany takes the row
+      // lock and re-checks status='open' after any concurrent join commits, so
+      // exactly one of {cancel, join} claims the open flip (mirrors join()'s CAS).
+      const claimed = await tx.coinflipGame.updateMany({
+        where: { id: game.id, status: 'open' },
+        data: { status: 'cancelled', resolvedAt: new Date() },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException('Only open flips can be cancelled');
+      }
+
       await applyBalanceDelta(tx, game.creatorId, game.amountLamports, {
         reason: 'refund',
         refType: 'CoinflipGame',
         refId: game.id,
       });
 
-      const cancelled = await tx.coinflipGame.update({
+      const cancelled = await tx.coinflipGame.findUniqueOrThrow({
         where: { id: game.id },
-        data: { status: 'cancelled', resolvedAt: new Date() },
         include: {
           creator: { select: { id: true, username: true, walletAddress: true } },
         },

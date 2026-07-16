@@ -66,3 +66,49 @@ describe('CoinflipService.join — status compare-and-swap (unit)', () => {
     expect(userUpdate).not.toHaveBeenCalled(); // no payout
   });
 });
+
+/**
+ * Unit guard for the cancel() compare-and-swap (H2). The flip is found OPEN
+ * (a non-locking snapshot) but the guarded CAS (`coinflipGame.updateMany`
+ * open→cancelled) claims ZERO rows — i.e. a concurrent join resolved the flip
+ * between cancel's read and its write. cancel() must reject and refund NOBODY.
+ * Pre-fix (unconditional `update` + refund before it) the creator was refunded
+ * even though the flip had already settled — money duplication — so this is red
+ * before / green after.
+ */
+describe('CoinflipService.cancel — status compare-and-swap (unit)', () => {
+  it('rejects when the CAS claims 0 rows and refunds nobody', async () => {
+    const userUpdateMany = vi.fn(); // applyBalanceDelta's guarded credit == the refund
+    const ledgerCreate = vi.fn();
+    const casUpdateMany = vi.fn().mockResolvedValue({ count: 0 }); // a join won the race
+
+    const tx = {
+      coinflipGame: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'g1',
+          creatorId: 'creator',
+          status: 'open',
+          amountLamports: 1_000_000n,
+        }),
+        updateMany: casUpdateMany,
+        findUniqueOrThrow: vi.fn(),
+        update: vi.fn(),
+      },
+      user: { updateMany: userUpdateMany, update: vi.fn() },
+      balanceLedger: { create: ledgerCreate },
+    };
+
+    const svc = makeService(tx);
+
+    await expect(svc.cancel({ userId: 'creator', gameId: 'g1' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(casUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'g1', status: 'open' },
+      data: expect.objectContaining({ status: 'cancelled' }),
+    });
+    expect(userUpdateMany).not.toHaveBeenCalled(); // no refund credit
+    expect(ledgerCreate).not.toHaveBeenCalled(); // no ledger movement
+  });
+});
