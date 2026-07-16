@@ -57,13 +57,13 @@ Scadium is already ahead of solpump.io on breadth and mechanics: 12 fully playab
 ## Now / Next / Later
 
 ### NOW — unblocked, high-impact
-- Fix affiliate creditReferral coverage across all 12 games + add an affiliates coverage guard spec (money bug, S)
-- Publish RTP/house-edge on every game page + ship per-game /fairness/<game> landing pages (S)
-- Off-chain value fallback: daily case and cashback credit scadiumBalance via applyBalanceDelta so rewards pay something real today (S)
+- ✅ **DONE** — Fix affiliate creditReferral coverage across all 12 games + add an affiliates coverage guard spec (money bug, S) — commits `5f438f2` + `d47d4f7`
+- ✅ **DONE** — Publish RTP/house-edge on every game page (S) — `GAME_RTP` single-source map derived from `HOUSE_EDGE`, surfaced on all 12 games, `rtp.test.ts` guard (commit `fc094cc`). (Per-game `/fairness/<game>` landing pages deferred — the shared `/fairness` verifier is deep-linked from each game.)
+- ✅ **DONE** — Add RecentRounds bet-history panel to dice/limbo/plinko/wheel (commit `1e948a1`)
+- [~] **IN PROGRESS** — Global live-bet / big-win feed: cross-game settlement broadcast + sitewide ticker (M)
+- Off-chain value fallback: daily case and cashback credit scadiumBalance via applyBalanceDelta so rewards pay something real today (S) — **owner tokenomics decision, see BACKLOG.md**
 - Regenerate the burned committed program keypairs (H10) — mandatory before any deploy, do it now (S)
-- Fix the audit-status CI gate ↔ BACKLOG.md process mismatch so security findings can actually trip the gate (S)
-- Add RecentRounds bet-history panel to dice/limbo/plinko/wheel (endpoint already exists) (S)
-- Start the global live-bet / big-win feed: cross-game settlement broadcast + sitewide ticker (M)
+- Fix the audit-status CI gate ↔ BACKLOG.md process mismatch so security findings can actually trip the gate (S) — **owner CI-contract decision, see BACKLOG.md**
 
 ### NEXT
 - Close all Tier 2 money-integrity blockers: C4/H13 reward-claim double-pay + idempotency, H5/H5a program-id assertion on event verification, H6–H8 lottery on-chain holes, H9 real-money gate coupling to mainnet custody, reward reserve/restore ledger rows
