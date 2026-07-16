@@ -53,4 +53,37 @@ describe('SeedManagerService (issue #91)', () => {
       Array.from({ length: 20 }, (_, i) => i + 1),
     ); // exactly 1..20
   });
+
+  /**
+   * C3 — rotation must NOT reveal the active server seed while a stateful round
+   * (mines/tower/hilo) is in progress: the round's secret layout is derived from
+   * that seed, so an early reveal + the already-public nonce/clientSeed lets the
+   * player reproduce the layout and finish for a guaranteed win.
+   */
+  it('refuses to rotate while a stateful round is active, then allows it once ended', async () => {
+    const u = await makeUser(0n);
+    const before = await svc.getOrCreateActivePair(u.id);
+    const round = await prisma.instantRound.create({
+      data: {
+        userId: u.id,
+        gameType: 'mines',
+        stakeLamports: 1_000n,
+        status: 'active',
+        serverSeedHash: before.serverSeedHash,
+        clientSeed: before.clientSeed,
+        nonce: 1,
+        stateJson: {},
+      },
+    });
+
+    // Active round → rotation is refused and the seed is unchanged.
+    await expect(svc.rotateServerSeed(u.id)).rejects.toThrow();
+    const still = await prisma.clientSeed.findUniqueOrThrow({ where: { userId: u.id } });
+    expect(commitServerSeed(still.serverSeed)).toBe(before.serverSeedHash);
+
+    // Once the round is terminal, rotation proceeds normally.
+    await prisma.instantRound.update({ where: { id: round.id }, data: { status: 'won' } });
+    const res = await svc.rotateServerSeed(u.id);
+    expect(commitServerSeed(res.revealedServerSeed)).toBe(before.serverSeedHash);
+  });
 });

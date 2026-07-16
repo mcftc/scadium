@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { generateServerSeed, generateClientSeed, commitServerSeed } from '@scadium/fair';
 import { PrismaService } from '../prisma/prisma.service';
+import { withSerializable } from '../prisma/with-serializable';
 
 /** Public view of a user's active seed pair — the unrevealed serverSeed is NEVER included. */
 export interface ActivePairView {
@@ -96,7 +97,26 @@ export class SeedManagerService {
     userId: string,
   ): Promise<{ revealedServerSeed: string; serverSeedHash: string; nextServerSeedHash: string }> {
     await this.getOrCreateActivePair(userId);
-    return this.prisma.$transaction(async (tx) => {
+    // Serializable: the active-round check below and the seed rotation must be
+    // conflict-serialized against a concurrent stateful-round `start` (which
+    // creates an InstantRound and bumps this same clientSeed row). Under a
+    // weaker level, a round created between the check and the reveal would be
+    // bound to the seed we're about to expose (C3).
+    return withSerializable(this.prisma, async (tx) => {
+      // C3 — refuse to reveal the ACTIVE server seed while any stateful round
+      // (mines/tower/hilo) is still in progress: those rounds' secret layouts
+      // are derived from this exact seed, so revealing it mid-round would let
+      // the player reproduce the layout (nonce + clientSeed are already public)
+      // and finish deterministically for a guaranteed win.
+      const activeRound = await tx.instantRound.findFirst({
+        where: { userId, status: 'active' },
+        select: { id: true },
+      });
+      if (activeRound) {
+        throw new ConflictException(
+          'Finish your in-progress round before rotating the server seed',
+        );
+      }
       const row = await tx.clientSeed.findUniqueOrThrow({ where: { userId } });
       const freshNext = generateServerSeed();
       const updated = await tx.clientSeed.update({
