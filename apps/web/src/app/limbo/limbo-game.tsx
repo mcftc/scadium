@@ -11,6 +11,7 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { useInstantGame, type InstantSettleResult } from '@/hooks/use-instant-game';
@@ -137,6 +138,7 @@ export function LimboGame() {
             Server-authoritative · Provably fair
           </p>
         </Card>
+        <RecentRounds game="limbo" />
         <InstantFairness game="limbo" last={last} />
       </div>
     </div>

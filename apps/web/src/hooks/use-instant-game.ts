@@ -37,6 +37,8 @@ export function useInstantGame<TBody extends Record<string, unknown>>(game: stri
         prev ? { ...prev, playBalanceLamports: res.balanceLamports } : prev,
       );
       void qc.invalidateQueries({ queryKey: ['me'] });
+      // Refresh the per-game "Recent rounds" panel with the just-settled bet.
+      void qc.invalidateQueries({ queryKey: ['bets', game] });
     },
   });
 }

@@ -11,6 +11,7 @@ import {
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
 import { InstantFairness } from '@/components/instant/instant-fairness';
+import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { useInstantGame, type InstantSettleResult } from '@/hooks/use-instant-game';
@@ -124,6 +125,7 @@ export function PlinkoGame() {
             Server-authoritative · Provably fair
           </p>
         </Card>
+        <RecentRounds game="plinko" />
         <InstantFairness game="plinko" last={last} />
       </div>
     </div>

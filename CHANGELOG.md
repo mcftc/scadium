@@ -24,6 +24,9 @@ Work is tracked in `BACKLOG.md`; production-readiness findings in `docs/audit/ph
 - **Coinflip cancel/join TOCTOU (H2):** `cancel()` now claims the flip with a guarded compare-and-swap (`updateMany where status='open'`) before refunding, mirroring `join()`. A cancel racing a concurrent join can no longer both refund the creator's stake and let the flip resolve (money duplication). `apps/api/src/games/coinflip/coinflip.service.ts`. Regression: `coinflip.service.spec.ts` cancel-CAS unit guard.
 - **Blackjack money-integrity (C1/C2):** a rebet placed during the 5-second "settled" result pause no longer refunds the already-settled stake (money creation), and other seats' prior-round bets no longer ride the next round without a fresh debit. `apps/api/src/games/blackjack/blackjack.engine.ts` now clears every seat's bet when a new bet opens a round from the `settled` phase. Regression test: `apps/api/test/blackjack-rebet-settled.e2e-spec.ts` (red→green; existing blackjack suites still pass).
 
+### Added
+- **Per-game bet history on the single-shot instant games (#roadmap-6):** the `RecentRounds` panel (already on mines/hilo/tower) is now on **dice, limbo, plinko, wheel** too — the backend `/users/bets?gameType=` endpoint already covered them. `useInstantGame` now invalidates `['bets', game]` on settle so the panel refreshes with the just-played round.
+
 ### Changed
 - **Crash game visual identity:** added a signature display typeface (Chakra Petch, tabular figures) as `font-display` and applied it to the crash hero multiplier, countdown, and history chips — replacing generic Inter on the site's most-looked-at number and stopping the giant multiplier from jittering horizontally as digits change during the climb. Distinct crypto-gaming identity vs solpump's plain bold sans. Direction for the fuller motif/motion redesign in `docs/crash-redesign-direction.md`.
 
