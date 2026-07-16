@@ -231,11 +231,12 @@ export class CrashService {
         amountLamports: params.amountLamports,
         autoCashout: params.autoCashout,
       });
-      // Accrue commission ONLY after the engine accepted the scheduled bet (#47),
-      // so a rejection (refunded below) never earns commission.
-      await withSerializable(this.prisma, (tx) =>
-        this.affiliates.creditReferral(tx, params.userId, params.amountLamports),
-      );
+      // NOTE: referral commission is NOT credited here. A scheduled bet is
+      // refundable via cancelScheduled, and crediting at schedule time let a
+      // schedule→cancel loop accrue commission at zero cost (then #H18 claim()
+      // mints it). Commission is credited only when the bet DRAINS into a live
+      // round (engine.openNewRound), where it becomes irrevocable — mirroring
+      // the immediate placeBet credit and every other game's settlement credit.
       return { ok: true as const, scheduled: true as const };
     } catch (e) {
       // In-memory placement rejected — refund AND drop the durable row together.

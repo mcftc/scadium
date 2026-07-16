@@ -23,6 +23,7 @@ import { settlementsTotal } from '../../observability/metrics.registry';
 import { ExposureGuard } from '../../common/exposure-guard';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { LiveFeedService } from '../../live/live-feed.service';
+import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 
 type Phase = 'waiting' | 'running' | 'busted';
@@ -115,6 +116,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly onchainRng?: OnchainRngService,
     // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
     @Optional() private readonly liveFeed?: LiveFeedService,
+    // Optional affiliate crediting (the @Global AffiliatesModule supplies it).
+    // Scheduled bets credit their referrer here at DRAIN time, not schedule time
+    // (see crash.service.scheduleBet) — the drain is the irrevocable commit.
+    @Optional() private readonly affiliates?: AffiliatesService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, CRASH_LOCK_KEY, CRASH_LOCK_TTL_MS);
@@ -562,6 +567,11 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
           // deleteMany here would silently match 0 rows, let the CrashBet commit,
           // and double-credit (round payout + cancel refund).
           await tx.scheduledCrashBet.delete({ where: { userId: queued.userId } });
+          // Credit the referrer NOW — the scheduled stake has irrevocably entered
+          // a live round (atomic with the delete; a cancel race rolls this back
+          // too). Crediting at schedule time instead let schedule→cancel loops
+          // mint commission at zero cost. Mirrors placeBet's at-commit credit.
+          await this.affiliates?.creditReferral(tx, queued.userId, queued.amountLamports);
         });
       } catch (e) {
         // Durable write failed (DB error) OR the bet was cancelled concurrently
