@@ -1006,6 +1006,11 @@ model Referral {
   referee            User     @relation("referee", fields: [refereeId], references: [id])
   volumeLamports     BigInt   @default(0)
   commissionLamports BigInt   @default(0)
+  // Commission already paid out to the referrer's play balance (#H18). A claim
+  // credits (commissionLamports - commissionClaimedLamports) and advances this
+  // to commissionLamports, so accrued commission is collectible and each
+  // lamport is paid at most once.
+  commissionClaimedLamports BigInt @default(0)
   // Sybil flag (#47): referrer & referee share a signup IP-hash → volume still
   // tracked but NO commission accrues.
   flagged            Boolean  @default(false)

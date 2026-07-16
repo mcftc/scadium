@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AffiliatesService } from './affiliates.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,5 +21,11 @@ export class AffiliatesController {
   @ApiOperation({ summary: 'Recent referrals for the current user' })
   recent(@CurrentUser() user: AuthContextLike) {
     return this.affiliates.recentReferrals(user.userId);
+  }
+
+  @Post('claim')
+  @ApiOperation({ summary: 'Claim accrued affiliate commission into the play balance' })
+  claim(@CurrentUser() user: AuthContextLike) {
+    return this.affiliates.claim(user.userId);
   }
 }

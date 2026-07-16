@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AFFILIATE } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { withSerializable } from '../prisma/with-serializable';
+import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 
 /** Commission rate for a referrer's cumulative referred volume (#47). */
 export function tierCommission(referredVolumeLamports: bigint): number {
@@ -93,17 +95,62 @@ export class AffiliatesService {
       }),
       this.prisma.referral.aggregate({
         where: { referrerId: userId },
-        _sum: { commissionLamports: true },
+        _sum: { commissionLamports: true, commissionClaimedLamports: true },
       }),
     ]);
+
+    const earned = commissionAgg._sum.commissionLamports ?? BigInt(0);
+    const claimed = commissionAgg._sum.commissionClaimedLamports ?? BigInt(0);
+    const claimable = earned - claimed;
 
     return {
       refCode: user.refCode,
       referralCount,
       totalVolumeLamports: (volumeAgg._sum.volumeLamports ?? BigInt(0)).toString(),
-      totalCommissionLamports: (commissionAgg._sum.commissionLamports ?? BigInt(0)).toString(),
+      totalCommissionLamports: earned.toString(),
+      claimedCommissionLamports: claimed.toString(),
+      claimableCommissionLamports: (claimable > BigInt(0) ? claimable : BigInt(0)).toString(),
       referralUrl: `https://scadium.io/?ref=${user.refCode}`,
     };
+  }
+
+  /**
+   * Claim accrued affiliate commission into the referrer's play balance (#H18).
+   * Credits (commissionLamports - commissionClaimedLamports) summed over the
+   * user's non-flagged referrals and advances each row's claimed marker to its
+   * earned commission, so every lamport of commission is paid at most once.
+   * Serializable: a concurrent settlement incrementing commissionLamports on one
+   * of these rows conflicts and retries, so the claim never over- or under-pays.
+   */
+  async claim(userId: string): Promise<{ claimedLamports: string }> {
+    return withSerializable(this.prisma, async (tx) => {
+      const rows = await tx.referral.findMany({
+        where: { referrerId: userId, flagged: false },
+        select: { id: true, commissionLamports: true, commissionClaimedLamports: true },
+      });
+      let claimable = BigInt(0);
+      const toAdvance: { id: string; to: bigint }[] = [];
+      for (const r of rows) {
+        const delta = r.commissionLamports - r.commissionClaimedLamports;
+        if (delta > BigInt(0)) {
+          claimable += delta;
+          toAdvance.push({ id: r.id, to: r.commissionLamports });
+        }
+      }
+      if (claimable <= BigInt(0)) throw new BadRequestException('No commission to claim');
+
+      for (const a of toAdvance) {
+        await tx.referral.update({
+          where: { id: a.id },
+          data: { commissionClaimedLamports: a.to },
+        });
+      }
+      await applyBalanceDelta(tx, userId, claimable, {
+        reason: 'affiliate_commission',
+        refType: 'Referral',
+      });
+      return { claimedLamports: claimable.toString() };
+    });
   }
 
   async recentReferrals(userId: string, limit = 20) {
