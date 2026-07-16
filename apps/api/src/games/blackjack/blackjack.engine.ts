@@ -1204,15 +1204,18 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     // Post-commit, fire-and-forget: surface every seat's settle on the feed.
+    // `won` matches the persisted Bet.status rule (a PUSH keeps the stake and is
+    // recorded 'won') so the socket event and the DB-backed /live/bets seed agree.
     for (const d of seatData) {
+      const feedWon = d.payout >= d.stake && d.stake > BigInt(0);
       this.liveFeed?.publishSettledBet({
         userId: d.seat.userId,
         betId: d.betId,
         gameType: 'blackjack',
         amountLamports: d.stake,
         payoutLamports: d.payout,
-        multiplier: d.won && d.stake > BigInt(0) ? d.multiplier : null,
-        won: d.won,
+        multiplier: feedWon ? d.multiplier : null,
+        won: feedWon,
       });
     }
 

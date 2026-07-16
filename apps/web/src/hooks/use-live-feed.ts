@@ -9,7 +9,6 @@ export interface LiveBet {
   id: string;
   gameType: string;
   player: string;
-  avatarUrl: string | null;
   amountLamports: string;
   payoutLamports: string;
   multiplier: number | null;

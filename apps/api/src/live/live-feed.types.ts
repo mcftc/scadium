@@ -19,13 +19,18 @@ export interface SettledBetInput {
   at?: number;
 }
 
-/** The public, PII-safe event broadcast to every `/live` client + the REST feed. */
+/**
+ * The public, PII-safe event broadcast to every `/live` client + the REST feed.
+ * Deliberately minimal: no `userId`, no full wallet, and NO `avatarUrl` — an
+ * avatar can be a ~120 KB base64 data-URL, which on an unauthenticated per-bet
+ * firehose + public seed endpoint is a bandwidth/memory amplifier. The ticker
+ * renders none of it; add it back only as an http(s) URL if ever needed.
+ */
 export interface LiveBetEvent {
   id: string;
   gameType: string;
   /** Display handle — username, else a shortened wallet. Never the full wallet. */
   player: string;
-  avatarUrl: string | null;
   amountLamports: string;
   payoutLamports: string;
   multiplier: number | null;

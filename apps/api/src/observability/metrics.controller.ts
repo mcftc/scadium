@@ -39,9 +39,12 @@ export class MetricsController {
     @Query('token') queryToken?: string,
   ): Promise<string> {
     if (this.token) {
+      // qs can parse `?token[]=x` into an array/object — coerce to a string so a
+      // malformed param fails closed with a clean 401, not a Buffer.from() 500.
+      const query = typeof queryToken === 'string' ? queryToken : '';
       const presented = authHeader?.startsWith('Bearer ')
         ? authHeader.slice('Bearer '.length)
-        : (queryToken ?? '');
+        : query;
       if (!this.constantTimeEquals(presented, this.token)) {
         throw new UnauthorizedException('metrics scrape token required');
       }

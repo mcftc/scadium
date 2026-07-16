@@ -457,6 +457,10 @@ model Bet {
 
   @@index([userId, createdAt])
   @@index([gameType, createdAt])
+  // Serves the sitewide live-feed query (recentBets): status IN (…) ORDER BY
+  // createdAt DESC LIMIT N — a bare createdAt sort with no supporting index
+  // seq-scanned the fastest-growing table on every anonymous page load.
+  @@index([createdAt])
 }
 
 // ==================== STATEFUL INSTANT GAMES ====================

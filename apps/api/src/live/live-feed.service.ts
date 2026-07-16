@@ -10,23 +10,19 @@ function shortWallet(addr: string): string {
 
 interface CachedDisplay {
   player: string;
-  avatarUrl: string | null;
   at: number;
 }
 
 /**
  * Sitewide live-bet feed producer (#roadmap-4). Every game's settlement calls
  * `publishSettledBet` (fire-and-forget); this resolves a PII-safe display handle
- * (cached), broadcasts a `live:bet` event over the `/live` gateway, and keeps a
- * small in-memory ring of the most recent events. The durable initial list for
- * the web ticker comes from `recentBets()` (a DB query), so the ring is only a
- * hot-path convenience, not the source of truth.
+ * (cached) and broadcasts a `live:bet` event over the `/live` gateway. The
+ * durable initial list for the web ticker comes from `recentBets()` (a DB
+ * query), which is the source of truth.
  */
 @Injectable()
 export class LiveFeedService implements LiveFeedPublisher {
   private readonly logger = new Logger(LiveFeedService.name);
-  private readonly ring: LiveBetEvent[] = [];
-  private static readonly RING_CAP = 60;
   private readonly display = new Map<string, CachedDisplay>();
   private static readonly DISPLAY_TTL_MS = 5 * 60_000;
   private static readonly DISPLAY_CAP = 5_000;
@@ -48,39 +44,33 @@ export class LiveFeedService implements LiveFeedPublisher {
   }
 
   private async doPublish(input: SettledBetInput): Promise<void> {
-    const { player, avatarUrl } = await this.resolveDisplay(input.userId);
+    const player = await this.resolveDisplay(input.userId);
     const event: LiveBetEvent = {
       id: input.betId,
       gameType: input.gameType,
       player,
-      avatarUrl,
       amountLamports: input.amountLamports.toString(),
       payoutLamports: input.payoutLamports.toString(),
       multiplier: input.multiplier,
       won: input.won,
       at: input.at ?? Date.now(),
     };
-    this.ring.unshift(event);
-    if (this.ring.length > LiveFeedService.RING_CAP) this.ring.length = LiveFeedService.RING_CAP;
     this.gateway.broadcast(event);
   }
 
-  private async resolveDisplay(userId: string): Promise<{ player: string; avatarUrl: string | null }> {
+  private async resolveDisplay(userId: string): Promise<string> {
     const now = Date.now();
     const hit = this.display.get(userId);
-    if (hit && now - hit.at < LiveFeedService.DISPLAY_TTL_MS) {
-      return { player: hit.player, avatarUrl: hit.avatarUrl };
-    }
+    if (hit && now - hit.at < LiveFeedService.DISPLAY_TTL_MS) return hit.player;
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { username: true, avatarUrl: true, walletAddress: true },
+      select: { username: true, walletAddress: true },
     });
-    const player = user?.username ?? (user ? shortWallet(user.walletAddress) : 'anon');
-    const avatarUrl = user?.avatarUrl ?? null;
+    const player = user?.username || (user ? shortWallet(user.walletAddress) : 'anon');
     // Simple bound: clear the cache when it grows too large (cheap, rare).
     if (this.display.size >= LiveFeedService.DISPLAY_CAP) this.display.clear();
-    this.display.set(userId, { player, avatarUrl, at: now });
-    return { player, avatarUrl };
+    this.display.set(userId, { player, at: now });
+    return player;
   }
 
   /**
@@ -100,14 +90,13 @@ export class LiveFeedService implements LiveFeedPublisher {
         multiplier: true,
         status: true,
         createdAt: true,
-        user: { select: { username: true, avatarUrl: true, walletAddress: true } },
+        user: { select: { username: true, walletAddress: true } },
       },
     });
     return rows.map((r) => ({
       id: r.id,
       gameType: r.gameType,
-      player: r.user.username ?? shortWallet(r.user.walletAddress),
-      avatarUrl: r.user.avatarUrl ?? null,
+      player: r.user.username || shortWallet(r.user.walletAddress),
       amountLamports: r.amountLamports.toString(),
       payoutLamports: r.payoutLamports.toString(),
       multiplier: r.multiplier ?? null,

@@ -44,4 +44,11 @@ describe('MetricsController token gate', () => {
     const out = await withToken('s3cret').metrics(undefined, 's3cret');
     expect(typeof out).toBe('string');
   });
+
+  it('fails closed (401, not 500) on a malformed array-valued ?token[]=', async () => {
+    // qs may parse `?token[]=x` into an array; coercion must yield a clean 401.
+    await expect(
+      withToken('s3cret').metrics(undefined, ['s3cret'] as unknown as string),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
 });

@@ -35,7 +35,11 @@ describe('LiveFeedService', () => {
   });
 
   it('resolves a username display and broadcasts a PII-safe event', async () => {
-    const prisma = makePrisma({ username: 'alice', avatarUrl: 'a.png', walletAddress: 'WALLETyyyyyyyy' });
+    const prisma = makePrisma({
+      username: 'alice',
+      avatarUrl: 'data:image/png;base64,AAAA',
+      walletAddress: 'WALLETyyyyyyyy',
+    });
     const svc = new LiveFeedService(prisma, gateway);
 
     svc.publishSettledBet(baseInput);
@@ -43,20 +47,22 @@ describe('LiveFeedService', () => {
 
     expect(broadcast).toHaveBeenCalledTimes(1);
     const evt = broadcast.mock.calls[0]![0];
-    expect(evt).toMatchObject({
+    expect(evt).toEqual({
       id: 'b1',
       gameType: 'dice',
       player: 'alice',
-      avatarUrl: 'a.png',
       amountLamports: '1000000000',
       payoutLamports: '1980000000',
       multiplier: 1.98,
       won: true,
+      at: expect.any(Number),
     });
-    // Never leak the full wallet or the userId.
-    expect(JSON.stringify(evt)).not.toContain('WALLETyyyyyyyy');
-    expect(JSON.stringify(evt)).not.toContain('u1');
-    expect(typeof evt.at).toBe('number');
+    // Never leak the full wallet, the userId, or the (heavy, data-URL) avatar.
+    const json = JSON.stringify(evt);
+    expect(json).not.toContain('WALLETyyyyyyyy');
+    expect(json).not.toContain('u1');
+    expect(json).not.toContain('data:image');
+    expect('avatarUrl' in evt).toBe(false);
   });
 
   it('falls back to a shortened wallet when there is no username', async () => {
@@ -105,7 +111,7 @@ describe('LiveFeedService', () => {
         multiplier: null,
         status: 'lost',
         createdAt: new Date(1_700_000_000_000),
-        user: { username: null, avatarUrl: null, walletAddress: 'ZZZZ00001111QQQQ' },
+        user: { username: null, walletAddress: 'ZZZZ00001111QQQQ' },
       },
     ]);
     const svc = new LiveFeedService(prisma, gateway);
@@ -116,7 +122,6 @@ describe('LiveFeedService', () => {
         id: 'x',
         gameType: 'crash',
         player: 'ZZZZ…QQQQ',
-        avatarUrl: null,
         amountLamports: '500',
         payoutLamports: '0',
         multiplier: null,
