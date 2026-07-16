@@ -235,7 +235,7 @@ export class CrashService {
       // refundable via cancelScheduled, and crediting at schedule time let a
       // schedule→cancel loop accrue commission at zero cost (then #H18 claim()
       // mints it). Commission is credited only when the bet DRAINS into a live
-      // round (engine.openNewRound), where it becomes irrevocable — mirroring
+      // round (engine.startNewRound), where it becomes irrevocable — mirroring
       // the immediate placeBet credit and every other game's settlement credit.
       return { ok: true as const, scheduled: true as const };
     } catch (e) {

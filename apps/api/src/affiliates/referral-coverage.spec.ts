@@ -16,7 +16,9 @@ import { describe, expect, it } from 'vitest';
  * Runs as a unit spec (no DB); cwd is `apps/api` under `vitest run src`.
  */
 const REFERRAL_FILE: Record<GameType, string> = {
-  // Crash credits the referrer at bet placement (service), coinflip at resolve.
+  // Crash credits the referrer at commit: immediate bets in the service
+  // (placeBet), scheduled bets in the engine at drain (startNewRound). This
+  // guard checks the service site; coinflip credits at resolve.
   crash: 'src/games/crash/crash.service.ts',
   coinflip: 'src/games/coinflip/coinflip.service.ts',
   blackjack: 'src/games/blackjack/blackjack.engine.ts',
