@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { periodForHour, lastCompletedHourPeriod } from './queue.constants';
+import {
+  periodForHour,
+  lastCompletedHourPeriod,
+  dayPeriod,
+  lastCompletedDayPeriod,
+  dayPeriodStartMs,
+} from './queue.constants';
 
 /**
  * H11 — hourly settle jobs (airdrop pool, staker dividends, block mining, vault
@@ -32,5 +38,34 @@ describe('lastCompletedHourPeriod (H11)', () => {
   it('rolls the day/month/year backward correctly', () => {
     expect(lastCompletedHourPeriod(at('2026-07-16T00:30:00Z'))).toBe('2026071523'); // prev day 23:00
     expect(lastCompletedHourPeriod(at('2026-01-01T00:10:00Z'))).toBe('2025123123'); // prev year
+  });
+});
+
+/**
+ * The daily-race settle targets the last COMPLETED UTC day, and parses that day
+ * key back to its UTC-midnight window start — a timezone/off-by-one bug here
+ * would pay on an incomplete or shifted day of Bet data.
+ */
+describe('daily-race period helpers (#roadmap-5)', () => {
+  const at = (iso: string) => Date.parse(iso);
+
+  it('dayPeriod is the UTC YYYYMMDD of the containing day', () => {
+    expect(dayPeriod(at('2026-07-16T10:00:00Z'))).toBe('20260716');
+    expect(dayPeriod(at('2026-07-16T23:59:59Z'))).toBe('20260716');
+    expect(dayPeriod(at('2026-07-16T00:00:00Z'))).toBe('20260716');
+  });
+
+  it('lastCompletedDayPeriod returns the PREVIOUS day, never the in-progress one', () => {
+    expect(lastCompletedDayPeriod(at('2026-07-16T10:00:00Z'))).toBe('20260715');
+    // Exactly at midnight → the day that just ended.
+    expect(lastCompletedDayPeriod(at('2026-07-16T00:00:00Z'))).toBe('20260715');
+    // Rolls month/year backward.
+    expect(lastCompletedDayPeriod(at('2026-03-01T00:30:00Z'))).toBe('20260228');
+    expect(lastCompletedDayPeriod(at('2026-01-01T00:10:00Z'))).toBe('20251231');
+  });
+
+  it('dayPeriodStartMs round-trips to UTC midnight of that day', () => {
+    expect(new Date(dayPeriodStartMs('20260115')).toISOString()).toBe('2026-01-15T00:00:00.000Z');
+    expect(dayPeriod(dayPeriodStartMs('20260115'))).toBe('20260115');
   });
 });
