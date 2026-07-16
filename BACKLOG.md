@@ -58,6 +58,6 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 ## Platform migration (see `docs/deployment-architecture.md`) — pending decision confirmation
 
 - [ ] Confirm: stack (keep NestJS vs .NET rewrite), web host (Railway vs CF Workers), backend host (Railway container-lift).
-- [~] Provision Railway: ✅ project `scadium` + Postgres + Redis created; ⛔ `web`/`api`/`worker` compute services BLOCKED on a paid Railway plan (free-tier resource limit). Turnkey runbook in `docs/deployment-architecture.md`.
+- [~] Provision Railway: ✅ project `scadium` + Postgres + Redis created; ⛔ compute services BLOCKED on a paid plan (free-tier limit). **Host comparison done** (`docs/deployment-architecture.md`): Railway wins on price+fit (~$20-27/mo, never-sleeps, managed PG+Redis) vs Render/Fly (~$60), AWS (~$100), Coolify (~$17 but self-managed DBs). io.net ruled out. → upgrade Railway Hobby to deploy.
 - [ ] Cloudflare edge: proxied records → Railway origins, SSL Full (strict), WAF, cache rules, auth rate-limit, geo trusted-proxy Transform Rule.
 - [ ] Cut over DNS; verify WS proxy, geo headers, health probes.

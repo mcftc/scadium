@@ -128,3 +128,22 @@ Once the Railway origins exist:
 2. SSL/TLS → **Full (strict)**; WAF managed rules on; a rate-limiting rule in front of `/api/v1/auth/*`.
 3. A **Transform Rule** that injects the `x-geo-proxy-secret` header (matching `GEO_PROXY_SECRET`) on requests to the API host, and strips any client-supplied value. Cloudflare already provides `cf-ipcountry`, which `geo.service.ts` reads.
 4. Cache rules for `apps/web` static/ISR; keep the API host uncached. Verify WS upgrade works through the proxy (Socket.io ping keeps it under CF's ~100 s idle timeout).
+
+---
+
+## Host comparison (verified pricing, 2026-07) — Railway vs Fly vs Render vs Coolify vs io.net vs AWS
+
+Researched current pricing against each platform's own pricing page for Scadium's exact footprint (always-on API + worker [+ web] + managed Postgres + Redis, single-instance, Cloudflare in front, pre-launch/low-traffic 24/7). The **must-run-24/7** requirement (the 20 Hz crash loop + persistent Socket.io can't scale-to-zero) is the gate.
+
+| Platform | Full-stack $/mo | Fit | Verdict |
+|---|---|---|---|
+| **Railway** ✅ | **~$20–27** (web on Cloudflare) | 5/5 | **Winner** — never sleeps by default, first-party managed PG **and** Redis, lowest ops, cheapest managed option. |
+| Coolify on a Hetzner VPS | ~$17–25 all-in | 4/5 | **Cheapest**, never sleeps — but you own DB backups/PITR/patching/uptime on a single box (risky for a ledger). Budget pick only. |
+| Render | ~$61 (lean ~$30) | 5/5 | Same low-ops experience as Railway but **2–3× the price**; free tier sleeps (never use it for the API). |
+| Fly.io | ~$57–61 managed (~$25 self-hosting DBs) | 4/5 | Cheap compute + great WS, but the **$38/mo Managed-Postgres floor** + no first-party Redis (Upstash) inflate it; `auto_stop` is a footgun. |
+| AWS (Fargate+RDS+ElastiCache+ALB) | ~$85–115 | 3/5 | Powerful/scalable but high ops (VPC/IAM/ALB by hand) + hidden ALB/NAT/IPv4 fees. Overkill pre-launch; the single-instance design can't use its scale anyway. |
+| io.net | ~$438 floor | 1/5 | **Wrong category** — a GPU/AI compute marketplace billed by GPU-hour, no CPU app tier, no managed PG/Redis. Ruled out. |
+
+**Decision: buy Railway (Hobby plan, $5/mo minimum → real bill ~$20–27/mo).** It's the only option that is *both* a category-perfect fit and the cheapest managed host, and it's where the project + Postgres + Redis are already provisioned — the only thing missing is the paid-plan upgrade that unblocks the compute services. If absolute lowest cost outweighs ops, Coolify-on-Hetzner (~$17) is the alternative, accepting that you self-manage the databases.
+
+**Caveat (already in the real-money checklist):** Railway's managed Postgres is a convenient single-container volume-backed instance, not HA/multi-AZ with PITR. Fine for the play-money launch; **before flipping real money, move the money-ledger Postgres to a hardened managed provider** (Neon / Supabase / RDS) — a casino ledger needs strong backups + point-in-time recovery.
