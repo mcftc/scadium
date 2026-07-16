@@ -110,7 +110,7 @@ export class AffiliatesService {
       totalCommissionLamports: earned.toString(),
       claimedCommissionLamports: claimed.toString(),
       claimableCommissionLamports: (claimable > BigInt(0) ? claimable : BigInt(0)).toString(),
-      referralUrl: `https://scadium.io/?ref=${user.refCode}`,
+      referralUrl: `https://scadium.com/?ref=${user.refCode}`,
     };
   }
 

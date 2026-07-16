@@ -12,7 +12,7 @@ export default function TradePage() {
             <span className="text-gradient">Buy &amp; Sell $SCAD</span>
           </h1>
           <p className="mt-3 text-foreground-muted">
-            Trade against the on-chain SCAD/SOL pool — every fill is a real transaction.
+            Trade $SCAD against the SCAD/SOL liquidity pool.
           </p>
         </div>
         <TradePanel />

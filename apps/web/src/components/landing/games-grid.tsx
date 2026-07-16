@@ -59,7 +59,7 @@ const games = [
     icon: Rocket,
     href: '/limbo',
     accent: 'from-[#C76BFF] to-[#6F5FCC]',
-    rtp: '99%',
+    rtp: '95%',
   },
   {
     id: 'plinko',
@@ -68,7 +68,7 @@ const games = [
     icon: Circle,
     href: '/plinko',
     accent: 'from-[#9C4FE0] to-[#4D3D99]',
-    rtp: '96.5%',
+    rtp: '95%',
   },
   {
     id: 'wheel',
@@ -77,7 +77,7 @@ const games = [
     icon: Bomb,
     href: '/wheel',
     accent: 'from-[#6F5FCC] to-[#4D3D99]',
-    rtp: '96.5%',
+    rtp: '95%',
   },
   {
     id: 'mines',
@@ -86,7 +86,7 @@ const games = [
     icon: Gem,
     href: '/mines',
     accent: 'from-[#EE86FF] to-[#9C4FE0]',
-    rtp: '99%',
+    rtp: '95%',
   },
   {
     id: 'tower',
@@ -95,7 +95,7 @@ const games = [
     icon: Layers,
     href: '/tower',
     accent: 'from-[#C76BFF] to-[#6F5FCC]',
-    rtp: '99%',
+    rtp: '95%',
   },
   {
     id: 'hilo',
@@ -104,7 +104,7 @@ const games = [
     icon: ArrowUpDown,
     href: '/hilo',
     accent: 'from-[#9C4FE0] to-[#4D3D99]',
-    rtp: '98%',
+    rtp: '95%',
   },
 ];
 

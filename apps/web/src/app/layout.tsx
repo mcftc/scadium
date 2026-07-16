@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     'provably fair',
     'non-custodial',
   ],
-  metadataBase: new URL('https://scadium.io'),
+  metadataBase: new URL('https://scadium.com'),
   openGraph: {
     title: 'Scadium — Proof-of-Play on Solana',
     description: 'Non-custodial, provably-fair play-to-earn — mine $SCAD as you play.',

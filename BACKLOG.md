@@ -37,7 +37,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 ## Tier 3 — Product copy / compliance (cheap; before any public launch)
 
-- [ ] **H17 · False capability/audit/RTP claims.** Remove/gate "Audited: Yes" (`hero-section.tsx:53`); fix six RTP figures to 95% (`games-grid.tsx:62`); drop "on-chain VRF", "every fill is a real transaction", "~400 ms on-chain settlement", "on-chain AMM" until true.
+- [x] **H17 · False capability/audit/RTP claims.** ✅ Fixed: "Audited: Yes"→"Pending"; six RTP figures corrected to 95% (Limbo/Mines/Tower/HiLo/Wheel/Plinko; Dice 99%/Blackjack 99.5% are correct and kept); dropped "on-chain VRF", the "On-Chain Games" tagline, "every fill is a real transaction", "on-chain AMM"; `metadataBase` + affiliate URL → scadium.com.
 
 ## Tier 4 — Ops / platform (with the Railway + Cloudflare cutover)
 

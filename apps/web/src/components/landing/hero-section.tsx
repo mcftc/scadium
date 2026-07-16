@@ -12,7 +12,7 @@ export function HeroSection() {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-surface border border-primary-400/30 mb-8">
             <div className="h-1.5 w-1.5 rounded-full bg-primary-400 animate-pulse-glow" />
             <span className="text-xs font-medium text-foreground-muted">
-              On-Chain Games · Non-Custodial · Play-to-Earn
+              Provably Fair · Proof-of-Play · $SCAD Rewards
             </span>
           </div>
 
@@ -23,7 +23,7 @@ export function HeroSection() {
           </h1>
 
           <p className="mt-6 text-lg md:text-xl text-foreground-muted max-w-2xl">
-            Provably-fair, on-chain games — playing mines $SCAD in hourly blocks.{' '}
+            Provably-fair games — mine $SCAD in hourly blocks.{' '}
             <ChainCopy
               onchain="Non-custodial — connect your wallet and play, your funds stay in your control."
               playMoney="Connect your wallet to sign in and play — earn $SCAD as you go. On-chain mode is coming."
@@ -50,7 +50,7 @@ export function HeroSection() {
               { label: 'Settlement', value: '~400ms', icon: Zap },
               { label: 'Fees', value: '<$0.01' },
               { label: 'Block reward', value: '$SCAD' },
-              { label: 'Audited', value: 'Yes' },
+              { label: 'Audited', value: 'Pending' },
             ].map((stat) => (
               <div key={stat.label} className="text-center">
                 <div className="text-2xl md:text-3xl font-bold text-gradient">{stat.value}</div>

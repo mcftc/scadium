@@ -18,7 +18,7 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
     icon: Shield,
     title: 'Provably fair',
     description:
-      'HMAC-SHA256 + on-chain VRF. Commit-reveal seeds let you verify every result yourself, independent of us.',
+      'HMAC-SHA256 commit-reveal seeds let you verify every result yourself, independent of us.',
   },
   {
     icon: Zap,
