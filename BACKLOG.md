@@ -58,6 +58,6 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 ## Platform migration (see `docs/deployment-architecture.md`) — pending decision confirmation
 
 - [ ] Confirm: stack (keep NestJS vs .NET rewrite), web host (Railway vs CF Workers), backend host (Railway container-lift).
-- [ ] Provision Railway: `web`, `api` (×1), `worker`, Postgres, Redis, bucket; wire env/secrets.
+- [~] Provision Railway: ✅ project `scadium` + Postgres + Redis created; ⛔ `web`/`api`/`worker` compute services BLOCKED on a paid Railway plan (free-tier resource limit). Turnkey runbook in `docs/deployment-architecture.md`.
 - [ ] Cloudflare edge: proxied records → Railway origins, SSL Full (strict), WAF, cache rules, auth rate-limit, geo trusted-proxy Transform Rule.
 - [ ] Cut over DNS; verify WS proxy, geo headers, health probes.

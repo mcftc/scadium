@@ -87,3 +87,44 @@ Nameservers are **already delegated to Cloudflare** (full delegation — the rec
 5. **First work:** ✅ Tier 1 play-money bug fixes (`BACKLOG.md`), before the platform cutover.
 
 Work proceeds **without GitHub issues** (owner's process change): `BACKLOG.md` = plan, `CHANGELOG.md` = shipped, `CLAUDE.md` stays current, implemented directly against those.
+
+---
+
+## Railway provisioning status (2026-07-16)
+
+**Project created:** `scadium` (id `91d0472a-a626-4308-b6d1-afb51b205cac`), env `production`, workspace "Muhammed Ciftci's Projects".
+**Provisioned:** managed **Postgres** (`d16f6cf9-…`) + **Redis** (`7dafa24c-…`).
+
+**⛔ Blocked:** creating the app compute services (`scadium-api`, `scadium-worker`, `scadium-web`) returns *"Free plan resource provision limit exceeded — please upgrade."* Deploying the app needs a **paid Railway plan** (Hobby is enough). That's a billing decision for the owner; everything below is turnkey once upgraded.
+
+### Deploy runbook (after upgrading the plan)
+
+All commands from the repo root with `RAILWAY_API_TOKEN` exported and the project linked (`railway link --project 91d0472a-a626-4308-b6d1-afb51b205cac --environment production`). The Dockerfiles build from the repo root, so each service uses the repo as build context and its own Dockerfile path.
+
+1. **API** (`apps/api`, runs `prisma migrate deploy` on boot via `docker-entrypoint.sh`):
+   ```bash
+   railway add --service scadium-api
+   railway variable set --service scadium-api \
+     RAILWAY_DOCKERFILE_PATH=apps/api/Dockerfile \
+     NODE_ENV=production \
+     DATABASE_URL='${{Postgres.DATABASE_URL}}' \
+     REDIS_URL='${{Redis.REDIS_URL}}' \
+     JWT_SECRET='<64+ random bytes — NOT the .env.example placeholder (#H15/#33)>' \
+     CORS_ORIGIN='https://scadium.com' \
+     GEO_IP_SALT='<random>' GEO_PROXY_SECRET='<random, also set as a Cloudflare Transform Rule header>'
+   railway up --service scadium-api          # uploads the working tree, builds the Dockerfile
+   railway domain --service scadium-api      # generates a *.up.railway.app origin
+   ```
+2. **Worker** (`apps/worker`, no public domain — background queues): same as API but
+   `RAILWAY_DOCKERFILE_PATH=apps/worker/Dockerfile`, same `DATABASE_URL`/`REDIS_URL`/secrets, **no** domain. Keep **replicas = 1** for the API (H12: leader election has no request-forwarding); the worker is idempotent so ≥1 is safe.
+3. **Web** (`apps/web`, Next.js container): `RAILWAY_DOCKERFILE_PATH=apps/web/Dockerfile`,
+   `NEXT_PUBLIC_API_URL=https://api.scadium.com`, `NEXT_PUBLIC_WS_URL=wss://api.scadium.com`,
+   `NEXT_PUBLIC_SOLANA_NETWORK=devnet` (mainnet only with an explicit RPC), then `railway up` + `railway domain`.
+
+### Cloudflare cutover (scadium.com — NS already delegated)
+
+Once the Railway origins exist:
+1. Cloudflare DNS → **proxied (orange-cloud)** CNAMEs: `scadium.com`/`www` → the web service's `*.up.railway.app`; `api` → the API service's origin. Add both custom domains on the Railway side too.
+2. SSL/TLS → **Full (strict)**; WAF managed rules on; a rate-limiting rule in front of `/api/v1/auth/*`.
+3. A **Transform Rule** that injects the `x-geo-proxy-secret` header (matching `GEO_PROXY_SECRET`) on requests to the API host, and strips any client-supplied value. Cloudflare already provides `cf-ipcountry`, which `geo.service.ts` reads.
+4. Cache rules for `apps/web` static/ISR; keep the API host uncached. Verify WS upgrade works through the proxy (Socket.io ping keeps it under CF's ~100 s idle timeout).
