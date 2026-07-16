@@ -68,6 +68,7 @@ interface Round {
   bustPoint: number;
   phase: Phase;
   startedAt: number | null; // ms epoch when "running" began
+  waitingStartedAt: number | null; // ms epoch when the betting window opened
   bets: Map<string, LiveBet>;
   /** Pinned slot whose hash seeds the bust (#101); null on the play-money path. */
   targetSlot: number | null;
@@ -166,6 +167,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       bustPoint: 0,
       phase: 'waiting',
       startedAt: null,
+      waitingStartedAt: null,
       bets: new Map(),
       targetSlot: null,
       exposure: null,
@@ -268,6 +270,14 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       roundId: this.current.id,
       phase: this.current.phase,
       startedAt: this.current.startedAt,
+      // Ms left in the betting window (relative, so the client anchors it to its
+      // OWN clock — immune to server/client clock skew). Null unless waiting. Lets
+      // a page refresh mid-window show the TRUE remaining time instead of a fresh
+      // full window that loops back to 15s.
+      bettingMsRemaining:
+        this.current.phase === 'waiting' && this.current.waitingStartedAt !== null
+          ? Math.max(0, this.current.waitingStartedAt + CRASH.BET_WINDOW_MS - Date.now())
+          : null,
       serverSeedHash: this.current.serverSeedHash,
       // Public, non-secret round inputs — let players reproduce the result.
       clientSeed: this.current.clientSeed,
@@ -523,6 +533,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       bustPoint,
       phase: 'waiting',
       startedAt: null,
+      waitingStartedAt: Date.now(),
       bets: new Map(),
       targetSlot,
       exposure,

@@ -34,6 +34,13 @@ export interface CrashSnapshot {
   roundId: string;
   phase: CrashPhase;
   startedAt: number | null;
+  /**
+   * Ms left in the betting window at the moment this state was received from the
+   * server (relative, anchored to the client's own clock — skew-proof). Undefined
+   * on non-waiting phases. Drives the waiting countdown so a mid-window page
+   * refresh shows the true remaining time, not a fresh full 15s.
+   */
+  bettingMsRemaining?: number | null;
   serverSeedHash: string;
   clientSeed: string;
   nonce: number;
@@ -97,11 +104,19 @@ export function useCrash() {
 
     sock.on(
       'crash:round-start',
-      (p: { roundId: string; serverSeedHash: string; clientSeed: string; nonce: number }) => {
+      (p: {
+        roundId: string;
+        serverSeedHash: string;
+        clientSeed: string;
+        nonce: number;
+        bettingWindowMs?: number;
+      }) => {
         setState((prev) => ({
           roundId: p.roundId,
           phase: 'waiting' as const,
           startedAt: null,
+          // Round just opened → the full window remains (fall back if omitted).
+          bettingMsRemaining: p.bettingWindowMs ?? null,
           serverSeedHash: p.serverSeedHash,
           clientSeed: p.clientSeed,
           nonce: p.nonce,

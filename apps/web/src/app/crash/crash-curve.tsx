@@ -56,13 +56,17 @@ export function CrashCurve({
 
   useEffect(() => {
     if (state?.phase !== 'waiting') return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- countdown is timer-driven display state: this seeds it to the betting-window length at the start of each window, after which the interval below animates it down. Not derivable during render.
-    setCountdown(WINDOW_S);
-    const interval = setInterval(() => {
-      setCountdown((c) => Math.max(0, c - 0.1));
-    }, 100);
+    // Anchor the window end to the client's OWN clock using the server's relative
+    // `bettingMsRemaining` (skew-proof). On a mid-window page refresh this is the
+    // TRUE remaining time, so the countdown no longer restarts from a full 15s.
+    // Falls back to the full window when the field is absent (e.g. a legacy frame).
+    const remainingMs = state.bettingMsRemaining ?? CRASH.BET_WINDOW_MS;
+    const endsAt = Date.now() + remainingMs;
+    const update = () => setCountdown(Math.max(0, (endsAt - Date.now()) / 1000));
+    update();
+    const interval = setInterval(update, 100);
     return () => clearInterval(interval);
-  }, [state?.phase, state?.roundId]);
+  }, [state?.phase, state?.roundId, state?.bettingMsRemaining]);
 
   // Fire the explosion SFX exactly once when a round busts (keyed on roundId so a
   // re-render in the busted phase doesn't replay it).
