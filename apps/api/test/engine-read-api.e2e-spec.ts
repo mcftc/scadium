@@ -71,8 +71,13 @@ describe('Engine v2 read API (integration, real Postgres)', () => {
     expect(BigInt(me.playRate)).toBe(10n * E9); // active play-rate == wagered
     expect(me.mining).toBe(true);
     expect(BigInt(me.totalPlayRate)).toBeGreaterThanOrEqual(10n * E9);
+    // projectedShareScad is the meaningful "has a positive mining share" signal.
     expect(BigInt(me.projectedShareScad)).toBeGreaterThan(0n);
-    expect(me.shareBps).toBeGreaterThan(0);
+    // shareBps is INTEGER basis points of the GLOBAL current-hour play-rate; when
+    // other suites' stakers dominate the shared test DB during a parallel run, a
+    // small miner's share legitimately floors to 0 bps (projectedShareScad stays
+    // >0). Assert >= 0 so the read-API shape check isn't flaky on total-play-rate.
+    expect(me.shareBps).toBeGreaterThanOrEqual(0);
   });
 
   it('currentLeaderboard() ranks miners by play-rate (desc)', async () => {
