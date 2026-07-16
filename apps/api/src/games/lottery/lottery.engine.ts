@@ -17,6 +17,7 @@ import {
   nextLotteryDrawAt,
 } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { ChainService } from '../../solana/chain.service';
@@ -657,6 +658,18 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               gamesPlayed: { increment: 1 },
             },
           });
+          // Play-money mode (#H4): the ticket was debited from the SOL play
+          // balance at buy time, so credit the prize back to it here. On-chain
+          // mode instead pays $SCAD to the winner's wallet below (no play-money
+          // credit), so gate this on the chain being disabled to avoid double
+          // paying. Ledgered so reconciliation stays balanced.
+          if (!this.chain.lotteryEnabled && r.payoutLamports > BigInt(0)) {
+            await applyBalanceDelta(tx, t.userId, r.payoutLamports, {
+              reason: 'lottery_prize',
+              refType: 'LotteryTicket',
+              refId: t.id,
+            });
+          }
           // biggestWin = max(current, netProfit) atomically under the row lock
           // (no stale read-then-write). Same GREATEST(payout-cost,0) basis as
           // reconcileAll (Bet amount = costLamports); a losing ticket nets 0.
