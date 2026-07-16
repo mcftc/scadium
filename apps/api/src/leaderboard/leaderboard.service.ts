@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { RACE, racePrizeLamports } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,6 +41,7 @@ const EXCLUDE_BOTS = { notIn: [...DEMO_BOT_IDS] };
 export class LeaderboardService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private readonly logger = new Logger(LeaderboardService.name);
   private windowCache = new Map<string, { rows: WindowEntry[]; at: number }>();
   private excludeCache: { ids: string[]; at: number } | null = null;
 
@@ -94,10 +95,14 @@ export class LeaderboardService {
     }));
   }
 
-  /** Bots + banned users — kept off every public board/race. Cached briefly. */
-  private async excludedUserIds(): Promise<string[]> {
+  /**
+   * Bots + banned users — kept off every public board/race. Cached briefly for
+   * the read paths; `fresh` bypasses the cache so the money settle can't credit a
+   * user banned within the last cache window.
+   */
+  private async excludedUserIds(fresh = false): Promise<string[]> {
     const now = Date.now();
-    if (this.excludeCache && now - this.excludeCache.at < EXCLUDE_CACHE_MS) {
+    if (!fresh && this.excludeCache && now - this.excludeCache.at < EXCLUDE_CACHE_MS) {
       return this.excludeCache.ids;
     }
     const banned = await this.prisma.user.findMany({
@@ -119,8 +124,9 @@ export class LeaderboardService {
     start: Date,
     end: Date | undefined,
     limit: number,
+    freshExclude = false,
   ): Promise<WindowEntry[]> {
-    const exclude = await this.excludedUserIds();
+    const exclude = await this.excludedUserIds(freshExclude);
     const grouped = await this.prisma.bet.groupBy({
       by: ['userId'],
       where: {
@@ -129,7 +135,9 @@ export class LeaderboardService {
         userId: { notIn: exclude },
       },
       _sum: { amountLamports: true },
-      orderBy: { _sum: { amountLamports: 'desc' } },
+      // Secondary key so a volume tie at the payout boundary is deterministic
+      // across runs (the settle standings must be reproducible).
+      orderBy: [{ _sum: { amountLamports: 'desc' } }, { userId: 'asc' }],
       take: limit,
     });
     const users = await this.prisma.user.findMany({
@@ -190,48 +198,65 @@ export class LeaderboardService {
    * each winner at most once. Only ranks within the payout curve earn.
    */
   async settleRace(raceDay: string): Promise<{ raceDay: string; paid: number; totalLamports: string }> {
-    if ((await this.prisma.raceResult.count({ where: { raceDay } })) > 0) {
-      return { raceDay, paid: 0, totalLamports: '0' }; // already settled (fast path)
-    }
     const dayStart = dayPeriodStartMs(raceDay);
+    // Fresh exclude (bypass the 60s cache) — the money settle must not pay a user
+    // banned in the last minute before the run.
     const winners = await this.topByWindowVolume(
       new Date(dayStart),
       new Date(dayStart + DAY_MS),
       RACE.PAYOUT_BPS.length,
+      true,
     );
     let paid = 0;
     let total = BigInt(0);
+    // NO fast-path on "already has rows": the per-user `RaceResult` unique guard
+    // makes the WHOLE loop idempotent AND self-healing — a re-run skips winners
+    // already paid (P2002) and pays any a prior INTERRUPTED run missed (partial
+    // settle). Each winner is isolated in its own try, so one failure (e.g. a
+    // P2025 from a user deleted between the read and the credit) can't strand the
+    // others or block recovery.
     for (const w of winners) {
       const prize = racePrizeLamports(w.rank - 1);
       if (prize <= BigInt(0)) continue;
-      const credited = await withSerializable(this.prisma, async (tx) => {
-        let rr: { id: string };
-        try {
-          rr = await tx.raceResult.create({
-            data: {
-              raceDay,
-              userId: w.userId,
-              rank: w.rank,
-              volumeLamports: BigInt(w.volumeLamports),
-              prizeLamports: prize,
-            },
-            select: { id: true },
+      try {
+        const credited = await withSerializable(this.prisma, async (tx) => {
+          let rr: { id: string };
+          try {
+            rr = await tx.raceResult.create({
+              data: {
+                raceDay,
+                userId: w.userId,
+                rank: w.rank,
+                volumeLamports: BigInt(w.volumeLamports),
+                prizeLamports: prize,
+              },
+              select: { id: true },
+            });
+          } catch (e) {
+            // Already paid this user for this day (concurrent settle / re-run) —
+            // no further statement runs on the aborted tx, so it clean-rolls back.
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+              return false;
+            }
+            throw e;
+          }
+          await applyBalanceDelta(tx, w.userId, prize, {
+            reason: 'race_prize',
+            refType: 'RaceResult',
+            refId: rr.id,
           });
-        } catch (e) {
-          // Already paid this user for this day (concurrent settle / re-run).
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return false;
-          throw e;
-        }
-        await applyBalanceDelta(tx, w.userId, prize, {
-          reason: 'race_prize',
-          refType: 'RaceResult',
-          refId: rr.id,
+          return true;
         });
-        return true;
-      });
-      if (credited) {
-        paid += 1;
-        total += prize;
+        if (credited) {
+          paid += 1;
+          total += prize;
+        }
+      } catch (e) {
+        this.logger.error(
+          `race settle ${raceDay}: failed to pay rank ${w.rank} (${w.userId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
       }
     }
     return { raceDay, paid, totalLamports: total.toString() };

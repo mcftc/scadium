@@ -25,20 +25,23 @@ const seedBet = (userId: string, amount: bigint, at: Date, status: 'won' | 'lost
 const balanceOf = async (id: string) =>
   (await prisma.user.findUniqueOrThrow({ where: { id } })).playBalanceLamports;
 
-// A fixed PAST UTC day no "now"-seeding test touches → deterministic, no pollution.
+// Fixed PAST UTC days no "now"-seeding test touches → deterministic, no pollution.
 const RACE_DAY = '20250115';
 const DAY_START = Date.UTC(2025, 0, 15);
 const DAY_END = DAY_START + 86_400_000;
+const RECOVERY_DAY = '20250116';
+const REC_START = Date.UTC(2025, 0, 16);
+const REC_END = REC_START + 86_400_000;
 
 describe('daily race + windowed leaderboard (integration, real Postgres)', () => {
   beforeAll(async () => {
     await prisma.$connect();
-    // Reset the fixed race day so the suite is idempotent across re-runs (the
+    // Reset the fixed race days so the suite is idempotent across re-runs (the
     // test DB is not wiped between runs — leftover RaceResult/Bet rows would make
     // settleRace no-op or shuffle the standings).
-    await prisma.raceResult.deleteMany({ where: { raceDay: RACE_DAY } });
+    await prisma.raceResult.deleteMany({ where: { raceDay: { in: [RACE_DAY, RECOVERY_DAY] } } });
     await prisma.bet.deleteMany({
-      where: { createdAt: { gte: new Date(DAY_START), lt: new Date(DAY_END) } },
+      where: { createdAt: { gte: new Date(DAY_START), lt: new Date(REC_END) } },
     });
   });
   afterAll(async () => {
@@ -80,6 +83,32 @@ describe('daily race + windowed leaderboard (integration, real Postgres)', () =>
     expect(again.paid).toBe(0);
     expect(await balanceOf(a.id)).toBe(racePrizeLamports(0));
     expect(await prisma.raceResult.count({ where: { raceDay: RACE_DAY } })).toBe(3);
+  });
+
+  it('recovers a PARTIALLY-settled day: pays the missed winners, never double-pays the paid one', async () => {
+    const recDayMid = new Date(REC_START + 8 * 3_600_000);
+    const a = await mkUser(); // rank 1 — simulate "already paid by an interrupted run"
+    const b = await mkUser(); // rank 2 — was missed
+    await seedBet(a.id, 10n * SOL, recDayMid);
+    await seedBet(b.id, 6n * SOL, recDayMid);
+
+    // Prior interrupted run committed rank 1 only (RaceResult row + the credit).
+    const rank1Prize = racePrizeLamports(0);
+    await prisma.raceResult.create({
+      data: { raceDay: RECOVERY_DAY, userId: a.id, rank: 1, volumeLamports: 10n * SOL, prizeLamports: rank1Prize },
+    });
+    await prisma.user.update({ where: { id: a.id }, data: { playBalanceLamports: rank1Prize } });
+
+    const res = await lb.settleRace(RECOVERY_DAY);
+
+    // Only the missed winner (b) is newly paid; a is NOT credited again.
+    expect(res.paid).toBe(1);
+    expect(await balanceOf(a.id)).toBe(rank1Prize); // unchanged — no double pay
+    expect(await balanceOf(b.id)).toBe(racePrizeLamports(1)); // recovered
+    // a's single race_prize came from the simulated prior run (we set it directly,
+    // so 0 ledger rows), b's from this settle (1 ledger row).
+    expect(await prisma.balanceLedger.count({ where: { userId: b.id, reason: 'race_prize' } })).toBe(1);
+    expect(await prisma.raceResult.count({ where: { raceDay: RECOVERY_DAY } })).toBe(2);
   });
 
   it('windowedTop(daily) ranks by TODAY volume and ignores out-of-window bets', async () => {
