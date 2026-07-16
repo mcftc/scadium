@@ -79,7 +79,7 @@ describe('bankroll drain guard (#30, near-floor house vault)', () => {
     expect(exposure.roundCapLamports).toBeLessThan(NEAR_FLOOR - RENT_FLOOR);
   });
 
-  it('blackjack: an over-cap seat bet is rejected; clearing a bet releases its hold', () => {
+  it('blackjack: an over-cap seat bet is rejected; clearing a bet releases its hold', async () => {
     const engine = new BlackjackEngine(prisma as never, gw(), fundedChain(NEAR_FLOOR), pow());
     const exposure = new ExposureGuard(NEAR_FLOOR);
     const tableId = randomUUID();
@@ -125,22 +125,22 @@ describe('bankroll drain guard (#30, near-floor house vault)', () => {
     });
 
     // 1 SOL main bet → 100× worst case → 50 SOL MAX_WIN anchor ≫ ~0.1 SOL cap.
-    expect(() =>
+    await expect(
       engine.placeBet({
         tableId,
         userId,
         bet: { mainLamports: SOL, side21p3Lamports: 0n, sidePerfectPairsLamports: 0n },
       }),
-    ).toThrow(/exposure limit/i);
+    ).rejects.toThrow(/exposure limit/i);
     expect(exposure.reservedLamports).toBe(0n);
 
     // A tiny bet (0.0001 SOL × 100× = 0.01 SOL potential) fits…
     const tiny = { mainLamports: SOL / 10_000n, side21p3Lamports: 0n, sidePerfectPairsLamports: 0n };
-    expect(engine.placeBet({ tableId, userId, bet: tiny }).previousTotalLamports).toBe(0n);
+    expect((await engine.placeBet({ tableId, userId, bet: tiny })).previousTotalLamports).toBe(0n);
     expect(exposure.reservedLamports).toBeGreaterThan(0n);
 
     // …and clearing it releases the reservation for the next player.
-    engine.clearBet(tableId, userId);
+    await engine.clearBet(tableId, userId);
     expect(exposure.reservedLamports).toBe(0n);
   });
 

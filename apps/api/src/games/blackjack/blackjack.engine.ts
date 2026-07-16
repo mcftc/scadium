@@ -5,6 +5,7 @@ import {
   type OnModuleInit,
   type OnModuleDestroy,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import {
   blackjackDeal,
@@ -192,12 +193,13 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    * serializable tx with a ledger row, then write endedAt and flip the table
    * 'waiting'. Per-round try/catch → SettlementFailure on error, continue.
    *
-   * NOTE: a `double` taken after the deal-time snapshot adds extra stake that is
-   * not re-persisted, so a crash after a double under-refunds the doubled
-   * portion — documented minor gap (the originally-locked stakes are always
-   * refunded). Rounds that crashed during the betting window have an empty
-   * stateJson (`{}`); their stakes were refunded synchronously by the service on
-   * the failed bet path, so there is nothing to refund — we just close them.
+   * Betting-window bets are persisted to stateJson as they are placed/cleared
+   * (persistBettingStakes, #H1), so a restart DURING the betting window refunds
+   * exactly the currently-accepted stakes here instead of finding an empty `{}`
+   * and losing them. A `double` taken after the deal-time snapshot adds extra
+   * stake that is not re-persisted, so a crash after a double under-refunds the
+   * doubled portion — a documented minor gap (the originally-locked stakes are
+   * always refunded).
    */
   private async recoverStrandedRounds(): Promise<void> {
     let stranded: { id: string; tableId: string; stateJson: unknown }[];
@@ -309,6 +311,32 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     if (typeof v === 'string' && /^\d+$/.test(v)) return BigInt(v);
     if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return BigInt(v);
     return BigInt(0);
+  }
+
+  /**
+   * Durably record the accepted bets of the OPEN betting window onto the round's
+   * stateJson in the shape `parseSeatStakes` reads (#H1). Called whenever a bet
+   * is placed/cleared or a seat leaves during betting, so a restart mid-window
+   * refunds exactly the currently-accepted stakes instead of finding an empty
+   * `{}` and refunding nothing. `deal()` later overwrites this with the full
+   * hand snapshot (same `seats[].bet` shape), so recovery keeps working.
+   */
+  private async persistBettingStakes(t: TableState): Promise<void> {
+    if (!t.roundDbId) return;
+    const seats = [...t.seats.values()]
+      .filter((s) => s.bet)
+      .map((s) => ({
+        userId: s.userId,
+        bet: {
+          mainLamports: s.bet!.mainLamports.toString(),
+          side21p3Lamports: s.bet!.side21p3Lamports.toString(),
+          sidePerfectPairsLamports: s.bet!.sidePerfectPairsLamports.toString(),
+        },
+      }));
+    await this.prisma.blackjackRound.update({
+      where: { id: t.roundDbId },
+      data: { stateJson: { phase: 'betting', seats } as Prisma.InputJsonValue },
+    });
   }
 
   // ---------- Table management ----------
@@ -513,20 +541,25 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Leave the table; returns any refundable bet (only during betting). */
-  leaveSeat(tableId: string, userId: string): { refundLamports: bigint } {
+  async leaveSeat(tableId: string, userId: string): Promise<{ refundLamports: bigint }> {
     const t = this.table(tableId);
     const seat = [...t.seats.values()].find((s) => s.userId === userId);
     if (!seat) throw new Error('Not seated');
     let refund = BigInt(0);
+    let wasBetting = false;
     if (seat.bet) {
       if (t.phase === 'betting') {
         refund = this.betTotal(seat.bet);
+        wasBetting = true;
       } else if (t.phase !== 'idle' && t.phase !== 'settled') {
         throw new Error('Hand in progress — finish the round first');
       }
     }
     t.seats.delete(seat.index);
     t.lastActivityAt = Date.now();
+    // Drop the departed seat's stake from the durable snapshot so recovery
+    // doesn't refund a bet the service already credited back here (#H1).
+    if (wasBetting) await this.persistBettingStakes(t);
     this.broadcast(t);
     return { refundLamports: refund };
   }
@@ -542,9 +575,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
    * has already debited `betTotal`; replacing returns the previous total for
    * refund. Placing the first bet of a round starts the betting countdown.
    */
-  placeBet(params: { tableId: string; userId: string; bet: SeatBet }): {
+  async placeBet(params: { tableId: string; userId: string; bet: SeatBet }): Promise<{
     previousTotalLamports: bigint;
-  } {
+  }> {
     const t = this.table(params.tableId);
     if (t.phase !== 'idle' && t.phase !== 'betting' && t.phase !== 'settled') {
       throw new Error('Bets are closed — wait for the next round');
@@ -584,17 +617,20 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     seat.idleRounds = 0;
     t.lastActivityAt = Date.now();
 
-    // First bet while idle/settled kicks off the betting window.
+    // First bet while idle/settled kicks off the betting window (which creates
+    // the round row and durably records this opening bet). A subsequent bet in
+    // an open window persists the updated stakes itself (#H1).
     if (t.phase === 'idle' || t.phase === 'settled') {
-      void this.openBetting(t);
+      await this.openBetting(t);
     } else {
+      await this.persistBettingStakes(t);
       this.broadcast(t);
     }
     return { previousTotalLamports: prev };
   }
 
   /** Clear the seat's bet during the betting window; returns the refund. */
-  clearBet(tableId: string, userId: string): { refundLamports: bigint } {
+  async clearBet(tableId: string, userId: string): Promise<{ refundLamports: bigint }> {
     const t = this.table(tableId);
     if (t.phase !== 'betting') throw new Error('No open betting window');
     const seat = [...t.seats.values()].find((s) => s.userId === userId);
@@ -602,6 +638,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     const refund = this.betTotal(seat.bet);
     seat.bet = null;
     t.exposure?.release(ExposureGuard.potential(refund, BLACKJACK.MAX_PAYOUT_X));
+    // Drop the cleared bet from the durable snapshot so recovery doesn't refund
+    // it again (the service already credited the refund) (#H1).
+    await this.persistBettingStakes(t);
     this.broadcast(t);
     return { refundLamports: refund };
   }
@@ -710,6 +749,9 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.prisma.blackjackTable.update({ where: { id: t.id }, data: { status: 'betting' } });
+    // Durably record the opening bet(s) so a restart during the betting window
+    // refunds them (#H1) rather than seeing an empty stateJson and losing them.
+    await this.persistBettingStakes(t);
     this.broadcast(t);
 
     if (t.timer) clearTimeout(t.timer);

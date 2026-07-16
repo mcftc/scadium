@@ -68,7 +68,7 @@ export class BlackjackService {
   async leaveSeat(tableId: string, userId: string) {
     let refund: bigint;
     try {
-      ({ refundLamports: refund } = this.engine.leaveSeat(tableId, userId));
+      ({ refundLamports: refund } = await this.engine.leaveSeat(tableId, userId));
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Leave rejected');
     }
@@ -106,7 +106,7 @@ export class BlackjackService {
     await this.rg.assertCanWager(params.userId, total);
     await this.debit(params.userId, total, params.tableId);
     try {
-      const { previousTotalLamports } = this.engine.placeBet({
+      const { previousTotalLamports } = await this.engine.placeBet({
         tableId: params.tableId,
         userId: params.userId,
         bet: { mainLamports, side21p3Lamports, sidePerfectPairsLamports },
@@ -125,7 +125,7 @@ export class BlackjackService {
   async clearBet(tableId: string, userId: string) {
     let refund: bigint;
     try {
-      ({ refundLamports: refund } = this.engine.clearBet(tableId, userId));
+      ({ refundLamports: refund } = await this.engine.clearBet(tableId, userId));
     } catch (e) {
       throw new BadRequestException(e instanceof Error ? e.message : 'Clear rejected');
     }

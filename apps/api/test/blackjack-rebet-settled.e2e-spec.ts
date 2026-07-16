@@ -104,9 +104,9 @@ const placeBet = (
   params: { tableId: string; userId: string; bet: SeatBet },
 ) =>
   (engine as {
-    placeBet: (p: { tableId: string; userId: string; bet: SeatBet }) => {
+    placeBet: (p: { tableId: string; userId: string; bet: SeatBet }) => Promise<{
       previousTotalLamports: bigint;
-    };
+    }>;
   }).placeBet(params);
 
 describe('blackjack rebet-during-settled money integrity (C1/C2)', () => {
@@ -135,7 +135,7 @@ describe('blackjack rebet-during-settled money integrity (C1/C2)', () => {
     // The service already debited the new stake before calling placeBet; it
     // then refunds `previousTotalLamports`. For a rebet during 'settled' the
     // previous (settled) stake must NOT be refundable — else it's free money.
-    const { previousTotalLamports } = placeBet(engine, {
+    const { previousTotalLamports } = await placeBet(engine, {
       tableId: table.id,
       userId: u.id,
       bet: bet(1_000n),
@@ -166,7 +166,7 @@ describe('blackjack rebet-during-settled money integrity (C1/C2)', () => {
 
     // u1 rebets → new round opens. u2 did NOT place a fresh (debited) bet, so
     // u2's stale settled bet must be cleared, not carried into the new round.
-    placeBet(engine, { tableId: table.id, userId: u1.id, bet: bet(1_000n) });
+    await placeBet(engine, { tableId: table.id, userId: u1.id, bet: bet(1_000n) });
     if (t.timer) clearTimeout(t.timer);
 
     const seatU2 = [...t.seats.values()].find((s) => s.userId === u2.id)!;
