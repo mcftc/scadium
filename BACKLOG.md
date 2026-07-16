@@ -62,3 +62,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 - [~] Provision Railway: ✅ project `scadium` + Postgres + Redis created; ⛔ compute services BLOCKED on a paid plan (free-tier limit). **Host comparison done** (`docs/deployment-architecture.md`): Railway wins on price+fit (~$20-27/mo, never-sleeps, managed PG+Redis) vs Render/Fly (~$60), AWS (~$100), Coolify (~$17 but self-managed DBs). io.net ruled out. → upgrade Railway Hobby to deploy.
 - [ ] Cloudflare edge: proxied records → Railway origins, SSL Full (strict), WAF, cache rules, auth rate-limit, geo trusted-proxy Transform Rule.
 - [ ] Cut over DNS; verify WS proxy, geo headers, health probes.
+
+## Process / CI gaps (owner decision)
+
+- [ ] **audit-status CI gate is now a silent pass.** `scripts/audit-status-gate.sh` blocks real-money cutover on open critical/high security findings filed as GitHub issues (`type:security` + `phase:M`), but we moved findings to `BACKLOG.md` — so the gate always finds 0 and passes. Options (owner's call): (a) re-point it at BACKLOG.md's Tier-2 real-money section but gate only a release/cutover branch (not every PR, which would halt dev while blockers are open); (b) keep filing the *real-money cutover* criticals as phase:M issues at cutover time; (c) accept the gate as dormant until the GitHub-issue flow resumes. Not fixed unilaterally — it changes the CI contract.
+- [ ] **Daily case / cashback pay nothing in play-money mode** (roadmap #3) — this is a DELIBERATE design choice (`#28`: "explicit non-value record… never presented as a paid claim"), not a bug. Whether play-money $SCAD rewards should credit `scadiumBalance` directly (making the rewards hub pay real off-chain) is a tokenomics decision for the owner.
