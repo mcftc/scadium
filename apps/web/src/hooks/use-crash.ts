@@ -77,6 +77,24 @@ export function useCrash() {
       withCredentials: true,
     });
 
+    // On every (re)connect the REST snapshot is the authoritative current round,
+    // so overwrite local state with it — a WS drop that spans the waiting→running
+    // transition (a rolling deploy or an edge reset) must not leave `phase` stuck
+    // at 'waiting', which would disable the cash-out button on a live bet (#H16).
+    // `connect` fires on the initial connect and on every automatic reconnect.
+    sock.on('connect', () => {
+      api<CrashSnapshot>('/crash/snapshot')
+        .then((snap) =>
+          setState((prev) => ({
+            ...snap,
+            history: snap.history?.length ? snap.history : (prev?.history ?? []),
+          })),
+        )
+        .catch(() => {
+          /* noop */
+        });
+    });
+
     sock.on(
       'crash:round-start',
       (p: { roundId: string; serverSeedHash: string; clientSeed: string; nonce: number }) => {

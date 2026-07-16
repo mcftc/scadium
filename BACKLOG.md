@@ -41,11 +41,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 ## Tier 4 — Ops / platform (with the Railway + Cloudflare cutover)
 
-- [ ] **H16 · Crash client has no reconnect-resync** → live stake stranded with cash-out disabled on every WS drop/redeploy. Re-fetch `/crash/snapshot` on `connect`/`reconnect`. `use-crash.ts:63`. *(Do before any redeploy-heavy platform.)*
+- [x] **H16 · Crash client has no reconnect-resync** → ✅ Fixed: a `connect` handler re-fetches `/crash/snapshot` and authoritatively resyncs round state on every (re)connect, so a WS drop across the waiting→running transition can't strand a live bet with the cash-out button disabled. `use-crash.ts`.
 - [ ] **H12 · API is effectively single-instance** (leader election, no request-forwarding). Run 1 `api` replica on Railway; add sticky routing / leader-forwarding only if HA is needed later.
 - [x] **H15 · pino redaction omits `x-geo-proxy-secret`** → ✅ added to `REDACTED_PATHS` (`pino.config.ts`); `redaction.spec.ts` asserts it's scrubbed.
 - [ ] **H19 · Prod compose ships no worker** → background jobs never run on that path. Ensure the `worker` service ships on Railway.
-- [ ] Graceful shutdown (`enableShutdownHooks` + SIGTERM → drain loops/sockets/queues); lock down public `/metrics`; SEO scaffolding (`robots`/sitemap/OG); `metadataBase` → `scadium.com`; lock `images.remotePatterns`.
+- [~] Graceful shutdown ✅ (`main.ts` now calls `enableShutdownHooks()` so SIGTERM runs the engines' OnModuleDestroy — Railway-critical). `metadataBase` → scadium.com ✅. Remaining: lock down public `/metrics`, SEO scaffolding (`robots`/sitemap/OG), lock `images.remotePatterns`.
 
 ## Tier 5 — Hygiene (low)
 

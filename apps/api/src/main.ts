@@ -81,6 +81,14 @@ async function bootstrap() {
   // Swagger — gated: OFF in production unless DOCS_ENABLED=true (#38).
   const docs = setupSwagger(app);
 
+  // Graceful shutdown: on SIGTERM/SIGINT (every PaaS rolling deploy — Railway,
+  // Fly, k8s), run the modules' OnModuleDestroy hooks so the crash/jackpot/
+  // lottery/blackjack engines release leadership + clear their loops, BullMQ
+  // stops, and Prisma/Redis close cleanly instead of the process being killed
+  // mid-round. Without this the hooks never fire and every deploy is an abrupt
+  // kill (round-recovery then has to clean up on the next boot).
+  app.enableShutdownHooks();
+
   // API_PORT for local/compose; PORT is what most PaaS hosts (Render/Railway/Fly)
   // inject and route to — honor it so the same image deploys unmodified.
   const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
