@@ -54,6 +54,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN}
       THROTTLE_TTL: ${THROTTLE_TTL}
       THROTTLE_LIMIT: ${THROTTLE_LIMIT}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       # Play-money mode: on-chain vars intentionally omitted.
     healthcheck:
       # 127.0.0.1 (not localhost): the API binds IPv4 0.0.0.0, but `localhost`

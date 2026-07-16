@@ -45,8 +45,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 - [x] **H16 · Crash client has no reconnect-resync** → ✅ Fixed: a `connect` handler re-fetches `/crash/snapshot` and authoritatively resyncs round state on every (re)connect, so a WS drop across the waiting→running transition can't strand a live bet with the cash-out button disabled. `use-crash.ts`.
 - [ ] **H12 · API is effectively single-instance** (leader election, no request-forwarding). Run 1 `api` replica on Railway; add sticky routing / leader-forwarding only if HA is needed later.
 - [x] **H15 · pino redaction omits `x-geo-proxy-secret`** → ✅ added to `REDACTED_PATHS` (`pino.config.ts`); `redaction.spec.ts` asserts it's scrubbed.
-- [ ] **H19 · Prod compose ships no worker** → background jobs never run on that path. Ensure the `worker` service ships on Railway.
-- [~] Graceful shutdown ✅; `metadataBase`→scadium.com ✅; SEO `robots.ts`+`sitemap.ts` ✅; `images.remotePatterns` locked (`[]`, was wildcard) ✅. Remaining: lock public `/metrics` (do via a Cloudflare WAF rule — see runbook), OG images.
+- [x] **H19 · Prod compose ships no worker** → ✅ Fixed: added the `worker` service to `docker-compose.prod.yml` (Helm's `worker.yaml` already covered the k8s path). All 9 BullMQ queues now run on the single-VPS path too.
+- [~] Graceful shutdown ✅; `metadataBase`→scadium.com ✅; SEO `robots.ts`+`sitemap.ts` ✅; `images.remotePatterns` locked (`[]`, was wildcard) ✅; **public `/metrics` token gate ✅** — optional `METRICS_TOKEN` bearer guard on the scrape endpoint (open when unset for private/edge-blocked scrapes; Caddy/Railway forward every path so network isolation alone didn't cover it). `metrics.controller.ts` + `metrics.controller.spec.ts`. Belt-and-suspenders with the documented Cloudflare WAF rule. Remaining: OG images.
 
 ## Tier 5 — Hygiene (low)
 
