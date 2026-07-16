@@ -22,6 +22,7 @@ import { CrashGateway } from './crash.gateway';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { ExposureGuard } from '../../common/exposure-guard';
 import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
+import { LiveFeedService } from '../../live/live-feed.service';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 
 type Phase = 'waiting' | 'running' | 'busted';
@@ -112,6 +113,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live the round's bust is anchored on the ONE scadium_rng program.
     @Optional() private readonly onchainRng?: OnchainRngService,
+    // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, CRASH_LOCK_KEY, CRASH_LOCK_TTL_MS);
@@ -945,6 +948,22 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         );
       }
       return null;
+    }
+
+    // Post-commit, fire-and-forget: surface every player's settle on the feed.
+    for (let i = 0; i < bets.length; i += 1) {
+      const bet = bets[i]!;
+      const job = settleJobs[i]!;
+      const won = job.payout > BigInt(0);
+      this.liveFeed?.publishSettledBet({
+        userId: bet.userId,
+        betId: job.betId,
+        gameType: 'crash',
+        amountLamports: job.stake,
+        payoutLamports: job.payout,
+        multiplier: won && job.stake > BigInt(0) ? Number(job.payout) / Number(job.stake) : null,
+        won,
+      });
     }
 
     return { settleJobs };

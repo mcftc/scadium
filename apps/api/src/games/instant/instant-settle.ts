@@ -7,6 +7,7 @@ import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import type { AffiliatesService } from '../../affiliates/affiliates.service';
 import type { OnchainRngService } from '../../solana/onchain-rng.service';
+import type { LiveFeedPublisher } from '../../live/live-feed.types';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
@@ -41,6 +42,8 @@ export interface InstantDeps {
    * entropy. Absent/disabled → the deterministic off-chain derivation (unchanged).
    */
   onchainRng?: OnchainRngService;
+  /** Optional sitewide live-bet feed; emitted post-commit, never blocks settle. */
+  liveFeed?: LiveFeedPublisher;
 }
 
 export interface InstantSettleResult {
@@ -101,7 +104,7 @@ export async function settleInstantBet(
     });
   }
 
-  return withSerializable(deps.prisma, async (tx) => {
+  const result = await withSerializable(deps.prisma, async (tx) => {
     // 1) Debit the stake through the single mutation point (writes a ledger row).
     await applyBalanceDelta(tx, userId, -amountLamports, {
       reason: `${gameType}_bet`,
@@ -212,4 +215,17 @@ export async function settleInstantBet(
       },
     };
   });
+
+  // Post-commit, fire-and-forget: surface the settled bet on the sitewide feed.
+  deps.liveFeed?.publishSettledBet({
+    userId,
+    betId: result.betId,
+    gameType,
+    amountLamports,
+    payoutLamports: BigInt(result.payoutLamports),
+    multiplier: result.multiplier,
+    won: result.won,
+  });
+
+  return result;
 }

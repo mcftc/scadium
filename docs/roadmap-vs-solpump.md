@@ -60,7 +60,7 @@ Scadium is already ahead of solpump.io on breadth and mechanics: 12 fully playab
 - ✅ **DONE** — Fix affiliate creditReferral coverage across all 12 games + add an affiliates coverage guard spec (money bug, S) — commits `5f438f2` + `d47d4f7`
 - ✅ **DONE** — Publish RTP/house-edge on every game page (S) — `GAME_RTP` single-source map derived from `HOUSE_EDGE`, surfaced on all 12 games, `rtp.test.ts` guard (commit `fc094cc`). (Per-game `/fairness/<game>` landing pages deferred — the shared `/fairness` verifier is deep-linked from each game.)
 - ✅ **DONE** — Add RecentRounds bet-history panel to dice/limbo/plinko/wheel (commit `1e948a1`)
-- [~] **IN PROGRESS** — Global live-bet / big-win feed: cross-game settlement broadcast + sitewide ticker (M)
+- ✅ **DONE** — Global live-bet feed: `/live` socket firehose + `GET /live/bets` seed + `LiveBetTicker` in the app shell; all 12 games publish post-commit (fire-and-forget). `LiveModule`.
 - Off-chain value fallback: daily case and cashback credit scadiumBalance via applyBalanceDelta so rewards pay something real today (S) — **owner tokenomics decision, see BACKLOG.md**
 - Regenerate the burned committed program keypairs (H10) — mandatory before any deploy, do it now (S)
 - Fix the audit-status CI gate ↔ BACKLOG.md process mismatch so security findings can actually trip the gate (S) — **owner CI-contract decision, see BACKLOG.md**

@@ -15,6 +15,7 @@ import {
   type StatefulDeps,
   type StepResult,
 } from '../instant/stateful-round';
+import { LiveFeedService } from '../../live/live-feed.service';
 
 /**
  * Tower: climb a tower row by row. Each row has `TOWER.COLUMNS` tiles, of which
@@ -36,6 +37,7 @@ export class TowerService {
     // Optional so unit specs can construct the service without the chain layer;
     // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
     @Optional() private readonly onchainRng?: OnchainRngService,
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {}
 
   private get deps(): StatefulDeps {
@@ -46,6 +48,7 @@ export class TowerService {
       proofOfWager: this.proofOfWager,
       affiliates: this.affiliates,
       onchainRng: this.onchainRng,
+      liveFeed: this.liveFeed,
     };
   }
 

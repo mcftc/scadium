@@ -8,6 +8,7 @@ import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service
 import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { settleInstantBet } from '../instant/instant-settle';
+import { LiveFeedService } from '../../live/live-feed.service';
 
 @Injectable()
 export class DiceService {
@@ -20,6 +21,7 @@ export class DiceService {
     // Optional so unit specs can construct the service without the chain layer;
     // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
     @Optional() private readonly onchainRng?: OnchainRngService,
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {}
 
   /**
@@ -52,6 +54,7 @@ export class DiceService {
         proofOfWager: this.proofOfWager,
       affiliates: this.affiliates,
         onchainRng: this.onchainRng,
+        liveFeed: this.liveFeed,
       },
       { userId, gameType: 'dice', amountLamports, gameParams: { target, mode } },
       (seed) => {

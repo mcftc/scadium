@@ -15,6 +15,7 @@ import {
   type StatefulDeps,
   type StepResult,
 } from '../instant/stateful-round';
+import { LiveFeedService } from '../../live/live-feed.service';
 
 /**
  * Hi-Lo: a base card is shown; the player guesses whether the next card is
@@ -37,6 +38,7 @@ export class HiloService {
     // Optional so unit specs can construct the service without the chain layer;
     // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
     @Optional() private readonly onchainRng?: OnchainRngService,
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {}
 
   private get deps(): StatefulDeps {
@@ -47,6 +49,7 @@ export class HiloService {
       proofOfWager: this.proofOfWager,
       affiliates: this.affiliates,
       onchainRng: this.onchainRng,
+      liveFeed: this.liveFeed,
     };
   }
 

@@ -22,6 +22,7 @@ import { SeedManagerService } from '../../fairness/seed-manager.service';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { CoinflipGateway } from './coinflip.gateway';
+import { LiveFeedService } from '../../live/live-feed.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 
@@ -52,6 +53,8 @@ export class CoinflipService {
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live each flip's outcome is anchored on the ONE scadium_rng program.
     @Optional() private readonly onchainRng?: OnchainRngService,
+    // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {}
 
   // ------------ Queries ------------
@@ -406,19 +409,39 @@ export class CoinflipService {
         settles: [
           {
             betId: creatorBetId,
+            userId: game.creatorId,
             walletAddress: updated.creator!.walletAddress,
             payout: creatorWins ? winnerPayout : BigInt(0),
             multiplier: creatorWins ? COINFLIP.PAYOUT_MULTIPLIER : 0,
+            won: creatorWins,
           },
           {
             betId: joinerBetId,
+            userId: params.userId,
             walletAddress: updated.joiner!.walletAddress,
             payout: creatorWins ? BigInt(0) : winnerPayout,
             multiplier: creatorWins ? 0 : COINFLIP.PAYOUT_MULTIPLIER,
+            won: !creatorWins,
           },
         ],
       };
     });
+
+    // Post-commit, fire-and-forget: surface both sides of the resolved flip on
+    // the sitewide live feed. Skipped on a replay (no settles).
+    if (!settled.replayed) {
+      for (const s of settled.settles) {
+        this.liveFeed?.publishSettledBet({
+          userId: s.userId,
+          betId: s.betId,
+          gameType: 'coinflip',
+          amountLamports: settled.stake,
+          payoutLamports: s.payout,
+          multiplier: s.multiplier,
+          won: s.won,
+        });
+      }
+    }
 
     // On-chain settlement receipts fire AFTER the ledger transaction commits
     // (fire-and-forget — never blocks the response; no-op when disabled). On a

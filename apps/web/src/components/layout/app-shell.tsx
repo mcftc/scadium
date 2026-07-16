@@ -12,6 +12,7 @@ import { AgeGate } from '@/components/compliance/age-gate';
 import { LegalGate } from '@/components/compliance/legal-gate';
 import { CookieBanner } from '@/components/compliance/cookie-banner';
 import { MaintenanceBanner } from '@/components/layout/maintenance-banner';
+import { LiveBetTicker } from '@/components/layout/live-bet-ticker';
 import { usePlatformLive } from '@/hooks/use-platform';
 
 /**
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <CookieBanner />
       <MaintenanceBanner />
       <Header />
+      <LiveBetTicker />
       <div className="flex flex-1 min-h-0">
         <aside className="w-0 lg:w-72 shrink-0 lg:border-r border-border/50 lg:bg-surface/30">
           <div className="lg:sticky lg:top-14 flex max-lg:h-0 lg:h-[calc(100vh-3.5rem)] flex-col">

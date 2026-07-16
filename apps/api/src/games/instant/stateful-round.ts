@@ -7,6 +7,7 @@ import type { RgService } from '../../responsible-gambling/rg.service';
 import type { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service';
 import type { AffiliatesService } from '../../affiliates/affiliates.service';
 import type { OnchainRngService } from '../../solana/onchain-rng.service';
+import type { LiveFeedPublisher } from '../../live/live-feed.types';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 
@@ -39,6 +40,8 @@ export interface StatefulDeps {
    * the deterministic off-chain build (unchanged).
    */
   onchainRng?: OnchainRngService;
+  /** Optional sitewide live-bet feed; emitted post-commit on terminal settle. */
+  liveFeed?: LiveFeedPublisher;
 }
 
 export interface RoundFairness {
@@ -248,7 +251,7 @@ export async function advanceStatefulRound(
 ): Promise<RoundView | RoundSettleResult> {
   const { userId, roundId, gameType } = params;
 
-  return withSerializable(deps.prisma, async (tx) => {
+  const result = await withSerializable<RoundView | RoundSettleResult>(deps.prisma, async (tx) => {
     const round = await tx.instantRound.findUnique({ where: { id: roundId } });
     if (!round || round.userId !== userId || round.gameType !== gameType) {
       throw new NotFoundException('round not found');
@@ -371,6 +374,21 @@ export async function advanceStatefulRound(
       fairness,
     };
   });
+
+  // Post-commit, fire-and-forget: only terminal settlements hit the live feed.
+  if (isSettled(result)) {
+    deps.liveFeed?.publishSettledBet({
+      userId,
+      betId: result.betId,
+      gameType,
+      amountLamports: BigInt(result.stakeLamports),
+      payoutLamports: BigInt(result.payoutLamports),
+      multiplier: result.multiplier,
+      won: result.won,
+    });
+  }
+
+  return result;
 }
 
 /** Type guard so callers can branch on the `advance` return. */

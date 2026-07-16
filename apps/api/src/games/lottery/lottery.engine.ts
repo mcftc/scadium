@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import {
   commitServerSeed,
   generateClientSeed,
@@ -25,6 +25,7 @@ import { ChainService } from '../../solana/chain.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { LotteryGateway } from './lottery.gateway';
+import { LiveFeedService } from '../../live/live-feed.service';
 import { splitBracketPrizes } from './lottery.settlement';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
@@ -110,6 +111,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     private readonly proofOfWager: ProofOfWagerService,
     private readonly affiliates: AffiliatesService,
     private readonly redis?: RedisService,
+    // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, LOTTERY_LOCK_KEY, LOTTERY_LOCK_TTL_MS);
@@ -534,6 +537,15 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       ticketIds: string[];
     }[] = [];
     let ticketsLen = 0;
+    // Per-ticket rows for the sitewide live feed. Rebuilt inside the tx (reset
+    // before the ticket loop) so a serializable RETRY can't double-count.
+    let feedJobs: {
+      userId: string;
+      betId: string;
+      cost: bigint;
+      payout: bigint;
+      won: boolean;
+    }[] = [];
 
     // ----- Ledger + ticket updates + draw flip + reveal, atomically -----
     try {
@@ -631,6 +643,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
         });
         assertRoundClaimed(count, 'lottery', this.current.id);
 
+        feedJobs = []; // reset per attempt (retry-safe)
         for (const r of ticketResults) {
           const t = r.ticket;
           // NET prize (#183 basis): GREATEST(payout - cost, 0). Reused for both
@@ -698,7 +711,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               won: r.won,
             },
           });
-          await tx.bet.create({
+          const bet = await tx.bet.create({
+            select: { id: true },
             data: {
               userId: t.userId,
               gameType: 'lottery',
@@ -727,6 +741,13 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
                 },
               },
             },
+          });
+          feedJobs.push({
+            userId: t.userId,
+            betId: bet.id,
+            cost: t.costLamports,
+            payout: r.payoutLamports,
+            won: r.won,
           });
         }
 
@@ -778,6 +799,20 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     this.current.status = 'drawn';
+
+    // Post-commit, fire-and-forget: surface every settled ticket on the feed.
+    for (const job of feedJobs) {
+      this.liveFeed?.publishSettledBet({
+        userId: job.userId,
+        betId: job.betId,
+        gameType: 'lottery',
+        amountLamports: job.cost,
+        payoutLamports: job.payout,
+        multiplier: null,
+        won: job.won,
+      });
+    }
+
     // Unwon slices fund the next round's pool (PancakeSwap auto-injection).
     this.carryRolloverScadBase = nextRollover;
 

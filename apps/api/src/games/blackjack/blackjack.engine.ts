@@ -33,6 +33,7 @@ import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { BlackjackGateway } from './blackjack.gateway';
+import { LiveFeedService } from '../../live/live-feed.service';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { ExposureGuard } from '../../common/exposure-guard';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
@@ -136,6 +137,8 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live the round's deck is anchored on the ONE scadium_rng program.
     @Optional() private readonly onchainRng?: OnchainRngService,
+    // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(
@@ -1198,6 +1201,19 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
         );
       }
       return;
+    }
+
+    // Post-commit, fire-and-forget: surface every seat's settle on the feed.
+    for (const d of seatData) {
+      this.liveFeed?.publishSettledBet({
+        userId: d.seat.userId,
+        betId: d.betId,
+        gameType: 'blackjack',
+        amountLamports: d.stake,
+        payoutLamports: d.payout,
+        multiplier: d.won && d.stake > BigInt(0) ? d.multiplier : null,
+        won: d.won,
+      });
     }
 
     // On-chain settlement receipts AFTER the ledger tx commits (fire-and-forget,

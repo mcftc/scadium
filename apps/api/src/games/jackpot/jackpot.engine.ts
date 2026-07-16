@@ -18,6 +18,7 @@ import { OnchainRngService } from '../../solana/onchain-rng.service';
 import { RedisService } from '../../redis/redis.service';
 import { LeaderElection } from '../../redis/leader-election';
 import { JackpotGateway } from './jackpot.gateway';
+import { LiveFeedService } from '../../live/live-feed.service';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 import { DEMO_BOTS, DEMO_BOT_BALANCE, demoBotsEnabled } from '../bots/demo-bots.const';
@@ -85,6 +86,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     // Optional shared on-chain RNG driver (the @Global SolanaModule supplies it);
     // when live the winning ticket is anchored on the ONE scadium_rng program.
     @Optional() private readonly onchainRng?: OnchainRngService,
+    // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, JACKPOT_LOCK_KEY, JACKPOT_LOCK_TTL_MS);
@@ -425,10 +428,12 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     // chain calls fire AFTER the tx commits.
     const settleJobs: {
       betId: string;
+      userId: string;
       walletAddress: string;
       stake: bigint;
       payout: bigint;
       multiplier: number;
+      won: boolean;
     }[] = [];
 
     // Refund every entry / draw + settle every player + flip the round terminal
@@ -540,10 +545,12 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           const betId = randomUUID();
           settleJobs.push({
             betId,
+            userId,
             walletAddress: info.walletAddress,
             stake: info.amount,
             payout: credited,
             multiplier,
+            won,
           });
 
           await tx.user.update({
@@ -657,6 +664,19 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     }
 
     this.current.status = 'drawn';
+
+    // Post-commit, fire-and-forget: surface every entry's settle on the feed.
+    for (const job of settleJobs) {
+      this.liveFeed?.publishSettledBet({
+        userId: job.userId,
+        betId: job.betId,
+        gameType: 'jackpot',
+        amountLamports: job.stake,
+        payoutLamports: job.payout,
+        multiplier: job.won && job.stake > BigInt(0) ? job.multiplier : null,
+        won: job.won,
+      });
+    }
 
     // On-chain settlement receipts AFTER the bet rows commit (fire-and-forget,
     // no-op when disabled — never blocks the round loop).

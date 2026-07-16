@@ -15,6 +15,7 @@ import {
   type StatefulDeps,
   type StepResult,
 } from '../instant/stateful-round';
+import { LiveFeedService } from '../../live/live-feed.service';
 
 /**
  * Mines: a 5×5 (CELLS) field with `mines` hidden bombs. The player reveals
@@ -35,6 +36,7 @@ export class MinesService {
     // Optional so unit specs can construct the service without the chain layer;
     // the @Global SolanaModule supplies it in the running app (on-chain anchoring).
     @Optional() private readonly onchainRng?: OnchainRngService,
+    @Optional() private readonly liveFeed?: LiveFeedService,
   ) {}
 
   private get deps(): StatefulDeps {
@@ -45,6 +47,7 @@ export class MinesService {
       proofOfWager: this.proofOfWager,
       affiliates: this.affiliates,
       onchainRng: this.onchainRng,
+      liveFeed: this.liveFeed,
     };
   }
 
