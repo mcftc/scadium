@@ -37,24 +37,57 @@ function base58(buf: Buffer): string {
 }
 
 /**
- * Find and decode the first `Deposited`/`Withdrawn` event in a confirmed
- * transaction's log messages. Returns null when the logs carry no such event
- * (wrong program, failed tx logs, unrelated data).
+ * Decode the base64 payloads of `Program data:` lines that were emitted while
+ * `programId` is the ACTIVE invoke frame — never trusting a `Program data:`
+ * line emitted by some OTHER program in the same transaction (#H5/#H5a). Solana
+ * logs bracket each program's execution as `Program <id> invoke [depth]` …
+ * `Program <id> success|failed`, and CPIs nest, so we track the invoke stack and
+ * only accept a data line whose top-of-stack program equals `programId`.
+ *
+ * Without this scoping, a look-alike program could emit a forged event with the
+ * right discriminator and be trusted as if it came from our program.
+ */
+export function programScopedEventPayloads(
+  logMessages: readonly string[] | null | undefined,
+  programId: string | null | undefined,
+): Buffer[] {
+  const out: Buffer[] = [];
+  if (!logMessages || !programId) return out;
+  const stack: string[] = [];
+  for (const line of logMessages) {
+    const invoke = /^Program (\S+) invoke \[\d+\]$/.exec(line);
+    if (invoke) {
+      stack.push(invoke[1]!);
+      continue;
+    }
+    if (/^Program \S+ (?:success|failed)/.test(line)) {
+      stack.pop();
+      continue;
+    }
+    if (!line.startsWith('Program data: ')) continue;
+    if (stack[stack.length - 1] !== programId) continue; // wrong emitter — ignore
+    try {
+      out.push(Buffer.from(line.slice('Program data: '.length), 'base64'));
+    } catch {
+      /* skip malformed base64 */
+    }
+  }
+  return out;
+}
+
+/**
+ * Find and decode the first `Deposited`/`Withdrawn` event that OUR vault program
+ * (`programId`) emitted in a confirmed transaction's logs. Returns null when the
+ * logs carry no such event from our program (wrong/forged emitter, failed tx,
+ * unrelated data).
  */
 export function parseVaultEvent(
   logMessages: readonly string[] | null | undefined,
   name: 'Deposited' | 'Withdrawn',
+  programId: string | null | undefined,
 ): VaultEvent | null {
-  if (!logMessages) return null;
   const disc = eventDiscriminator(name);
-  for (const line of logMessages) {
-    if (!line.startsWith('Program data: ')) continue;
-    let payload: Buffer;
-    try {
-      payload = Buffer.from(line.slice('Program data: '.length), 'base64');
-    } catch {
-      continue;
-    }
+  for (const payload of programScopedEventPayloads(logMessages, programId)) {
     if (payload.length < 8 + 32 + 8 + 8) continue;
     if (!payload.subarray(0, 8).equals(disc)) continue;
     return {

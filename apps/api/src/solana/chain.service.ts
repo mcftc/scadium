@@ -13,7 +13,7 @@ import {
 import { createHash } from 'crypto';
 import { HOUSE, resolveNetworkConfig, type SolanaNetwork } from '@scadium/shared';
 import { settlementMoved } from './settlement-verify';
-import { parseVaultEvent, type VaultEvent } from './vault-events';
+import { parseVaultEvent, programScopedEventPayloads, type VaultEvent } from './vault-events';
 import { COSIGNER_PROVIDER, type CosignerKeyProvider } from './cosigner-key.provider';
 import { coversReserve, reserveFloorLamports } from './treasury-guard';
 import { treasuryPayoutBlockedTotal, payoutFailedTotal } from '../observability/metrics.registry';
@@ -233,6 +233,9 @@ export class ChainService implements OnModuleInit {
       const event = parseVaultEvent(
         tx.meta.logMessages,
         kind === 'deposit' ? 'Deposited' : 'Withdrawn',
+        // #H5a — only trust an event our OWN vault program emitted, not a
+        // look-alike program's forged `Program data:` line in the same tx.
+        this.programIdBase58,
       );
       if (!event || event.user !== walletAddress || event.amount <= 0n) return null;
       return event;
@@ -876,9 +879,9 @@ export class ChainService implements OnModuleInit {
       if (!tx?.meta || tx.meta.err) return [];
       const disc = createHash('sha256').update('event:TicketBought').digest().subarray(0, 8);
       const events: { drawIndex: bigint; buyer: string; digits: number[] }[] = [];
-      for (const log of tx.meta.logMessages ?? []) {
-        if (!log.startsWith('Program data: ')) continue;
-        const buf = Buffer.from(log.slice('Program data: '.length), 'base64');
+      // #H5 — only trust TicketBought events OUR lottery program emitted; a
+      // look-alike program in the same tx could forge free tickets otherwise.
+      for (const buf of programScopedEventPayloads(tx.meta.logMessages, this.lotteryProgramIdBase58)) {
         // event TicketBought: draw_index u64 | buyer 32 | digits[6]
         // (after the 8-byte event discriminator).
         if (buf.length < 8 + 8 + 32 + 6 || !buf.subarray(0, 8).equals(disc)) continue;

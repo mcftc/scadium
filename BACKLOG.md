@@ -22,11 +22,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 - [ ] **C4 · Reward/dividend claim double-pay on missed confirmation.** Chain send swallows errors to null; failed-path restores the reserve while tokens already landed. Add an on-chain existence/signature probe before restore. `rewards.service.ts:384`, `chain.service.ts:965`.
 - [ ] **H13 · Reward claim `period = Date.now()` defeats idempotency.** Use a fixed bucket (per-day/week) so `@@unique([userId,kind,period])` + the ClaimRecord PDA actually bind. `rewards.service.ts:56,147`.
+- [x] **H5a · `verifyVaultTransfer` trusts forged events.** ✅ Fixed: new `programScopedEventPayloads` tracks the Solana invoke stack so only `Program data:` lines emitted while OUR vault program is the active frame are trusted; a look-alike program's forged event (incl. via CPI) is rejected. `vault-events.ts` + `chain.service.ts`. Test: `vault-events.spec.ts`.
+- [x] **H5 · `verifyTicketTx` accepts forged `TicketBought` events** → ✅ same fix: ticket parse now scoped to the configured lottery program via `programScopedEventPayloads`. `chain.service.ts`.
 - [ ] **H5b · On-chain settlement bridge unwired.** `settleBet` has zero callers → net play never sweeps between user/house vaults (loser self-withdraws deposit; winner unfunded). Wire it + schedule the `fundedDrift/chainDrift/vaultDrift` monitors. `chain.service.ts:291`, `vault-bridge.service.ts:97`.
 - [ ] **H5a · `verifyVaultTransfer` trusts forged events.** Assert the confirmed tx invoked `VAULT_PROGRAM_ID` + verify lamport delta. `chain.service.ts:227`.
 - [x] **H4 · Lottery never pays winners in default (chain-disabled) mode.** ✅ Fixed: the settle now credits each winning ticket's `payoutLamports` to the winner's play balance via `applyBalanceDelta` when the chain is disabled (on-chain mode still pays $SCAD on-chain, so no double-pay). `lottery.engine.ts`. Test: `lottery-playmoney-payout.e2e-spec.ts` (red→green).
 - [ ] **H6 · `/lottery/faucet` drains the cosigner.** 100 $SCAD to any caller, no devnet/admin/limit guard. `lottery.service.ts:214`.
-- [ ] **H5 · `verifyTicketTx` accepts forged `TicketBought` events** from any program. `chain.service.ts:884`.
 - [ ] **H7 · On-chain daily draw can never reveal** (`target_slot` expires before reveal → synthetic fallback, `pay_prize` fails forever). Re-pin the slot near reveal. `lottery.engine.ts:401`.
 - [ ] **H8 · Restart settles the open lottery draw early** (`recoverStrandedDraws` has no `drawAt` filter). `lottery.engine.ts:191`.
 - [ ] **H9 · Real-money gate not coupled to mainnet-custody config.** A non-prod `NODE_ENV` + mainnet + program id + file cosigner enables real deposits with KYC failing open. `real-money-gate.ts:23`.
