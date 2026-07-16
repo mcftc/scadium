@@ -552,6 +552,18 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
     const seat = [...t.seats.values()].find((s) => s.userId === params.userId);
     if (!seat) throw new Error('Take a seat first');
 
+    // A bet arriving while phase === 'settled' starts a NEW round during the
+    // result pause. Every seat's bet still holds the PREVIOUS round's stake,
+    // which settle() already resolved and paid out. Clear them all before
+    // this new bet lands: otherwise this seat's stale bet would be reported as
+    // `previousTotalLamports` and refunded as if it were a live wager (money
+    // creation, C1), and every other seat's stale bet would ride the new round
+    // with no fresh debit (C2). A bet replaced mid-'betting' is untouched and
+    // still legitimately refunded below.
+    if (t.phase === 'settled') {
+      for (const s of t.seats.values()) s.bet = null;
+    }
+
     const prev = seat.bet ? this.betTotal(seat.bet) : BigInt(0);
 
     // House exposure cap (#30) — funded mode, inside an open window (the
