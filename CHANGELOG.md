@@ -6,6 +6,7 @@ Work is tracked in `BACKLOG.md`; production-readiness findings in `docs/audit/ph
 ## [Unreleased]
 
 ### Fixed
+- **Web hardening:** locked `images.remotePatterns` from wildcard `**` to `[]` (nothing uses next/image with remote hosts — the wildcard was an open, paid image proxy); added `robots.ts` + `sitemap.ts` (SEO scaffolding, scadium.com); tightened avatar `avatarUrl` validation to base64 raster images / http(s) / empty only, rejecting SVG and other script-capable data URLs (stored-XSS vector). Tests: `update-profile-avatar.spec.ts`.
 - **Graceful shutdown:** `main.ts` now calls `app.enableShutdownHooks()`, so SIGTERM/SIGINT (every Railway/PaaS rolling deploy) runs the modules' `OnModuleDestroy` hooks — the crash/jackpot/lottery/blackjack engines release leadership and clear their loops, BullMQ stops, Prisma/Redis close — instead of an abrupt mid-round kill.
 - **Crash client reconnect-resync (H16):** the crash hook now re-fetches `/crash/snapshot` on every socket (re)connect and authoritatively resyncs round state, so a WebSocket drop across the waiting→running transition (a rolling deploy / edge reset) can no longer leave `phase` stuck at 'waiting' and disable the cash-out button on a live bet. `apps/web/src/hooks/use-crash.ts`.
 - **Log-redaction: geo proxy secret (H15):** `x-geo-proxy-secret` (the trusted-proxy credential that authenticates geo headers) is now in the pino redaction list, so it can't leak from logs and be replayed to defeat geoblocking. Test: `redaction.spec.ts`.

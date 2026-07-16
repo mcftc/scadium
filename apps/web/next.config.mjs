@@ -6,9 +6,11 @@ const nextConfig = {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: '**' },
-    ],
+    // Locked down: no external image hosts are used (avatars are data-URLs /
+    // local presets), and a wildcard `hostname: '**'` turns the deployment into
+    // an open, paid image proxy for any host. Add explicit patterns here only if
+    // a real remote image source is introduced.
+    remotePatterns: [],
   },
 };
 

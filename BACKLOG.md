@@ -45,11 +45,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 - [ ] **H12 · API is effectively single-instance** (leader election, no request-forwarding). Run 1 `api` replica on Railway; add sticky routing / leader-forwarding only if HA is needed later.
 - [x] **H15 · pino redaction omits `x-geo-proxy-secret`** → ✅ added to `REDACTED_PATHS` (`pino.config.ts`); `redaction.spec.ts` asserts it's scrubbed.
 - [ ] **H19 · Prod compose ships no worker** → background jobs never run on that path. Ensure the `worker` service ships on Railway.
-- [~] Graceful shutdown ✅ (`main.ts` now calls `enableShutdownHooks()` so SIGTERM runs the engines' OnModuleDestroy — Railway-critical). `metadataBase` → scadium.com ✅. Remaining: lock down public `/metrics`, SEO scaffolding (`robots`/sitemap/OG), lock `images.remotePatterns`.
+- [~] Graceful shutdown ✅; `metadataBase`→scadium.com ✅; SEO `robots.ts`+`sitemap.ts` ✅; `images.remotePatterns` locked (`[]`, was wildcard) ✅. Remaining: lock public `/metrics` (do via a Cloudflare WAF rule — see runbook), OG images.
 
 ## Tier 5 — Hygiene (low)
 
-- [ ] Avatar `avatarUrl`: 120 KB client data-URL, prefix-regex-only validation, stored in Postgres → move to a Railway bucket + decode-validate + size-cap. `users.service` updateProfile.
+- [~] Avatar `avatarUrl`: ✅ tightened validation — only base64 raster (png/jpeg/webp/gif) data URLs, http(s), or empty; SVG/script payloads rejected (stored-XSS); 120 KB cap kept. Test: `update-profile-avatar.spec.ts`. Move-to-bucket deferred to the Railway migration.
 - [x] List endpoints: ✅ shared `parseLimit()` helper (`common/parse-limit.ts`) applied to all 16 list-controller sites — NaN/blank→fallback, fractional truncated, clamped to [1,max]. Test: `parse-limit.spec.ts`.
 - [ ] BigInt-in-JSON: latent only (raw-BigInt methods have no callers) — wire serialization before exposing them.
 
