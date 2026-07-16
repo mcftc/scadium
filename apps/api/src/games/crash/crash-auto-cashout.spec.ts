@@ -12,7 +12,7 @@ describe('crash runAutoCashouts — failed cashout is logged, not swallowed (#21
   // this.logger, so the injected deps are never used.
   const makeEngine = () =>
     new CrashEngine({} as never, {} as never, {} as never, {} as never) as unknown as {
-      current: { id: string; bets: Map<string, unknown> };
+      current: { id: string; bustPoint: number; bets: Map<string, unknown> };
       cashOut: (userId: string) => Promise<unknown>;
       logger: { error: (m: string) => void };
       runAutoCashouts: (m: number) => Promise<void>;
@@ -29,6 +29,7 @@ describe('crash runAutoCashouts — failed cashout is logged, not swallowed (#21
     const engine = makeEngine();
     engine.current = {
       id: 'round-1',
+      bustPoint: 10, // targets (2) < bust → winning auto-cashouts fire
       bets: new Map<string, unknown>([
         ['u-fail', bet('u-fail', 2)],
         ['u-ok', bet('u-ok', 2)],
@@ -53,6 +54,7 @@ describe('crash runAutoCashouts — failed cashout is logged, not swallowed (#21
     const engine = makeEngine();
     engine.current = {
       id: 'round-2',
+      bustPoint: 10,
       bets: new Map<string, unknown>([['u', bet('u', 2)]]),
     };
     const errorSpy = vi.spyOn(engine.logger, 'error').mockImplementation(() => undefined);
