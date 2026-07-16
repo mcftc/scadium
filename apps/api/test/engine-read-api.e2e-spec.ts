@@ -50,7 +50,7 @@ describe('Engine v2 read API (integration, real Postgres)', () => {
       await prisma.engineBlockShare.deleteMany({ where: { blockId: stale.id } });
       await prisma.engineBlock.delete({ where: { id: stale.id } });
     }
-    await mkBettor(40n * E9, new Date(Date.now() - 60_000));
+    await mkBettor(40n * E9, new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 30 * 60_000));
     await svc.mineBlock();
 
     const state = await svc.state();

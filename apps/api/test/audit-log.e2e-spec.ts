@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { lastCompletedHourPeriod } from '../src/queue/queue.constants';
 import { PrismaClient } from '@prisma/client';
 import { AdminService } from '../src/admin/admin.service';
 import { AirdropEngine } from '../src/airdrop/airdrop.engine';
@@ -72,7 +73,7 @@ describe('audit log for privileged actions (integration, real Postgres)', () => 
     // Seed a fundable pool for the period distribute() will target; with no
     // eligible players it rolls over, and the forced run still records the
     // privileged action (atomic with the rollover).
-    const period = periodFor(Date.now() - 60_000);
+    const period = lastCompletedHourPeriod(Date.now());
     await prisma.airdropPool.upsert({
       where: { period },
       update: { baseLamports: 1_000_000_000n, distributed: false },
