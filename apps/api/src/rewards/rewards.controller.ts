@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
+import { parseLimit } from '../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsIn } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -42,6 +43,6 @@ export class RewardsController {
   @Get('claims')
   @ApiOperation({ summary: 'Recent $SCAD claims with tx signatures' })
   claims(@CurrentUser() ctx: AuthContext, @Query('limit') limit?: string) {
-    return this.rewards.recentClaims(ctx.userId, limit ? Number(limit) : 20);
+    return this.rewards.recentClaims(ctx.userId, parseLimit(limit, 20, 100));
   }
 }

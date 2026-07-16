@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { parseLimit } from '../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthContext } from '../auth/jwt-auth.guard';
@@ -19,13 +20,13 @@ export class SwapController {
   @Get('trades')
   @ApiOperation({ summary: 'Recent swaps decoded from on-chain events' })
   trades(@Query('limit') limit?: string) {
-    return this.swap.recentTrades(limit ? Number(limit) : 25);
+    return this.swap.recentTrades(parseLimit(limit, 25, 100));
   }
 
   @Get('burns')
   @ApiOperation({ summary: 'Buy-and-burn history (20% of NGR)' })
   burns(@Query('limit') limit?: string) {
-    return this.swap.recentBurns(limit ? Number(limit) : 20);
+    return this.swap.recentBurns(parseLimit(limit, 20, 100));
   }
 
   @Post('burns/run')

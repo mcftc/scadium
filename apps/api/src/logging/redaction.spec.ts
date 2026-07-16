@@ -12,6 +12,25 @@ describe('pino config — redaction + request id (#38)', () => {
     });
   });
 
+  it('scrubs the geo trusted-proxy secret header (#H15)', () => {
+    expect(REDACTED_PATHS).toContain('req.headers["x-geo-proxy-secret"]');
+    const opts = pinoParams({ NODE_ENV: 'production' }).pinoHttp as Record<string, unknown>;
+    const lines: string[] = [];
+    const sink = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(String(chunk));
+        cb();
+      },
+    });
+    const logger = pino({ redact: opts.redact as never }, sink);
+    logger.info(
+      { req: { headers: { 'x-geo-proxy-secret': 'geo-shared-secret', host: 'x' } } },
+      'request',
+    );
+    expect(lines.join('')).not.toContain('geo-shared-secret');
+    expect(lines.join('')).toContain('[REDACTED]');
+  });
+
   it('actually scrubs a bearer token from an emitted log line', async () => {
     const lines: string[] = [];
     const sink = new Writable({

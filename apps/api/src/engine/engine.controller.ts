@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { parseLimit } from '../common/parse-limit';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { DistributionService } from './distribution.service';
 import { BlockMiningService } from './block-mining.service';
@@ -27,7 +28,7 @@ export class EngineController {
   @Get('rounds')
   @ApiOperation({ summary: 'Recent USDS distribution rounds (newest first)' })
   rounds(@Query('limit') limit?: string) {
-    return this.distribution.recentRounds(limit ? Number(limit) : 30);
+    return this.distribution.recentRounds(parseLimit(limit, 30, 100));
   }
 
   // ---- Proof-of-Play mining (Engine v2) ----
@@ -49,12 +50,12 @@ export class EngineController {
   @Get('blocks')
   @ApiOperation({ summary: 'Recent mined blocks (reward, winner, proof) — newest first' })
   blocks(@Query('limit') limit?: string) {
-    return this.blockMining.recentBlocks(limit ? Number(limit) : 30);
+    return this.blockMining.recentBlocks(parseLimit(limit, 30, 100));
   }
 
   @Get('leaderboard')
   @ApiOperation({ summary: 'Current-hour play-rate ranking (top miners)' })
   leaderboard(@Query('limit') limit?: string) {
-    return this.blockMining.currentLeaderboard(limit ? Number(limit) : 25);
+    return this.blockMining.currentLeaderboard(parseLimit(limit, 25, 100));
   }
 }

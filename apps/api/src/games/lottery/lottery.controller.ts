@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { parseLimit } from '../../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { BET_THROTTLE } from '../../common/throttle.constants';
@@ -38,7 +39,7 @@ export class LotteryController {
   @Get('recent')
   @ApiOperation({ summary: 'Recent resolved draws with revealed seeds' })
   recent(@Query('limit') limit?: string) {
-    return this.lottery.recentDraws(limit ? Math.min(100, Number(limit)) : 10);
+    return this.lottery.recentDraws(parseLimit(limit, 10, 100));
   }
 
   @Get('price')
@@ -58,7 +59,7 @@ export class LotteryController {
   @Get('jackpot-winners')
   @ApiOperation({ summary: 'Historical grand-prize (jackpot) winners' })
   jackpotWinners(@Query('limit') limit?: string) {
-    return this.lottery.jackpotWinners(limit ? Math.min(100, Number(limit)) : 50);
+    return this.lottery.jackpotWinners(parseLimit(limit, 50, 100));
   }
 
   @Get('my-stats')
@@ -80,7 +81,7 @@ export class LotteryController {
   ) {
     return this.lottery.myTickets(
       user.userId,
-      limit ? Math.min(50, Number(limit)) : 20,
+      parseLimit(limit, 20, 50),
       won === 'true',
     );
   }

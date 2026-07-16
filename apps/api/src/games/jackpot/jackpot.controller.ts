@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
+import { parseLimit } from '../../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { BET_THROTTLE } from '../../common/throttle.constants';
@@ -21,7 +22,7 @@ export class JackpotController {
   @Get('recent')
   @ApiOperation({ summary: 'Recent resolved rounds with revealed seeds' })
   recent(@Query('limit') limit?: string) {
-    return this.jackpot.recent(limit ? Math.min(50, Number(limit)) : 10);
+    return this.jackpot.recent(parseLimit(limit, 10, 50));
   }
 
   @Get('my-entries')
@@ -29,7 +30,7 @@ export class JackpotController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'The caller’s recent jackpot rounds' })
   myEntries(@CurrentUser() user: AuthContextLike, @Query('limit') limit?: string) {
-    return this.jackpot.myEntries(user.userId, limit ? Math.min(50, Number(limit)) : 20);
+    return this.jackpot.myEntries(user.userId, parseLimit(limit, 20, 50));
   }
 
   @Post('enter')

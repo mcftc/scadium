@@ -19,6 +19,9 @@ export const REDACTED_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
   'res.headers["set-cookie"]',
+  // Geo trusted-proxy shared secret (#H15) — leaking it from logs lets anyone
+  // replay it with a forged cf-ipcountry header and defeat geoblocking.
+  'req.headers["x-geo-proxy-secret"]',
 ] as const;
 
 export function requestId(req: IncomingMessage, res: ServerResponse): string {

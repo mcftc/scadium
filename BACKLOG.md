@@ -43,14 +43,14 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 - [ ] **H16 · Crash client has no reconnect-resync** → live stake stranded with cash-out disabled on every WS drop/redeploy. Re-fetch `/crash/snapshot` on `connect`/`reconnect`. `use-crash.ts:63`. *(Do before any redeploy-heavy platform.)*
 - [ ] **H12 · API is effectively single-instance** (leader election, no request-forwarding). Run 1 `api` replica on Railway; add sticky routing / leader-forwarding only if HA is needed later.
-- [ ] **H15 · pino redaction omits `x-geo-proxy-secret`** → geo-bypass credential leaks to logs. Add it to the redaction list. `logging/pino.config.ts:18`.
+- [x] **H15 · pino redaction omits `x-geo-proxy-secret`** → ✅ added to `REDACTED_PATHS` (`pino.config.ts`); `redaction.spec.ts` asserts it's scrubbed.
 - [ ] **H19 · Prod compose ships no worker** → background jobs never run on that path. Ensure the `worker` service ships on Railway.
 - [ ] Graceful shutdown (`enableShutdownHooks` + SIGTERM → drain loops/sockets/queues); lock down public `/metrics`; SEO scaffolding (`robots`/sitemap/OG); `metadataBase` → `scadium.com`; lock `images.remotePatterns`.
 
 ## Tier 5 — Hygiene (low)
 
 - [ ] Avatar `avatarUrl`: 120 KB client data-URL, prefix-regex-only validation, stored in Postgres → move to a Railway bucket + decode-validate + size-cap. `users.service` updateProfile.
-- [ ] List endpoints: `?limit` via raw `Number()`/`parseInt()` → `NaN`/fractional survive the clamp; validate via DTO.
+- [x] List endpoints: ✅ shared `parseLimit()` helper (`common/parse-limit.ts`) applied to all 16 list-controller sites — NaN/blank→fallback, fractional truncated, clamped to [1,max]. Test: `parse-limit.spec.ts`.
 - [ ] BigInt-in-JSON: latent only (raw-BigInt methods have no callers) — wire serialization before exposing them.
 
 ---

@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { parseLimit } from '../common/parse-limit';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ChatService } from './chat.service';
 
@@ -10,6 +11,6 @@ export class ChatController {
   @Get('recent')
   @ApiOperation({ summary: 'Recent chat history (read-only — posting goes through WebSocket)' })
   recent(@Query('limit') limit?: string) {
-    return this.chat.listRecent(limit ? parseInt(limit, 10) : 50);
+    return this.chat.listRecent(parseLimit(limit, 50, 200));
   }
 }

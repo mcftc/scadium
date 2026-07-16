@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { parseLimit } from '../../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { BET_THROTTLE } from '../../common/throttle.constants';
@@ -25,13 +26,13 @@ export class CoinflipController {
   @Get('open')
   @ApiOperation({ summary: 'List open flips waiting for a joiner' })
   listOpen(@Query('limit') limit?: string) {
-    return this.coinflip.listOpen(limit ? parseInt(limit, 10) : 20);
+    return this.coinflip.listOpen(parseLimit(limit, 20, 100));
   }
 
   @Get('recent')
   @ApiOperation({ summary: 'List recently resolved flips' })
   listRecent(@Query('limit') limit?: string) {
-    return this.coinflip.listRecent(limit ? parseInt(limit, 10) : 20);
+    return this.coinflip.listRecent(parseLimit(limit, 20, 100));
   }
 
   @Post()
