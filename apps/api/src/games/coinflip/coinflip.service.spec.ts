@@ -10,7 +10,11 @@ import { CoinflipService } from './coinflip.service';
  * path proceeded to debit + payout, so the test is red before / green after.
  */
 function makeService(tx: Record<string, unknown>) {
-  const prisma = { $transaction: (cb: (t: unknown) => unknown) => cb(tx) } as never;
+  const prisma = {
+    // join()'s RG pre-read (H20) reads the flip's stake off the top-level client.
+    coinflipGame: { findUnique: vi.fn().mockResolvedValue({ amountLamports: 1_000_000n }) },
+    $transaction: (cb: (t: unknown) => unknown) => cb(tx),
+  } as never;
   const gateway = { emitCreated: vi.fn(), emitResolved: vi.fn(), emitCancelled: vi.fn() } as never;
   const chain = { enabled: false } as never;
   const seeds = {} as never;
@@ -110,5 +114,35 @@ describe('CoinflipService.cancel — status compare-and-swap (unit)', () => {
     });
     expect(userUpdateMany).not.toHaveBeenCalled(); // no refund credit
     expect(ledgerCreate).not.toHaveBeenCalled(); // no ledger movement
+  });
+});
+
+/**
+ * H20 — the joiner wagers the flip's stake in SOL, so the RG gate must be
+ * called with that amount (not 0n) or a self-limited user could join unlimited
+ * flips and bypass their daily wager/loss limit. assertCanWager short-circuits
+ * on `amount <= 0`, so passing 0n silently skips the limit check.
+ */
+describe('CoinflipService.join — RG gate sees the real stake (unit, H20)', () => {
+  it('calls assertCanWager with the flip amount, not 0n', async () => {
+    const assertCanWager = vi.fn().mockResolvedValue(undefined);
+    const prisma = {
+      coinflipGame: { findUnique: vi.fn().mockResolvedValue({ amountLamports: 1_000_000n }) },
+      // Stop join right after the RG pre-check so we only assert the gate call.
+      $transaction: vi.fn().mockRejectedValue(new Error('stop-after-rg')),
+    } as never;
+    const gateway = { emitCreated: vi.fn(), emitResolved: vi.fn(), emitCancelled: vi.fn() } as never;
+    const svc = new CoinflipService(
+      prisma,
+      gateway,
+      { enabled: false } as never,
+      {} as never,
+      { assertCanWager } as never,
+      { creditReferral: vi.fn() } as never,
+      { accrue: vi.fn() } as never,
+    );
+
+    await expect(svc.join({ userId: 'joiner', gameId: 'g1' })).rejects.toThrow();
+    expect(assertCanWager).toHaveBeenCalledWith('joiner', 1_000_000n);
   });
 });

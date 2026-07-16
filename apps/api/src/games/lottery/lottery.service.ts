@@ -224,9 +224,11 @@ export class LotteryService {
   }
 
   async buyTicket(params: { userId: string; digits: number[] }, key?: string) {
-    // Lottery tickets are $SCAD-denominated, so only the absolute blocks apply
-    // (self-exclusion / cooling-off); the lamports daily limit does not (0n).
-    await this.rg.assertCanWager(params.userId, 0n);
+    // Off-chain, a ticket is debited from the SOL play balance (below), so its
+    // lamport cost must count against the daily wager/loss limit (H20) — not 0.
+    const priceScad = this.engine.ticketPriceScadBase();
+    const priceLamports = scadBaseToLamports(priceScad);
+    await this.rg.assertCanWager(params.userId, priceLamports);
     // When the on-chain lottery is live, the play-money path is closed —
     // tickets must be real wallet-signed $SCAD purchases (POST /confirm).
     if (this.chain.lotteryEnabled) {
@@ -240,9 +242,6 @@ export class LotteryService {
     if (!open) {
       throw new BadRequestException('No open draw — the next one starts shortly');
     }
-
-    const priceScad = this.engine.ticketPriceScadBase();
-    const priceLamports = scadBaseToLamports(priceScad);
 
     const user = await this.prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new NotFoundException('User not found');

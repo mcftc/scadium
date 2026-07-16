@@ -146,9 +146,14 @@ export class CoinflipService {
   }
 
   async join(params: { userId: string; gameId: string }, key?: string) {
-    // Self-exclusion / cooling-off block (0n: the SOL limit is keyed off the
-    // create stake; joins still hard-block excluded/cooling-off users).
-    await this.rg.assertCanWager(params.userId, 0n);
+    // The joiner stakes the flip's amount in SOL, so it must count against
+    // THEIR daily wager/loss limit (H20) — not 0. The stake is immutable after
+    // create, so this pre-read is safe; the authoritative debit is in the tx.
+    const flip = await this.prisma.coinflipGame.findUnique({
+      where: { id: params.gameId },
+      select: { amountLamports: true },
+    });
+    await this.rg.assertCanWager(params.userId, flip?.amountLamports ?? BigInt(0));
 
     // ON-CHAIN ANCHORING (shared scadium_rng): reserve the JOINER's seed and drive
     // a round for this flip BEFORE the settle tx, so the ~1s commit→reveal never
