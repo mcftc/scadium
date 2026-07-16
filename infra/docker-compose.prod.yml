@@ -65,6 +65,30 @@ services:
       retries: 5
       start_period: 40s
 
+  # Background-job process (H19). Boots the API's WorkerModule headless and runs
+  # the 9 BullMQ queues (airdrop, burn, leaderboard, reconcile, rewardClaims,
+  # lotteryPayouts, distribution, blockMining, vaultAccrual). Without it, NONE of
+  # the scheduled money jobs (dividends, block mining, vault accrual, airdrop,
+  # reconciliation/solvency) ever run. Each job is idempotent + Redis-locked, so
+  # scaling to >1 replica is safe. No published ports and no HTTP healthcheck —
+  # it's a headless consumer, not a server.
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    container_name: scadium-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      # Play-money mode: on-chain vars intentionally omitted (mirrors `api`).
+
   web:
     build:
       context: ..
