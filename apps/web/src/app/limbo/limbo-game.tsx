@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { LIMBO } from '@scadium/shared';
@@ -10,6 +10,9 @@ import {
   isValidBetSol,
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
+import { AutoBetControls } from '@/components/instant/auto-bet-controls';
+import { useAutoBet } from '@/components/instant/use-auto-bet';
+import { BetModeTabs, type BetMode } from '@/components/instant/bet-mode-tabs';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
@@ -28,6 +31,7 @@ export function LimboGame() {
 
   const [sol, setSol] = useState('0.1');
   const [target, setTarget] = useState('2.00');
+  const [betMode, setBetMode] = useState<BetMode>('manual');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
   // Celebration gate: WinEffect only sees the result once the count-up locks,
@@ -38,24 +42,51 @@ export function LimboGame() {
   const winChance = Math.min(100, (1 / targetNum) * (1 - LIMBO.HOUSE_EDGE) * 100);
   const validBet = isValidBetSol(sol, LIMBO.MIN_BET_LAMPORTS);
 
+  // Place ONE bet at the given stake with the current params; throws on failure
+  // (the auto-bet loop stops on the throw). Shared by manual + auto.
+  const runBet = useCallback(
+    async (amountLamports: string) => {
+      const t = Math.min(LIMBO.MAX_TARGET, Math.max(LIMBO.MIN_TARGET, targetNum));
+      sound.bet();
+      const res = await play.mutateAsync({ amountLamports, target: t });
+      setLast(res);
+      return res;
+    },
+    [play, sound, targetNum],
+  );
+
+  const auto = useAutoBet({
+    runBet,
+    baseStakeLamports: () =>
+      BigInt(solToLamportsClamped(sol, LIMBO.MIN_BET_LAMPORTS, LIMBO.MAX_BET_LAMPORTS)),
+    minLamports: LIMBO.MIN_BET_LAMPORTS,
+    maxLamports: LIMBO.MAX_BET_LAMPORTS,
+    onError: setError,
+  });
+
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
     }
     setError(null);
-    const t = Math.min(LIMBO.MAX_TARGET, Math.max(LIMBO.MIN_TARGET, targetNum));
-    sound.bet();
     try {
-      const res = await play.mutateAsync({
-        amountLamports: solToLamportsClamped(sol, LIMBO.MIN_BET_LAMPORTS, LIMBO.MAX_BET_LAMPORTS),
-        target: t,
-      });
-      setLast(res);
+      await runBet(solToLamportsClamped(sol, LIMBO.MIN_BET_LAMPORTS, LIMBO.MAX_BET_LAMPORTS));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
     }
   }
+
+  function onStartAuto(cfg: Parameters<typeof auto.start>[0]) {
+    if (!isAuthenticated) {
+      openWallet();
+      return;
+    }
+    setError(null);
+    void auto.start(cfg);
+  }
+
+  const busy = play.isPending || auto.running;
 
   const result = last?.result?.result as number | undefined;
 
@@ -81,12 +112,14 @@ export function LimboGame() {
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
         <Card className="p-5 space-y-4">
+          <BetModeTabs mode={betMode} setMode={setBetMode} disabled={auto.running} />
+
           <BetAmountInput
             sol={sol}
             setSol={setSol}
             minLamports={LIMBO.MIN_BET_LAMPORTS}
             maxLamports={LIMBO.MAX_BET_LAMPORTS}
-            disabled={play.isPending}
+            disabled={busy}
           />
 
           <div>
@@ -99,7 +132,7 @@ export function LimboGame() {
               min={LIMBO.MIN_TARGET}
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              disabled={play.isPending}
+              disabled={busy}
               placeholder="2.00"
               className="w-full rounded-xl border border-border bg-surface-elevated px-4 h-11 text-sm font-mono focus:outline-none focus:border-primary-400 disabled:opacity-50"
             />
@@ -109,7 +142,7 @@ export function LimboGame() {
                   key={p}
                   type="button"
                   onClick={() => setTarget(p)}
-                  disabled={play.isPending}
+                  disabled={busy}
                   className={cn(
                     'flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-colors disabled:opacity-50',
                     target === p
@@ -123,15 +156,27 @@ export function LimboGame() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void onPlace()}
-            disabled={play.isPending || !validBet}
-            className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
-          >
-            {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-            Place Bet
-          </button>
+          {betMode === 'manual' ? (
+            <button
+              type="button"
+              onClick={() => void onPlace()}
+              disabled={play.isPending || !validBet}
+              className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
+            >
+              {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
+              Place Bet
+            </button>
+          ) : (
+            <AutoBetControls
+              running={auto.running}
+              betsRemaining={auto.betsRemaining}
+              sessionProfitLamports={auto.sessionProfitLamports}
+              currentStakeLamports={auto.currentStakeLamports}
+              canStart={validBet}
+              onStart={onStartAuto}
+              onStop={auto.stop}
+            />
+          )}
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <p className="text-[11px] text-foreground-muted text-center">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { WHEEL, WHEEL_PAYOUT_BUCKETS, WHEEL_SEGMENTS } from '@scadium/shared';
@@ -10,6 +10,9 @@ import {
   isValidBetSol,
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
+import { AutoBetControls } from '@/components/instant/auto-bet-controls';
+import { useAutoBet } from '@/components/instant/use-auto-bet';
+import { BetModeTabs, type BetMode } from '@/components/instant/bet-mode-tabs';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
@@ -40,6 +43,7 @@ export function WheelGame() {
   const sound = useGameSound();
 
   const [sol, setSol] = useState('0.1');
+  const [betMode, setBetMode] = useState<BetMode>('manual');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
   // The result is revealed (celebration + win amount) only when the wheel
@@ -48,23 +52,52 @@ export function WheelGame() {
 
   const validBet = isValidBetSol(sol, WHEEL.MIN_BET_LAMPORTS);
 
+  // Place ONE bet at the given stake; throws on failure (the auto-bet loop stops
+  // on the throw). Clears the prior reveal first so the wheel re-spins cleanly.
+  // Shared by manual + auto.
+  const runBet = useCallback(
+    async (amountLamports: string) => {
+      setSettled(null);
+      sound.bet();
+      const res = await play.mutateAsync({ amountLamports });
+      setLast(res);
+      return res;
+    },
+    [play, sound],
+  );
+
+  const auto = useAutoBet({
+    runBet,
+    baseStakeLamports: () =>
+      BigInt(solToLamportsClamped(sol, WHEEL.MIN_BET_LAMPORTS, WHEEL.MAX_BET_LAMPORTS)),
+    minLamports: WHEEL.MIN_BET_LAMPORTS,
+    maxLamports: WHEEL.MAX_BET_LAMPORTS,
+    onError: setError,
+  });
+
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
     }
     setError(null);
-    setSettled(null);
-    sound.bet();
     try {
-      const res = await play.mutateAsync({
-        amountLamports: solToLamportsClamped(sol, WHEEL.MIN_BET_LAMPORTS, WHEEL.MAX_BET_LAMPORTS),
-      });
-      setLast(res);
+      await runBet(solToLamportsClamped(sol, WHEEL.MIN_BET_LAMPORTS, WHEEL.MAX_BET_LAMPORTS));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
     }
   }
+
+  function onStartAuto(cfg: Parameters<typeof auto.start>[0]) {
+    if (!isAuthenticated) {
+      openWallet();
+      return;
+    }
+    setError(null);
+    void auto.start(cfg);
+  }
+
+  const busy = play.isPending || auto.running;
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
@@ -101,23 +134,37 @@ export function WheelGame() {
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
         <Card className="p-5 space-y-4">
+          <BetModeTabs mode={betMode} setMode={setBetMode} disabled={auto.running} />
+
           <BetAmountInput
             sol={sol}
             setSol={setSol}
             minLamports={WHEEL.MIN_BET_LAMPORTS}
             maxLamports={WHEEL.MAX_BET_LAMPORTS}
-            disabled={play.isPending}
+            disabled={busy}
           />
 
-          <button
-            type="button"
-            onClick={() => void onPlace()}
-            disabled={play.isPending || !validBet}
-            className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
-          >
-            {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-            Spin
-          </button>
+          {betMode === 'manual' ? (
+            <button
+              type="button"
+              onClick={() => void onPlace()}
+              disabled={play.isPending || !validBet}
+              className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
+            >
+              {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
+              Spin
+            </button>
+          ) : (
+            <AutoBetControls
+              running={auto.running}
+              betsRemaining={auto.betsRemaining}
+              sessionProfitLamports={auto.sessionProfitLamports}
+              currentStakeLamports={auto.currentStakeLamports}
+              canStart={validBet}
+              onStart={onStartAuto}
+              onStop={auto.stop}
+            />
+          )}
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <p className="text-[11px] text-foreground-muted text-center">

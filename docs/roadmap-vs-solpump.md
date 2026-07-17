@@ -69,7 +69,7 @@ Scadium is already ahead of solpump.io on breadth and mechanics: 12 fully playab
 - ✅ **DONE** — Daily/weekly windowed leaderboards + a daily race with rank prizes and countdown (reads the hourly snapshots that were being written and never read; `RaceResult`-idempotent payout on the worker). `LiveModule`-adjacent retention surface. Commit in CHANGELOG.
 - Close all Tier 2 money-integrity blockers: C4/H13 reward-claim double-pay + idempotency, H5/H5a program-id assertion on event verification, H6–H8 lottery on-chain holes, H9 real-money gate coupling to mainnet custody, reward reserve/restore ledger rows
 - Devnet deploy of scadium_vault/swap/lottery/rng + activate ChainService in a staging env: exercise deposits/withdrawals, recordBet receipts, $SCAD/dividend claims, lottery commit-reveal end-to-end
-- Auto-bet engine (N rounds, stop-on-win/loss, on-win multiply) shared across instant games
+- ✅ **DONE** — Auto-bet engine (N rounds, stop-on-profit/loss, on-win/on-loss multiply) shared across dice/limbo/plinko/wheel (`useAutoBet` + `AutoBetControls`). Client-only; drives the same server `/play` so RG/balance/throttle still apply per bet. Commit in CHANGELOG.
 - Daily/weekly windowed leaderboards (read the snapshots already being written) + daily race with rank prizes and countdown
 - Deposit/withdraw history endpoint + wallet transaction-history UI (VaultTransfer rows already exist)
 - Implement KmsCosignerProvider (hard prerequisite for mainnet and for audit scope)

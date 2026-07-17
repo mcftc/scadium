@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { PLINKO, plinkoPayouts } from '@scadium/shared';
@@ -10,6 +10,9 @@ import {
   isValidBetSol,
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
+import { AutoBetControls } from '@/components/instant/auto-bet-controls';
+import { useAutoBet } from '@/components/instant/use-auto-bet';
+import { BetModeTabs, type BetMode } from '@/components/instant/bet-mode-tabs';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
@@ -38,6 +41,7 @@ export function PlinkoGame() {
 
   const [sol, setSol] = useState('0.1');
   const [rows, setRows] = useState<Rows>(12);
+  const [betMode, setBetMode] = useState<BetMode>('manual');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
   // Result panel + sounds fire only when the ball actually lands in its bin.
@@ -46,23 +50,50 @@ export function PlinkoGame() {
   const payouts = plinkoPayouts(rows) ?? [];
   const validBet = isValidBetSol(sol, PLINKO.MIN_BET_LAMPORTS);
 
+  // Place ONE bet at the given stake with the current params; throws on failure
+  // (the auto-bet loop stops on the throw). Shared by manual + auto.
+  const runBet = useCallback(
+    async (amountLamports: string) => {
+      sound.bet();
+      const res = await play.mutateAsync({ amountLamports, rows });
+      setLast(res);
+      return res;
+    },
+    [play, sound, rows],
+  );
+
+  const auto = useAutoBet({
+    runBet,
+    baseStakeLamports: () =>
+      BigInt(solToLamportsClamped(sol, PLINKO.MIN_BET_LAMPORTS, PLINKO.MAX_BET_LAMPORTS)),
+    minLamports: PLINKO.MIN_BET_LAMPORTS,
+    maxLamports: PLINKO.MAX_BET_LAMPORTS,
+    onError: setError,
+  });
+
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
     }
     setError(null);
-    sound.bet();
     try {
-      const res = await play.mutateAsync({
-        amountLamports: solToLamportsClamped(sol, PLINKO.MIN_BET_LAMPORTS, PLINKO.MAX_BET_LAMPORTS),
-        rows,
-      });
-      setLast(res);
+      await runBet(solToLamportsClamped(sol, PLINKO.MIN_BET_LAMPORTS, PLINKO.MAX_BET_LAMPORTS));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
     }
   }
+
+  function onStartAuto(cfg: Parameters<typeof auto.start>[0]) {
+    if (!isAuthenticated) {
+      openWallet();
+      return;
+    }
+    setError(null);
+    void auto.start(cfg);
+  }
+
+  const busy = play.isPending || auto.running;
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
@@ -80,12 +111,14 @@ export function PlinkoGame() {
 
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
         <Card className="p-5 space-y-4">
+          <BetModeTabs mode={betMode} setMode={setBetMode} disabled={auto.running} />
+
           <BetAmountInput
             sol={sol}
             setSol={setSol}
             minLamports={PLINKO.MIN_BET_LAMPORTS}
             maxLamports={PLINKO.MAX_BET_LAMPORTS}
-            disabled={play.isPending}
+            disabled={busy}
           />
 
           <div>
@@ -96,7 +129,7 @@ export function PlinkoGame() {
                   key={r}
                   type="button"
                   onClick={() => setRows(r)}
-                  disabled={play.isPending}
+                  disabled={busy}
                   className={cn(
                     'flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors disabled:opacity-50',
                     rows === r
@@ -110,15 +143,27 @@ export function PlinkoGame() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void onPlace()}
-            disabled={play.isPending || !validBet}
-            className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
-          >
-            {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-            Drop Ball
-          </button>
+          {betMode === 'manual' ? (
+            <button
+              type="button"
+              onClick={() => void onPlace()}
+              disabled={play.isPending || !validBet}
+              className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
+            >
+              {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
+              Drop Ball
+            </button>
+          ) : (
+            <AutoBetControls
+              running={auto.running}
+              betsRemaining={auto.betsRemaining}
+              sessionProfitLamports={auto.sessionProfitLamports}
+              currentStakeLamports={auto.currentStakeLamports}
+              canStart={validBet}
+              onStart={onStartAuto}
+              onStop={auto.stop}
+            />
+          )}
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <p className="text-[11px] text-foreground-muted text-center">

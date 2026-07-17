@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReducedMotion } from 'framer-motion';
 import { DICE, diceMultiplier, type DiceMode } from '@scadium/shared';
@@ -10,6 +10,9 @@ import {
   isValidBetSol,
   solToLamportsClamped,
 } from '@/components/instant/bet-amount-input';
+import { AutoBetControls } from '@/components/instant/auto-bet-controls';
+import { useAutoBet } from '@/components/instant/use-auto-bet';
+import { BetModeTabs, type BetMode } from '@/components/instant/bet-mode-tabs';
 import { InstantFairness } from '@/components/instant/instant-fairness';
 import { RecentRounds } from '@/components/instant/recent-rounds';
 import { WinEffect } from '@/components/instant/win-effect';
@@ -29,6 +32,7 @@ export function DiceGame() {
   const [sol, setSol] = useState('0.1');
   const [target, setTarget] = useState(50);
   const [mode, setMode] = useState<DiceMode>('under');
+  const [betMode, setBetMode] = useState<BetMode>('manual');
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<InstantSettleResult | null>(null);
 
@@ -36,24 +40,50 @@ export function DiceGame() {
   const multiplier = diceMultiplier(target, mode);
   const validBet = isValidBetSol(sol, DICE.MIN_BET_LAMPORTS);
 
+  // Place ONE bet at the given stake with the current params; throws on failure
+  // (the auto-bet loop stops on the throw). Shared by manual + auto.
+  const runBet = useCallback(
+    async (amountLamports: string) => {
+      sound.bet();
+      const res = await play.mutateAsync({ amountLamports, target, mode });
+      setLast(res);
+      return res;
+    },
+    [play, sound, target, mode],
+  );
+
+  const auto = useAutoBet({
+    runBet,
+    baseStakeLamports: () =>
+      BigInt(solToLamportsClamped(sol, DICE.MIN_BET_LAMPORTS, DICE.MAX_BET_LAMPORTS)),
+    minLamports: DICE.MIN_BET_LAMPORTS,
+    maxLamports: DICE.MAX_BET_LAMPORTS,
+    onError: setError,
+  });
+
   async function onPlace() {
     if (!isAuthenticated) {
       openWallet();
       return;
     }
     setError(null);
-    sound.bet();
     try {
-      const res = await play.mutateAsync({
-        amountLamports: solToLamportsClamped(sol, DICE.MIN_BET_LAMPORTS, DICE.MAX_BET_LAMPORTS),
-        target,
-        mode,
-      });
-      setLast(res);
+      await runBet(solToLamportsClamped(sol, DICE.MIN_BET_LAMPORTS, DICE.MAX_BET_LAMPORTS));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
     }
   }
+
+  function onStartAuto(cfg: Parameters<typeof auto.start>[0]) {
+    if (!isAuthenticated) {
+      openWallet();
+      return;
+    }
+    setError(null);
+    void auto.start(cfg);
+  }
+
+  const busy = play.isPending || auto.running;
 
   const roll = last?.result?.roll as number | undefined;
 
@@ -82,12 +112,14 @@ export function DiceGame() {
       {/* RIGHT: bet panel */}
       <div className="w-full lg:w-[300px] shrink-0 lg:pr-8 space-y-4">
         <Card className="p-5 space-y-4">
+          <BetModeTabs mode={betMode} setMode={setBetMode} disabled={auto.running} />
+
           <BetAmountInput
             sol={sol}
             setSol={setSol}
             minLamports={DICE.MIN_BET_LAMPORTS}
             maxLamports={DICE.MAX_BET_LAMPORTS}
-            disabled={play.isPending}
+            disabled={busy}
           />
 
           <div>
@@ -97,7 +129,7 @@ export function DiceGame() {
                   key={m}
                   type="button"
                   onClick={() => setMode(m)}
-                  disabled={play.isPending}
+                  disabled={busy}
                   className={cn(
                     'h-8 rounded-md text-xs font-bold uppercase tracking-wider transition-colors',
                     mode === m
@@ -120,20 +152,32 @@ export function DiceGame() {
               step={1}
               value={target}
               onChange={(e) => setTarget(Number(e.target.value))}
-              disabled={play.isPending}
+              disabled={busy}
               className="w-full accent-primary-400"
             />
           </div>
 
-          <button
-            type="button"
-            onClick={() => void onPlace()}
-            disabled={play.isPending || !validBet}
-            className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
-          >
-            {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
-            Place Bet
-          </button>
+          {betMode === 'manual' ? (
+            <button
+              type="button"
+              onClick={() => void onPlace()}
+              disabled={play.isPending || !validBet}
+              className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] disabled:opacity-50"
+            >
+              {play.isPending ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
+              Place Bet
+            </button>
+          ) : (
+            <AutoBetControls
+              running={auto.running}
+              betsRemaining={auto.betsRemaining}
+              sessionProfitLamports={auto.sessionProfitLamports}
+              currentStakeLamports={auto.currentStakeLamports}
+              canStart={validBet}
+              onStart={onStartAuto}
+              onStop={auto.stop}
+            />
+          )}
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <p className="text-[11px] text-foreground-muted text-center">

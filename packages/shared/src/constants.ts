@@ -1179,3 +1179,23 @@ export function racePrizeLamports(rankIndex: number): bigint {
   if (bps === undefined) return 0n;
   return (BigInt(RACE.DAILY_POOL_LAMPORTS) * BigInt(bps)) / 10_000n;
 }
+
+// ---------- Auto-bet (instant games) ----------
+/**
+ * Client-side auto-bet tunables for the single-shot instant games. The loop
+ * drives the SAME server /play endpoint per iteration, so per-bet RG limits and
+ * balance checks still apply — auto-bet can't bypass anything the manual path
+ * enforces. UI ergonomics only; not payout math.
+ */
+export const AUTOBET = {
+  /**
+   * Delay between auto-bets (ms). Kept comfortably under the per-route bet
+   * throttle (BET_THROTTLE default 30 req / 10 s): ~500 ms ⇒ ≤ ~18/10 s, so a
+   * normal auto-run never trips its own rate limit (a 429 would just stop it).
+   */
+  BET_INTERVAL_MS: 500,
+  /** Max on-win / on-loss stake increase the UI allows (percent). */
+  MAX_INCREASE_PCT: 1000,
+  /** Upper bound on a finite auto-bet run (0 in the UI means "until stopped"). */
+  MAX_BETS: 100_000,
+} as const;
