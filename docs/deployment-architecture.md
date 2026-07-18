@@ -95,7 +95,16 @@ Work proceeds **without GitHub issues** (owner's process change): `BACKLOG.md` =
 **Project created:** `scadium` (id `91d0472a-a626-4308-b6d1-afb51b205cac`), env `production`, workspace "Muhammed Ciftci's Projects".
 **Provisioned:** managed **Postgres** (`d16f6cf9-…`) + **Redis** (`7dafa24c-…`).
 
-**⛔ Blocked:** creating the app compute services (`scadium-api`, `scadium-worker`, `scadium-web`) returns *"Free plan resource provision limit exceeded — please upgrade."* Deploying the app needs a **paid Railway plan** (Hobby is enough). That's a billing decision for the owner; everything below is turnkey once upgraded.
+**✅ DEPLOYED (2026-07-18, play-money):** the Pro plan was enabled and all three compute services are live on `production`:
+- **scadium-api** (`5aa2db08-…`) — `https://scadium-api-production.up.railway.app` · `/health` ok, migrations ran on boot, listens on `$PORT`.
+- **scadium-worker** (`8848767a-…`) — headless, no domain · logs `worker up — 9 queues, schedulers registered`. Needed `JWT_SECRET` too (WorkerModule pulls in AuthModule, which validates it at boot) — the initial deploy CRASHED without it.
+- **scadium-web** (`66f7a5d3-…`) — `https://scadium-web-production.up.railway.app` · `/crash` 200, built with `NEXT_PUBLIC_API_URL` → the Railway API origin so it works pre-Cloudflare.
+
+Secrets (`JWT_SECRET`, `METRICS_TOKEN`, `GEO_IP_SALT`, `GEO_PROXY_SECRET`) generated server-side via `openssl rand`, set as Railway variables, never printed. `DATABASE_URL`/`REDIS_URL` are `${{Postgres.*}}`/`${{Redis.*}}` references over the private network. Play-money mode: no on-chain/real-money vars. API at **1 replica** (H12).
+
+**Remaining: Cloudflare cutover to scadium.com** (custom domains registered on Railway, pending DNS). CNAME targets: `api.scadium.com`→`scadium-api-production.up.railway.app`, `scadium.com`/`www`→`scadium-web-production.up.railway.app`; each also needs its `_railway-verify[.sub]` TXT. Then SSL Full (strict), WAF, `/metrics` block rule, and the `x-geo-proxy-secret` Transform Rule (value = the API's `GEO_PROXY_SECRET`). After DNS is live, rebuild `scadium-web` with `NEXT_PUBLIC_API_URL=https://api.scadium.com`.
+
+_Historical (2026-07-16): before the upgrade, creating the compute services returned "Free plan resource provision limit exceeded — please upgrade."_
 
 ### Deploy runbook (after upgrading the plan)
 
