@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Loader2, Play, Square } from 'lucide-react';
 import { AUTOBET } from '@scadium/shared';
 import { formatSol } from '@/lib/format';
@@ -46,6 +46,7 @@ export function AutoBetControls({
   const [onLossPct, setOnLossPct] = useState('100');
   const [stopProfit, setStopProfit] = useState('');
   const [stopLoss, setStopLoss] = useState('');
+  const nBetsId = useId();
 
   function handleStart() {
     const clampPct = (s: string) =>
@@ -64,10 +65,14 @@ export function AutoBetControls({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1.5 block text-xs uppercase tracking-wider text-foreground-muted">
+        <label
+          htmlFor={nBetsId}
+          className="mb-1.5 block text-xs uppercase tracking-wider text-foreground-muted"
+        >
           Number of bets
         </label>
         <input
+          id={nBetsId}
           type="number"
           min={0}
           step={1}
@@ -155,13 +160,20 @@ function ProgressionRow({
   setPct: (v: string) => void;
   disabled: boolean;
 }) {
+  const pctId = useId();
   return (
     <div>
-      <label className="mb-1.5 block text-xs uppercase tracking-wider text-foreground-muted">{label}</label>
+      <label
+        htmlFor={pctId}
+        className="mb-1.5 block text-xs uppercase tracking-wider text-foreground-muted"
+      >
+        {label}
+      </label>
       <div className="flex gap-2">
         <div className="flex flex-1 gap-0.5 rounded-lg border border-border bg-background p-0.5">
           <button
             type="button"
+            aria-pressed={mode === 'reset'}
             onClick={() => setMode('reset')}
             disabled={disabled}
             className={cn(
@@ -173,6 +185,7 @@ function ProgressionRow({
           </button>
           <button
             type="button"
+            aria-pressed={mode === 'increase'}
             onClick={() => setMode('increase')}
             disabled={disabled}
             className={cn(
@@ -185,11 +198,13 @@ function ProgressionRow({
         </div>
         <div className="relative w-24">
           <input
+            id={pctId}
             type="number"
             min={0}
             value={pct}
             onChange={(e) => setPct(e.target.value)}
             disabled={disabled || mode === 'reset'}
+            aria-label={`${label} — increase percent`}
             className="h-9 w-full rounded-lg border border-border bg-surface-elevated pl-3 pr-6 text-sm font-mono focus:border-primary-400 focus:outline-none disabled:opacity-40"
           />
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-foreground-muted">
@@ -212,12 +227,17 @@ function StopInput({
   setValue: (v: string) => void;
   disabled: boolean;
 }) {
+  const id = useId();
   return (
     <div>
-      <label className="mb-1.5 block text-[10px] uppercase tracking-wider text-foreground-muted">
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-[10px] uppercase tracking-wider text-foreground-muted"
+      >
         {label}
       </label>
       <input
+        id={id}
         type="number"
         min={0}
         step="0.01"

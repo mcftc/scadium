@@ -15,11 +15,17 @@ export function BetModeTabs({
   disabled?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-0.5 rounded-xl border border-border bg-background p-1">
+    <div
+      role="tablist"
+      aria-label="Bet mode"
+      className="grid grid-cols-2 gap-0.5 rounded-xl border border-border bg-background p-1"
+    >
       {(['manual', 'auto'] as const).map((m) => (
         <button
           key={m}
           type="button"
+          role="tab"
+          aria-selected={mode === m}
           onClick={() => setMode(m)}
           disabled={disabled}
           className={cn(

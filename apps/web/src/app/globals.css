@@ -118,7 +118,11 @@
   .animate-instant-shimmer,
   .animate-screen-shake,
   .animate-bin-pulse,
-  .animate-seg-flash {
+  .animate-seg-flash,
+  /* Decorative looping motion (live-feed pulse, race/status dots). `animate-spin`
+     is intentionally NOT here — a loading spinner conveys system status. */
+  .animate-pulse,
+  .animate-ping {
     animation: none !important;
   }
   button:not(:disabled),
