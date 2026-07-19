@@ -9,26 +9,38 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: '#0B0A14',
-        surface: '#13111F',
-        'surface-elevated': '#1C1930',
-        border: '#2A2640',
-        muted: '#767676',
-        foreground: '#F5F3FF',
-        'foreground-muted': '#B5B0C7',
+        // "Aurum" — deep obsidian canvas, jackpot-gold primary, electric-teal accent.
+        // A warm premium-arcade identity, deliberately unlike the cold purple/violet
+        // crypto-casino look. Source of truth: docs/design-system.md.
+        background: '#0A0B0F',
+        surface: '#13151C',
+        'surface-elevated': '#1C1F2B',
+        border: '#2A2E3C',
+        muted: '#767B86',
+        foreground: '#F5F7FA',
+        'foreground-muted': '#9AA1B0',
+        // Signature: jackpot gold.
         primary: {
-          DEFAULT: '#EE86FF',
-          dark: '#6F5FCC',
-          50: '#FBF0FF',
-          100: '#F5DBFF',
-          200: '#EAB5FF',
-          300: '#DC8FFF',
-          400: '#EE86FF',
-          500: '#C76BFF',
-          600: '#9C4FE0',
-          700: '#6F5FCC',
-          800: '#4D3D99',
-          900: '#2D2466',
+          DEFAULT: '#FFBE3D',
+          dark: '#B26B0C',
+          50: '#FFF8E8',
+          100: '#FFEEC2',
+          200: '#FFDE94',
+          300: '#FFCE5E',
+          400: '#FFBE3D',
+          500: '#F5A623',
+          600: '#DB8A12',
+          700: '#B26B0C',
+          800: '#8A5209',
+          900: '#5C3606',
+        },
+        // Accent: electric teal — links, live indicators, secondary highlights.
+        accent: {
+          DEFAULT: '#2DD4BF',
+          light: '#5EEAD4',
+          400: '#2DD4BF',
+          500: '#14B8A6',
+          600: '#0D9488',
         },
         success: '#22C55E',
         danger: '#EF4444',
@@ -41,12 +53,13 @@ const config: Config = {
         display: ['var(--font-display)', 'var(--font-geist-sans)', 'sans-serif'],
       },
       backgroundImage: {
-        'gradient-primary': 'linear-gradient(135deg, #EE86FF 0%, #6F5FCC 100%)',
+        // Signature "jackpot glow" — gold → warm coral.
+        'gradient-primary': 'linear-gradient(135deg, #FFCE5E 0%, #FF7A45 100%)',
         'gradient-radial': 'radial-gradient(ellipse at center, var(--tw-gradient-stops))',
       },
       boxShadow: {
-        glow: '0 0 40px rgba(238, 134, 255, 0.35)',
-        'glow-sm': '0 0 20px rgba(238, 134, 255, 0.25)',
+        glow: '0 0 40px rgba(255, 190, 61, 0.35)',
+        'glow-sm': '0 0 20px rgba(255, 190, 61, 0.25)',
       },
       animation: {
         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',

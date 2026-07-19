@@ -109,13 +109,13 @@ export function getCardBackTexture(): CanvasTexture {
   const ctx = canvas.getContext('2d');
   if (ctx) {
     const gradient = ctx.createLinearGradient(0, 0, CARD_W, CARD_H);
-    gradient.addColorStop(0, '#6F5FCC');
-    gradient.addColorStop(1, '#3B3270');
+    gradient.addColorStop(0, '#B26B0C');
+    gradient.addColorStop(1, '#5C3606');
     ctx.fillStyle = gradient;
     roundedRect(ctx, 0, 0, CARD_W, CARD_H, 44);
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(238, 134, 255, 0.4)';
+    ctx.strokeStyle = 'rgba(255, 190, 61, 0.4)';
     ctx.lineWidth = 8;
     roundedRect(ctx, 14, 14, CARD_W - 28, CARD_H - 28, 36);
     ctx.stroke();

@@ -25,7 +25,7 @@ const RARITY: Record<TierName, { label: string; color: string; ring: string }> =
     color: '#f59e0b',
     ring: 'shadow-[0_0_28px_rgba(245,158,11,0.65)]',
   },
-  epic: { label: 'Epic', color: '#a855f7', ring: 'shadow-[0_0_26px_rgba(168,85,247,0.55)]' },
+  epic: { label: 'Epic', color: '#FFBE3D', ring: 'shadow-[0_0_26px_rgba(255, 190, 61,0.55)]' },
   rare: { label: 'Rare', color: '#60a5fa', ring: 'shadow-[0_0_22px_rgba(96,165,250,0.5)]' },
   common: { label: 'Common', color: '#64748b', ring: '' },
 };

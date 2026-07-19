@@ -7,8 +7,8 @@ export function Logo({ className }: { className?: string }) {
         <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
           <defs>
             <linearGradient id="scadium-logo" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#EE86FF" />
-              <stop offset="100%" stopColor="#6F5FCC" />
+              <stop offset="0%" stopColor="#FFCE5E" />
+              <stop offset="100%" stopColor="#FF7A45" />
             </linearGradient>
           </defs>
           <circle cx="16" cy="16" r="14" fill="url(#scadium-logo)" />

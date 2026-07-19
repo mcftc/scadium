@@ -10,9 +10,9 @@ import { cn } from '@/lib/cn';
 const PRESETS: readonly (readonly [string, string, string])[] = [
   ['#f59e0b', '#ef4444', '🚀'],
   ['#22d3ee', '#3b82f6', '🎰'],
-  ['#a855f7', '#ec4899', '💎'],
+  ['#FFBE3D', '#F43F5E', '💎'],
   ['#34d399', '#10b981', '🍀'],
-  ['#f472b6', '#a855f7', '👑'],
+  ['#FF7A45', '#FFBE3D', '👑'],
   ['#60a5fa', '#14b8a6', '🔥'],
 ];
 

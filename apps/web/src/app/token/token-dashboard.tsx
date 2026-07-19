@@ -50,7 +50,7 @@ const ALLOC_COLORS: Record<string, string> = {
   community: '#38bdf8',
   liquidity: '#a78bfa',
   treasury: '#f59e0b',
-  team: '#f472b6',
+  team: '#FF7A45',
   strategic: '#64748b',
 };
 

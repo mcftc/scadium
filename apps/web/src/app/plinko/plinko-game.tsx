@@ -27,7 +27,7 @@ type Rows = (typeof PLINKO.ROWS)[number];
 
 /** Tier color for a bin multiplier — hot (>2×) → neutral (~1×) → cold (<1×). */
 function binColor(m: number): string {
-  if (m >= 5) return 'bg-[#EE86FF] text-black';
+  if (m >= 5) return 'bg-[#FFBE3D] text-black';
   if (m >= 2) return 'bg-primary-400/80 text-white';
   if (m >= 1) return 'bg-surface-elevated text-foreground';
   return 'bg-surface text-foreground-muted';
@@ -232,7 +232,7 @@ function PlinkoBoard({
 
     const id = result.betId;
     // Neutral hue while falling — the outcome is revealed at landing, not mid-air.
-    const hue = '#EE86FF';
+    const hue = '#FFBE3D';
     // eslint-disable-next-line react-hooks/set-state-in-effect -- spawns a falling ball for each fresh server result; the effect then drives its RAF descent down the server's authoritative path. Ball/animation state, not derivable during render.
     setBalls((prev) => [...prev.slice(-5), { id, path, bin, hue }]);
 

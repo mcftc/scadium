@@ -2,13 +2,13 @@ import { Color } from 'three';
 
 /** Scadium neon theme as three-ready constants (mirrors tailwind.config.ts). */
 export const NEON = {
-  bg: '#0B0A14',
-  surface: '#13111F',
-  surfaceElevated: '#1C1930',
-  border: '#2A2640',
+  bg: '#0A0B0F',
+  surface: '#13151C',
+  surfaceElevated: '#1C1F2B',
+  border: '#2A2E3C',
   foreground: '#F5F3FF',
-  purple: '#EE86FF',
-  purpleDeep: '#6F5FCC',
+  purple: '#FFBE3D',
+  purpleDeep: '#B26B0C',
   cyan: '#22D3EE',
   success: '#22C55E',
   danger: '#EF4444',

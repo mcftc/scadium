@@ -139,7 +139,7 @@ async function fireConfetti(multiplier: number): Promise<void> {
     const confetti = (await import('canvas-confetti')).default;
     const intensity = Math.min(3, Math.max(1, Math.log2(Math.max(1, multiplier) + 1)));
     const particleCount = Math.round(60 * intensity);
-    const colors = ['#EE86FF', '#C76BFF', '#10b981', '#9C4FE0'];
+    const colors = ['#FFBE3D', '#2DD4BF', '#22C55E', '#FF7A45'];
     confetti({
       particleCount,
       spread: 70 + intensity * 15,

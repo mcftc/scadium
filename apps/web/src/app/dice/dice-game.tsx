@@ -270,7 +270,7 @@ function DiceTrack({
           className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-10"
           style={{ left: `${target}%` }}
         >
-          <div className="h-16 lg:h-20 w-2.5 rounded-full bg-primary-400 shadow-[0_0_18px_rgba(238,134,255,0.7)]" />
+          <div className="h-16 lg:h-20 w-2.5 rounded-full bg-primary-400 shadow-[0_0_18px_rgba(255, 190, 61,0.7)]" />
         </div>
         {/* Landed roll pin */}
         {pin != null && (

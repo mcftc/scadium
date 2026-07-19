@@ -11,8 +11,8 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(ellipse 80% 60% at 50% 0%, rgba(238, 134, 255, 0.12), transparent 70%),
-      radial-gradient(ellipse 60% 50% at 80% 100%, rgba(111, 95, 204, 0.1), transparent 70%);
+      radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255, 190, 61, 0.1), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 80% 100%, rgba(45, 212, 191, 0.08), transparent 70%);
     background-attachment: fixed;
   }
 
@@ -75,7 +75,7 @@
   [role='button']:not([aria-disabled='true']):focus-visible,
   summary:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px rgba(238, 134, 255, 0.7);
+    box-shadow: 0 0 0 2px rgba(255, 190, 61, 0.75);
   }
 }
 
@@ -96,7 +96,7 @@
   }
   .hover-lift:hover {
     transform: translateY(-3px);
-    box-shadow: 0 14px 32px -12px rgba(238, 134, 255, 0.4);
+    box-shadow: 0 14px 32px -12px rgba(255, 190, 61, 0.4);
   }
   .hover-glow {
     transition:
@@ -104,10 +104,10 @@
       border-color 200ms ease;
   }
   .hover-glow:hover {
-    border-color: rgba(238, 134, 255, 0.5);
+    border-color: rgba(255, 190, 61, 0.5);
     box-shadow:
-      0 0 0 1px rgba(238, 134, 255, 0.45),
-      0 0 26px -6px rgba(238, 134, 255, 0.45);
+      0 0 0 1px rgba(255, 190, 61, 0.45),
+      0 0 26px -6px rgba(255, 190, 61, 0.45);
   }
 }
 

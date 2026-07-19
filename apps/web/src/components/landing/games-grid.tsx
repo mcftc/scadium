@@ -22,7 +22,7 @@ const games = [
     description: 'Ride the multiplier. Cash out before it busts.',
     icon: TrendingUp,
     href: '/crash',
-    accent: 'from-[#EE86FF] to-[#9C4FE0]',
+    accent: 'from-[#FFCE5E] to-[#FF7A45]',
     rtp: '95%',
   },
   {
@@ -31,7 +31,7 @@ const games = [
     description: 'Heads or tails. 50/50 odds, 1.9× payout.',
     icon: Coins,
     href: '/coinflip',
-    accent: 'from-[#C76BFF] to-[#6F5FCC]',
+    accent: 'from-[#2DD4BF] to-[#14B8A6]',
     rtp: '95%',
   },
   {
@@ -40,7 +40,7 @@ const games = [
     description: 'Beat the dealer. Up to 5 seats per table.',
     icon: Spade,
     href: '/blackjack',
-    accent: 'from-[#9C4FE0] to-[#4D3D99]',
+    accent: 'from-[#FF7A45] to-[#F43F5E]',
     rtp: '99.5%',
   },
   {
@@ -49,7 +49,7 @@ const games = [
     description: 'Roll under your target. Set your own odds.',
     icon: Dices,
     href: '/dice',
-    accent: 'from-[#EE86FF] to-[#9C4FE0]',
+    accent: 'from-[#FFCE5E] to-[#FF7A45]',
     rtp: '99%',
   },
   {
@@ -58,7 +58,7 @@ const games = [
     description: 'Pick a multiplier. Beat the roll, win big.',
     icon: Rocket,
     href: '/limbo',
-    accent: 'from-[#C76BFF] to-[#6F5FCC]',
+    accent: 'from-[#2DD4BF] to-[#14B8A6]',
     rtp: '95%',
   },
   {
@@ -67,7 +67,7 @@ const games = [
     description: 'Drop the ball. Bounce into a payout bin.',
     icon: Circle,
     href: '/plinko',
-    accent: 'from-[#9C4FE0] to-[#4D3D99]',
+    accent: 'from-[#FF7A45] to-[#F43F5E]',
     rtp: '95%',
   },
   {
@@ -76,7 +76,7 @@ const games = [
     description: 'Spin the wheel. Land on a multiplier.',
     icon: Bomb,
     href: '/wheel',
-    accent: 'from-[#6F5FCC] to-[#4D3D99]',
+    accent: 'from-[#34D399] to-[#14B8A6]',
     rtp: '95%',
   },
   {
@@ -85,7 +85,7 @@ const games = [
     description: 'Reveal gems, dodge the mines. Cash out any time.',
     icon: Gem,
     href: '/mines',
-    accent: 'from-[#EE86FF] to-[#9C4FE0]',
+    accent: 'from-[#FFCE5E] to-[#FF7A45]',
     rtp: '95%',
   },
   {
@@ -94,7 +94,7 @@ const games = [
     description: 'Climb row by row. One trap each step.',
     icon: Layers,
     href: '/tower',
-    accent: 'from-[#C76BFF] to-[#6F5FCC]',
+    accent: 'from-[#2DD4BF] to-[#14B8A6]',
     rtp: '95%',
   },
   {
@@ -103,7 +103,7 @@ const games = [
     description: 'Higher or lower? Compound your streak.',
     icon: ArrowUpDown,
     href: '/hilo',
-    accent: 'from-[#9C4FE0] to-[#4D3D99]',
+    accent: 'from-[#FF7A45] to-[#F43F5E]',
     rtp: '95%',
   },
 ];

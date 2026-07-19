@@ -9,7 +9,7 @@ import { CrashRocket } from './crash-rocket';
 import { useGameSound } from '@/components/instant/use-game-sound';
 
 /** Canopy colors so concurrent cash-out parachutes stay distinct. */
-const PARACHUTE_HUES = ['#22d3ee', '#a855f7', '#f59e0b', '#22c55e', '#f472b6', '#38bdf8'];
+const PARACHUTE_HUES = ['#22d3ee', '#FFBE3D', '#f59e0b', '#22c55e', '#FF7A45', '#38bdf8'];
 
 /** Betting-window length in seconds — mirrors the server scheduler exactly. */
 const WINDOW_S = CRASH.BET_WINDOW_MS / 1000;
@@ -94,7 +94,7 @@ export function CrashCurve({
 
   if (!state) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center bg-[#080818]">
+      <div className="absolute inset-0 flex items-center justify-center bg-[#080A12]">
         <div className="text-foreground-muted animate-pulse">Connecting...</div>
       </div>
     );
@@ -116,7 +116,7 @@ export function CrashCurve({
   }
 
   return (
-    <div className="absolute inset-0 bg-[#080818] overflow-hidden">
+    <div className="absolute inset-0 bg-[#080A12] overflow-hidden">
       <Starfield speeding={running} />
 
       {/* 3D Perspective Grid Floor */}
@@ -130,7 +130,7 @@ export function CrashCurve({
             ? 'bg-gradient-to-t from-red-900/40 via-transparent to-transparent'
             : running
               ? 'bg-gradient-to-t from-cyan-900/20 via-transparent to-transparent'
-              : 'bg-gradient-to-t from-purple-900/15 via-transparent to-transparent',
+              : 'bg-gradient-to-t from-primary-900/15 via-transparent to-transparent',
         )}
       />
 
@@ -172,18 +172,18 @@ export function CrashCurve({
                 initial={{ scale: 1.4, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 className="font-display text-8xl md:text-[10rem] font-bold text-white/90 leading-none tabular-nums"
-                style={{ textShadow: '0 0 60px rgba(168,85,247,0.5)' }}
+                style={{ textShadow: '0 0 60px rgba(255, 190, 61,0.5)' }}
               >
                 {Math.ceil(countdown)}
               </motion.div>
               <div
                 className="text-lg uppercase tracking-[0.4em] font-bold mt-2"
-                style={{ color: '#a855f7', textShadow: '0 0 20px rgba(168,85,247,0.6)' }}
+                style={{ color: '#FFBE3D', textShadow: '0 0 20px rgba(255, 190, 61,0.6)' }}
               >
                 Starting
               </div>
               <motion.div
-                className="mx-auto mt-3 h-0.5 rounded-full bg-gradient-to-r from-transparent via-purple-500 to-transparent"
+                className="mx-auto mt-3 h-0.5 rounded-full bg-gradient-to-r from-transparent via-primary-500 to-transparent"
                 animate={{ width: ['40%', '80%', '40%'] }}
                 transition={{ duration: 2, repeat: Infinity }}
                 style={{ maxWidth: 200 }}
@@ -310,7 +310,7 @@ function PerspectiveGrid() {
           backgroundSize: '80px 80px',
         }}
       >
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080818] via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#080A12] via-transparent to-transparent" />
       </div>
       <div
         className="absolute left-0 right-0 h-px"
@@ -395,7 +395,7 @@ function CrashTrail({
   const trailColor = busted
     ? '#ef4444'
     : multiplier >= 10
-      ? '#a855f7'
+      ? '#FFBE3D'
       : multiplier >= 2
         ? '#22d3ee'
         : '#e8f0ff';
@@ -567,7 +567,7 @@ function CrashTrail({
           <div
             style={{
               filter:
-                'drop-shadow(0 0 14px rgba(255,140,40,0.7)) drop-shadow(0 0 28px rgba(168,85,247,0.45))',
+                'drop-shadow(0 0 14px rgba(255,140,40,0.7)) drop-shadow(0 0 28px rgba(255, 190, 61,0.45))',
               transform: `rotate(${rocketDeg.toFixed(1)}deg)`,
             }}
           >

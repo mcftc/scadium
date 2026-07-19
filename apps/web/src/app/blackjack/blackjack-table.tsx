@@ -224,7 +224,7 @@ export function BlackjackTable() {
               {state.phase === 'betting' && secondsLeft !== null && (
                 <div
                   className="text-5xl font-black text-white/90 mb-1"
-                  style={{ textShadow: '0 0 40px rgba(168,85,247,0.5)' }}
+                  style={{ textShadow: '0 0 40px rgba(255, 190, 61,0.5)' }}
                 >
                   {secondsLeft}
                 </div>
@@ -320,16 +320,16 @@ function DealerAvatar({ dealing = false }: { dealing?: boolean }) {
       className="relative flex flex-col items-center"
     >
       {/* soft aura */}
-      <div className="absolute -inset-5 -z-10 rounded-full bg-purple-500/20 blur-2xl" />
+      <div className="absolute -inset-5 -z-10 rounded-full bg-primary-500/20 blur-2xl" />
       {/* antenna */}
-      <div className="h-3 w-px bg-purple-300/40" />
+      <div className="h-3 w-px bg-primary-300/40" />
       <motion.div
         animate={{ opacity: [0.4, 1, 0.4], scale: [1, 1.25, 1] }}
         transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-        className="-mb-0.5 h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]"
+        className="-mb-0.5 h-1.5 w-1.5 rounded-full bg-primary-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]"
       />
       {/* head */}
-      <div className="relative mt-1 h-14 w-16 rounded-2xl border border-purple-300/30 bg-gradient-to-b from-[#3b3660] to-[#241f3a] shadow-[0_6px_22px_rgba(124,92,255,0.4)]">
+      <div className="relative mt-1 h-14 w-16 rounded-2xl border border-primary-300/30 bg-gradient-to-b from-[#3b3660] to-[#241f3a] shadow-[0_6px_22px_rgba(255, 190, 61,0.4)]">
         {/* visor */}
         <div className="absolute left-1/2 top-1/2 flex h-5 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-2.5 rounded-md bg-[#07090d] shadow-inner">
           {[0, 1].map((i) => (
@@ -350,11 +350,11 @@ function DealerAvatar({ dealing = false }: { dealing?: boolean }) {
       {/* neck */}
       <div className="h-1.5 w-3 bg-[#15121f]" />
       {/* shoulders + bow tie + chest core */}
-      <div className="relative h-7 w-24 rounded-t-[28px] border-t border-purple-300/20 bg-gradient-to-b from-[#2c2742] to-[#181527]">
+      <div className="relative h-7 w-24 rounded-t-[28px] border-t border-primary-300/20 bg-gradient-to-b from-[#2c2742] to-[#181527]">
         <div className="absolute left-1/2 top-1.5 flex -translate-x-1/2 items-center">
-          <span className="h-0 w-0 border-y-[5px] border-r-[8px] border-y-transparent border-r-fuchsia-400/90" />
-          <span className="h-2 w-2 rounded-[3px] bg-fuchsia-300" />
-          <span className="h-0 w-0 border-y-[5px] border-l-[8px] border-y-transparent border-l-fuchsia-400/90" />
+          <span className="h-0 w-0 border-y-[5px] border-r-[8px] border-y-transparent border-r-primary-400/90" />
+          <span className="h-2 w-2 rounded-[3px] bg-primary-300" />
+          <span className="h-0 w-0 border-y-[5px] border-l-[8px] border-y-transparent border-l-primary-400/90" />
         </div>
         <motion.div
           animate={{ opacity: dealing ? [0.6, 1, 0.6] : [0.4, 0.8, 0.4] }}
@@ -370,7 +370,7 @@ function DealerAvatar({ dealing = false }: { dealing?: boolean }) {
 function CardShoe() {
   return (
     <div className="relative mb-1 flex flex-col items-center" title="Card shoe">
-      <div className="relative h-10 w-14 overflow-hidden rounded-md border border-purple-400/25 bg-gradient-to-br from-[#2a2540] to-[#15121f] shadow-[inset_0_2px_6px_rgba(0,0,0,0.5)]">
+      <div className="relative h-10 w-14 overflow-hidden rounded-md border border-primary-400/25 bg-gradient-to-br from-[#2a2540] to-[#15121f] shadow-[inset_0_2px_6px_rgba(0,0,0,0.5)]">
         {/* a couple of card edges peeking from the shoe */}
         <div className="absolute left-1.5 top-1 flex">
           {[0, 1, 2].map((i) => (

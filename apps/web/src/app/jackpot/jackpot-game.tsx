@@ -24,7 +24,7 @@ import { cn } from '@/lib/cn';
 import { GAME_RTP } from '@scadium/shared';
 
 const QUICK = ['0.05', '0.25', '1', '5'];
-const BAR_COLORS = ['#22d3ee', '#a855f7', '#f59e0b', '#34d399', '#f472b6', '#60a5fa'];
+const BAR_COLORS = ['#22d3ee', '#FFBE3D', '#f59e0b', '#34d399', '#FF7A45', '#60a5fa'];
 
 export function JackpotGame() {
   const snap = useJackpot();

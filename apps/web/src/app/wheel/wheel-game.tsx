@@ -28,12 +28,12 @@ import { cn } from '@/lib/cn';
 // Tier bands chosen so both the raw bucket shape (5/3/2/1.5/1.2) and the
 // RTP-scaled payouts (≈4.92/2.95/1.96/1.47/1.18) map to the same colour tier.
 function tierColor(m: number): string {
-  if (m >= 4) return '#EE86FF';
-  if (m >= 2.5) return '#C76BFF';
-  if (m >= 1.8) return '#9C4FE0';
-  if (m >= 1.35) return '#6F5FCC';
-  if (m >= 1.05) return '#4D3D99';
-  return '#2a2440';
+  if (m >= 4) return '#FFBE3D';
+  if (m >= 2.5) return '#F5A623';
+  if (m >= 1.8) return '#DB8A12';
+  if (m >= 1.35) return '#B26B0C';
+  if (m >= 1.05) return '#8A5209';
+  return '#2A2E3C';
 }
 
 export function WheelGame() {
@@ -277,7 +277,7 @@ function Wheel({
       <div className="relative w-full max-w-[460px] aspect-square">
         {/* Pointer */}
         <div className="absolute left-1/2 -top-1 z-20 -translate-x-1/2">
-          <div className="h-0 w-0 border-x-[13px] border-x-transparent border-t-[20px] border-t-[#EE86FF]" />
+          <div className="h-0 w-0 border-x-[13px] border-x-transparent border-t-[20px] border-t-[#FFBE3D]" />
         </div>
         <svg
           viewBox="0 0 320 320"
@@ -304,7 +304,7 @@ function Wheel({
               />
             );
           })}
-          <circle cx={C} cy={C} r={34} fill="#0a0a0f" stroke="#2a2440" strokeWidth={2} />
+          <circle cx={C} cy={C} r={34} fill="#0a0a0f" stroke="#2A2E3C" strokeWidth={2} />
         </svg>
         {/* Hub label — shows the outcome only once the wheel has stopped */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

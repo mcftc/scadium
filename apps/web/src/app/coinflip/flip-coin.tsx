@@ -91,7 +91,7 @@ function CoinFace({
           heads ? '#7c5fd4 0deg 6deg, #4c3f8f 6deg 12deg' : '#22a8c4 0deg 6deg, #156a80 6deg 12deg'
         })`,
         boxShadow: heads
-          ? '0 0 30px rgba(168,85,247,0.45), inset 0 0 12px rgba(0,0,0,0.5)'
+          ? '0 0 30px rgba(255, 190, 61,0.45), inset 0 0 12px rgba(0,0,0,0.5)'
           : '0 0 30px rgba(34,211,238,0.45), inset 0 0 12px rgba(0,0,0,0.5)',
       }}
     >

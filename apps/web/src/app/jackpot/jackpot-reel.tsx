@@ -9,10 +9,10 @@ import { cn } from '@/lib/cn';
 
 const PALETTE = [
   '#22d3ee',
-  '#a855f7',
+  '#FFBE3D',
   '#f59e0b',
   '#34d399',
-  '#f472b6',
+  '#FF7A45',
   '#60a5fa',
   '#fb7185',
   '#4ade80',
