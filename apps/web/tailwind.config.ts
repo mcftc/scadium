@@ -72,8 +72,8 @@ const config: Config = {
       },
       keyframes: {
         'pulse-glow': {
-          '0%, 100%': { boxShadow: '0 0 20px rgba(238, 134, 255, 0.3)' },
-          '50%': { boxShadow: '0 0 40px rgba(238, 134, 255, 0.6)' },
+          '0%, 100%': { boxShadow: '0 0 20px rgba(255, 190, 61, 0.3)' },
+          '50%': { boxShadow: '0 0 40px rgba(255, 190, 61, 0.6)' },
         },
         'gradient-shift': {
           '0%, 100%': { backgroundPosition: '0% 50%' },
