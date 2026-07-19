@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -14,11 +15,22 @@ interface DialogProps {
 }
 
 /**
- * Minimal accessible modal dialog. Keeps us free of a heavy Radix dependency
- * for now — can swap in @radix-ui/react-dialog later if we need portaling,
- * focus trapping, or scroll lock beyond the basics provided here.
+ * Minimal accessible modal dialog. Rendered through a portal into `document.body`
+ * so its `fixed`/`z-index` overlay escapes any ancestor stacking context — e.g.
+ * the `position: sticky` left rail that hosts the airdrop widget, which otherwise
+ * trapped the overlay inside the rail and let the page content paint over the
+ * modal (the "layout disappears" defect). Focus trapping/Radix can come later.
  */
 export function Dialog({ open, onClose, children, title, description, className }: DialogProps) {
+  // Portals need `document`; render nothing until the client has mounted (SSR-safe).
+  // `useSyncExternalStore` returns `false` on the server / first paint and `true`
+  // after hydration — the mount signal without a setState-in-effect (lint-forbidden).
+  const mounted = React.useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -32,9 +44,9 @@ export function Dialog({ open, onClose, children, title, description, className 
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       role="dialog"
@@ -74,6 +86,7 @@ export function Dialog({ open, onClose, children, title, description, className 
         )}
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
