@@ -81,16 +81,18 @@ async function bootstrap() {
   // Swagger — gated: OFF in production unless DOCS_ENABLED=true (#38).
   const docs = setupSwagger(app);
 
-  // Graceful shutdown: on SIGTERM/SIGINT (every PaaS rolling deploy — Railway,
-  // Fly, k8s), run the modules' OnModuleDestroy hooks so the crash/jackpot/
+  // Graceful shutdown: on SIGTERM/SIGINT (every rolling deploy, and every
+  // Cloudflare Containers restart — the platform gives 15 minutes' grace before
+  // SIGKILL), run the modules' OnModuleDestroy hooks so the crash/jackpot/
   // lottery/blackjack engines release leadership + clear their loops, BullMQ
   // stops, and Prisma/Redis close cleanly instead of the process being killed
   // mid-round. Without this the hooks never fire and every deploy is an abrupt
   // kill (round-recovery then has to clean up on the next boot).
   app.enableShutdownHooks();
 
-  // API_PORT for local/compose; PORT is what most PaaS hosts (Render/Railway/Fly)
-  // inject and route to — honor it so the same image deploys unmodified.
+  // API_PORT for local/compose and for Cloudflare Containers (the Worker passes
+  // it in envVars); PORT is what most PaaS hosts inject and route to — honor both
+  // so the same image deploys unmodified.
   const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
   await app.listen(port, '0.0.0.0');
   logger.log(`🎰 Scadium API running on http://localhost:${port}`);

@@ -144,9 +144,9 @@ async function bootstrap(): Promise<void> {
 
   logger.log('worker up — 9 queues, schedulers registered');
 
-  // Health endpoint so the worker can run as a free PaaS "web service"
-  // (Render/Railway/Fly require an open HTTP port). No-op locally / in
-  // docker-compose where PORT is unset.
+  // Health endpoint so the worker can also run as a standalone "web service" on
+  // hosts that require an open HTTP port. No-op locally / in docker-compose, and
+  // in the Cloudflare container (PROCESS_MODE=both) where only the API binds.
   if (process.env.PORT) {
     const http = await import('node:http');
     http

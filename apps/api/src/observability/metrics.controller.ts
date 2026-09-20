@@ -15,8 +15,8 @@ import { metricsRegistry } from './metrics.registry';
  * Prometheus scrape endpoint (#38). Unprefixed (`/metrics`, like `/health`) so
  * scrapers don't need the API prefix.
  *
- * Defense-in-depth token gate: the reverse proxy (Caddy/Railway edge)
- * forwards *every* path to the API, so `/metrics` is reachable on the public
+ * Defense-in-depth token gate: the edge (Caddy locally, the Cloudflare Worker in
+ * production) forwards *every* path to the API, so `/metrics` is reachable on the public
  * origin — network isolation alone doesn't cover it. When `METRICS_TOKEN` is
  * set, a scrape must present it (`Authorization: Bearer <token>` or `?token=`);
  * when it's unset the endpoint stays open (backward-compatible, for private

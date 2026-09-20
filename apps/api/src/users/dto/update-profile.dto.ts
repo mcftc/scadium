@@ -13,8 +13,10 @@ export class UpdateProfileDto {
   // (client-uploaded / generated avatar), or an empty string to clear it.
   // SVG data URLs are rejected: they can carry <script>/onload and are a
   // stored-XSS vector if ever rendered inline (#H-avatar). The size cap bounds
-  // per-user Postgres blob abuse — the durable fix is object storage (a Railway
-  // bucket), deferred to the platform migration.
+  // per-user Postgres blob abuse — the durable fix is object storage. The R2
+  // bucket `scadium-avatars` exists; wiring it needs S3 credentials because a
+  // Cloudflare Container cannot use Worker bindings (see BACKLOG Tier 4).
+  // This matters: Neon's free tier is 0.5 GB and BLOCKS WRITES when full.
   @ApiPropertyOptional({ example: 'data:image/webp;base64,…' })
   @IsOptional()
   @IsString()
