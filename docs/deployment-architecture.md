@@ -1,5 +1,20 @@
 # Scadium — Deployment & Stack Decision (Phase 2)
 
+> **SUPERSEDED (2026-09-20) — do not follow the hosting decisions in this document.**
+> Railway was chosen here and has since been **abandoned and deleted**; its services return
+> `{"code":404,"message":"Application not found"}`. The platform decision now lives in
+> **[`docs/superpowers/specs/2026-09-20-cloudflare-migration-design.md`](superpowers/specs/2026-09-20-cloudflare-migration-design.md)**
+> (everything on Cloudflare; Neon + Upstash free tiers for Postgres/Redis until Cloudflare
+> has an equivalent).
+>
+> The specific claim below that "everything on Cloudflare compute" requires a months-long
+> Durable Objects rewrite is **obsolete**: Cloudflare Containers runs the existing Docker images
+> unchanged, and is available on the Workers Paid plan this account already has.
+>
+> What remains valid and is still worth reading here: the **.NET 10 vs NestJS** analysis (§4,
+> conclusion unchanged — keep NestJS/Prisma/TypeScript), the **H12 single-replica caveat**,
+> and the Phase 0 evidence about what the backend actually needs.
+
 **Date:** 2026-07-16 · **Inputs:** Phase 0 ground-truth audit (`docs/audit/phase-0-ground-truth.md`), the decision to **drop Vercel**, the owner's lean toward **Railway** for backend/DB/deploy, and the open **.NET 10 vs NestJS** question. Domain **scadium.com** is registered at Squarespace with **nameservers already delegated to Cloudflare** (full delegation).
 
 This doc gives a **direct recommendation for each decision**, grounded in what the code actually needs. It supersedes the original "everything on Cloudflare compute" framing: the Phase 0 evidence and the Railway pivot point to a cleaner split — **Cloudflare at the edge, Railway for compute + data, stack unchanged.**
