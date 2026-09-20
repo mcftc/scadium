@@ -98,9 +98,12 @@ revisit when there is a budget.
 | Need | Cloudflare options rejected | Fallback |
 |---|---|---|
 | **Postgres ledger** | D1 & DO-SQLite (§3); Hyperdrive is a pooler, not a database; PlanetScale has no free tier | **Neon free** (already migrated) |
-| **Redis (phase 1 only)** | KV is eventually consistent — Cloudflare's own docs say never use it for a nonce check | **Upstash free** (already created) |
+| **Redis (coordination only)** | KV is eventually consistent — Cloudflare's own docs say never use it for a nonce check | **Redis inside the Cloudflare container** (`localhost`, ephemeral) — no third-party vendor |
 
-**Redis is transitional, not architectural.** All six of its uses have a Cloudflare answer:
+**Redis is transitional, not architectural**, and as of the §5.2 amendment it is no longer a
+third-party service at all — it runs inside the Cloudflare container, holding only ephemeral
+coordination state (nonces, locks, throttle counters). Nothing durable depends on it.
+All six of its uses have a Cloudflare answer:
 
 | Redis use | Replacement | Effort |
 |---|---|---|
@@ -169,18 +172,36 @@ later is a **wrangler configuration change, not a code change** (OCP).
 
 ### 5.2 How the 9 economy jobs run without an always-on worker
 
-`apps/worker` exists today purely to be awake when 9 repeatable schedulers fire. Instead:
+**Amended 2026-09-21 — supersedes the BullMQ-drain approach originally written here.**
 
-> **Cron Trigger (hourly) → `GET /health` on the container → container wakes → BullMQ drains
-> overdue delayed jobs → container sleeps again after `sleepAfter`.**
+The original design had a Cron Trigger merely *wake* the container and rely on BullMQ
+re-draining delayed jobs that expired while it slept. That assumption was unproven (old risk 1)
+and it forced Redis to be durable, which forced the Upstash dependency.
 
-This is expected to work because BullMQ's repeatable schedulers materialise as *delayed jobs in
-Redis*, which Upstash persists while the container is down. Every job is already idempotent and
-period-keyed (`AirdropPool.distributed`, `DistributionRound.period`, the `RaceResult` unique
-guard), so late execution is safe by construction. `apps/worker/src/main.ts:220-225` already
-opens a health port when `PORT` is set, so no new endpoint is required.
+Inspection of `apps/worker/src/main.ts:47-135` shows every one of the 9 consumers is a thin
+call into a service that already lives in `apps/api`: `airdrop.distribute()`,
+`swap.runBuyAndBurn()`, `leaderboard.snapshot()/settleRace()`, `reconciliation.*`,
+`rewards.*`, `distribution.*`, `blockMining.*`, `vaultAccrual.*`. So:
 
-**This assumption is unproven and must be verified before it is relied upon** — see §8, risk 1.
+> **Cloudflare Cron Triggers become the scheduler.** A cron Worker calls one generic,
+> secret-guarded endpoint on the container — `POST /internal/jobs/:name` — which dispatches
+> to the same services the worker consumers call.
+
+Consequences, all improvements:
+
+- **The BullMQ-persistence assumption disappears.** Cron is the guarantee, not Redis.
+- **Redis no longer needs to be durable**, so it runs *inside the container* on `localhost`.
+  **The Upstash dependency is removed entirely** — no third-party Redis at any tier.
+- **Cloudflare-first is better satisfied**: the scheduler is a Cloudflare product, and the
+  only remaining non-Cloudflare dependency in the whole system is Postgres.
+- The container still runs `PROCESS_MODE=both`, so the existing BullMQ schedulers continue to
+  fire while it is awake. Both paths are safe because every job is already idempotent and
+  period-keyed (`AirdropPool.distributed`, `DistributionRound.period`, the `RaceResult` unique
+  guard), so a double-fire collapses to one effect by construction.
+
+The endpoint is **one generic route with a name→handler map**, not nine routes — new jobs
+arrive as new map entries, not new branches or new endpoints (OCP, and the house rule that a
+generic endpoint beats one endpoint per requirement).
 
 ### 5.3 Web on Workers
 
@@ -248,11 +269,11 @@ On the `basic` instance type (1/4 vCPU, 1 GiB memory, 4 GB disk), memory binds f
 
 ## 8. Risks, and what must be proven before it is trusted
 
-1. **BullMQ overdue-job drain (unproven).** §5.2 assumes a returning worker processes delayed
-   jobs whose time passed while it was down. **Must be proven locally against
-   `infra/docker-compose.yml` before the cron-wake design is relied upon.** If it does not
-   hold, the fallback is a cron Worker that calls an admin trigger endpoint per job — more
-   code, but no correctness risk.
+1. **~~BullMQ overdue-job drain~~ — RETIRED by the §5.2 amendment.** The fallback (a cron
+   Worker calling a job-trigger endpoint) was promoted to the primary design, so nothing
+   depends on BullMQ surviving a sleep. What must now be verified instead: that
+   `POST /internal/jobs/:name` reaches every one of the 9 services and is rejected without the
+   shared secret.
 2. **Container restarts are not guaranteed-free.** Cloudflare states plainly that it "does not
    guarantee that any container instance will run for any set period of time"; host restarts
    occur on an irregular cadence (SIGTERM, 15-minute grace, then SIGKILL). The crash engine
@@ -275,8 +296,9 @@ On the `basic` instance type (1/4 vCPU, 1 GiB memory, 4 GB disk), memory binds f
    - **No point-in-time restore on Free** — only a 6-hour history window (1 GB limit).
      A hardened Postgres with real PITR remains a **real-money prerequisite**, as already
      recorded in the real-money checklist.
-5. **Upstash free tier has a daily command ceiling.** At 1 replica, leader election and the
-   Socket.io adapter become unnecessary and should be disabled to cut command volume.
+5. **In-container Redis is ephemeral.** A restart clears nonces (users re-sign), throttle
+   counters (reset) and locks (TTL'd) — all acceptable. Nothing durable may ever be put there.
+   At 1 replica, leader election and the Socket.io Redis adapter are unnecessary anyway.
 6. **Cold start.** A woken container costs 1–3 s plus NestJS boot. Acceptable pre-launch;
    pin the container always-on once there are real players.
 
