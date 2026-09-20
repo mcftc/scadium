@@ -40,15 +40,28 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 
 - [x] **H17 · False capability/audit/RTP claims.** ✅ Fixed: "Audited: Yes"→"Pending"; six RTP figures corrected to 95% (Limbo/Mines/Tower/HiLo/Wheel/Plinko; Dice 99%/Blackjack 99.5% are correct and kept); dropped "on-chain VRF", the "On-Chain Games" tagline, "every fill is a real transaction", "on-chain AMM"; `metadataBase` + affiliate URL → scadium.com.
 
-## Tier 4 — Ops / platform (with the Railway + Cloudflare cutover)
+## Tier 4 — Ops / platform (Cloudflare) ✅ migrated 2026-09-21
 
-- [x] **H16 · Crash client has no reconnect-resync** → ✅ Fixed: a `connect` handler re-fetches `/crash/snapshot` and authoritatively resyncs round state on every (re)connect, so a WS drop across the waiting→running transition can't strand a live bet with the cash-out button disabled. `use-crash.ts`.
-- [ ] **H12 · API is effectively single-instance** (leader election, no request-forwarding). Run 1 `api` replica on Railway; add sticky routing / leader-forwarding only if HA is needed later.
-- [ ] **Live-feed follow-ups (non-blocking, from adversarial review).** (a) `lottery.engine` publishes one detached feed event per settled ticket — a large draw bursts N `resolveDisplay` lookups (cache dampens repeats, post-commit + best-effort so no money impact); consider capping per-draw emits to winners + a bounded sample. (b) Pre-existing latent: `jackpot.engine` never resets `didRefund` at the top of the settle-tx closure, so a refund-attempt → 40001 → draw-retry commit would take the refund branch post-commit and skip the winner broadcast/receipts/feed (DB money stays correct; broadcast/feed miss only). One-line `didRefund = false;` fix, wants a forced-retry test.
-- [ ] **Schedule-drift monitors (deferred, low priority).** A bespoke "job hasn't run in its expected window" monitor on the worker queues. Deferred: the `reconcile` queue + Prometheus default metrics + the idempotent per-hour job guards already cover the essential ops surface; the on-chain `fundedDrift/chainDrift/vaultDrift` monitors are separately blocked on chain activation. Revisit if a missed-run incident occurs.
-- [x] **H15 · pino redaction omits `x-geo-proxy-secret`** → ✅ added to `REDACTED_PATHS` (`pino.config.ts`); `redaction.spec.ts` asserts it's scrubbed.
-- [x] **H19 · Prod compose ships no worker** → ✅ Fixed: added the `worker` service to `docker-compose.prod.yml` (Helm's `worker.yaml` already covered the k8s path). All 9 BullMQ queues now run on the single-VPS path too.
-- [~] Graceful shutdown ✅; `metadataBase`→scadium.com ✅; SEO `robots.ts`+`sitemap.ts` ✅; `images.remotePatterns` locked (`[]`, was wildcard) ✅; **public `/metrics` token gate ✅** — optional `METRICS_TOKEN` bearer guard on the scrape endpoint (open when unset for private/edge-blocked scrapes; Caddy/Railway forward every path so network isolation alone didn't cover it). `metrics.controller.ts` + `metrics.controller.spec.ts`. Belt-and-suspenders with the documented Cloudflare WAF rule. Remaining: OG images.
+Railway is gone (project soft-deleted, `deletedAt: 2026-09-22`). The stack runs on
+Cloudflare: `apps/web` on Workers via OpenNext, `apps/api` + `apps/worker` as one
+Cloudflare Container, Cron Triggers driving the 9 economy jobs, Postgres on Neon free,
+Redis inside the container. Design: `docs/superpowers/specs/2026-09-20-cloudflare-migration-design.md`.
+Operations: `docs/runbooks/cloudflare.md`.
+
+- [x] Move compute off Railway onto Cloudflare Containers (existing Dockerfile, money core untouched).
+- [x] `apps/web` → Workers via `@opennextjs/cloudflare`; routes `scadium.com/*`, `www`, `api.scadium.com/*`.
+- [x] Cron Triggers → one generic `POST /api/v1/internal/jobs`; shared job registry so the worker and cron never duplicate money-moving logic.
+- [x] Drop the planned Upstash dependency — Redis runs in-container (ephemeral coordination only).
+- [x] Cut over DNS; verified zero Railway headers, live WebSocket, SIGKILL restart recovery.
+- [x] Delete the Railway project.
+
+### Remaining platform work
+
+- [ ] **Avatars → R2 (bucket `scadium-avatars` created, NOT wired).** Avatars are still base64 data-URLs inside Postgres (`users/dto/update-profile.dto.ts:16`), which eats Neon free's **0.5 GB, and exceeding it blocks writes** — an outage for the ledger, not a degradation. Blocker: a container is a plain Linux process and **cannot use Worker bindings**, so it needs S3-compatible R2 credentials. `wrangler` has no command to mint them — create an R2 API token in the dashboard (R2 → Manage API tokens → Object Read & Write, bucket `scadium-avatars`), then set `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` as Worker secrets and implement `storage/r2.service.ts`. Keep the existing size cap and SVG rejection — that is an XSS guard.
+- [ ] **Edge hardening.** Workers `ratelimit` binding on `/api/v1/auth/*` (replaces the Redis throttler), a WAF rate-limiting rule, Bot Fight Mode, Turnstile on signup, SSL Full (strict) + HSTS, a Transform Rule injecting `x-geo-proxy-secret` (and stripping client-supplied values), and blocking `/metrics` at the edge.
+- [ ] **Cold start is inherent at this budget.** Boot is ~22-36s (NestJS graph + `prisma migrate deploy`) against the container library's 20s port timeout, so the first request after an idle period fails and the page self-heals ~40s later. Removing it means never sleeping, which costs on BOTH sides: ~$7/mo container **and** a paid Neon plan, because always-on keeps Neon's compute active far past the free 100 CU-hours. Decide at launch, not before. Measurements in spec §8.6.
+- [ ] **`SLEEP_AFTER` is a budget dial, not just a latency one.** At the hourly cron: 10m ≈ 134 container-hours/month (over Neon free's 100 CU-hour cap); 5m ≈ 73 (current setting). Revisit together with the Neon plan.
+- [ ] **Phase 2 — shrink to Cloudflare-only.** BullMQ → Cloudflare Queues, SIWS nonces → Durable Object, Prometheus → Analytics Engine, then delete Redis entirely. Postgres stays on Neon because Cloudflare has no equivalent at any price under ~$10/mo.
 
 ## Tier 5 — Hygiene (low)
 
