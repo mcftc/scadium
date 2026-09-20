@@ -180,6 +180,32 @@ curl -X POST -H "x-internal-secret: $INTERNAL_JOB_SECRET" \
 Returns 403 without the secret, 400 for an unknown job name. The route is also
 blocked at the Worker, so it is only reachable from the scheduled handler.
 
+## CI
+
+GitHub Actions currently **cannot run**: every job fails in ~2s with *"The job
+was not started because your account is locked due to a billing issue."* That is
+an account-level lock, not a repository or workflow problem, and it predates the
+Cloudflare migration.
+
+Until it is resolved, the local CI-equivalent is the gate (as `CLAUDE.md`
+requires). Run all of it before pushing to `main`:
+
+```bash
+pnpm typecheck && pnpm typecheck:worker && pnpm lint
+pnpm --filter @scadium/api test:unit
+
+# integration needs a real Postgres; :5432 may be taken by another project
+docker run -d --name scadium-testpg -p 5433:5432 \
+  -e POSTGRES_USER=scadium -e POSTGRES_PASSWORD=scadium -e POSTGRES_DB=scadium_test postgres:16-alpine
+docker compose -f infra/docker-compose.yml up -d redis
+export TEST_DATABASE_URL='postgresql://scadium:scadium@localhost:5433/scadium_test?schema=public'
+DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @scadium/api exec prisma migrate deploy
+pnpm --filter @scadium/api test:integration
+```
+
+Last full local run: typecheck 10/10, lint clean, **360 unit tests**,
+**263 integration tests** (99 files) against real Postgres, 53/53 migrations.
+
 ## Restart safety
 
 The container can be killed at any moment — Cloudflare states no instance is
