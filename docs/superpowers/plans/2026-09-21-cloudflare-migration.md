@@ -226,3 +226,36 @@ Turnstile / WAF · NestJS 11 · Next.js 16 · Prisma 5 · BullMQ · wrangler 4
 5. A mid-round container kill leaves no stranded bets and no double settlement.
 6. Full local CI-equivalent suite green.
 7. Marginal Cloudflare spend for a pre-launch month under $1.
+
+---
+
+## Outcome (2026-09-21) — what actually happened
+
+The migration shipped and **scadium.com is live on Cloudflare**; Railway is deleted.
+Tasks 1-7 and 10 are done. What the plan did NOT predict, and cost the most time:
+
+1. **`max_instances: 1` deadlocked the deployment.** Stopped containers stay
+   *registered* as `inactive`, and a stale instance from an earlier
+   `CONTAINER_INSTANCE` name counts too. With no free slot, the container could
+   never restart after its first stop — every request returned "not running,
+   consider calling start()". It masqueraded as corrupted Durable Object state,
+   which sent the investigation down a blind alley. Fixed by raising it to 3
+   (headroom, not replicas — the DO name still enforces one engine).
+2. **Cold start cannot meet the library's 20s port timeout.** Measured 36s at
+   `basic`'s 0.25 vCPU, 22s even at a full vCPU. Two "fixes" made it worse and
+   were reverted: a 180s blocking `startAndWaitForPorts()` (hung every request)
+   and a rethrowing `onError` (wedged the DO).
+3. **An unvisited site was going to cost ~$2/month.** The hourly cron woke the
+   container and let it idle — ~73 container-hours/month, 8.8x the included
+   memory allotment and 73% of Neon free's compute. Fixed by stopping the
+   container after the sweep, plus a hard `DAILY_ACTIVE_SECONDS` cap.
+4. **The image was 3.65 GB** because the unfiltered workspace install dragged
+   apps/web's tree into the API image. Filtered to 1.39 GB.
+
+**Still open** (tracked in `BACKLOG.md` Tier 4): Task 8 (R2 avatars — bucket
+created, blocked on R2 S3 credentials because containers cannot use Worker
+bindings) and Task 9 (edge hardening).
+
+Verification at completion: 19/19 live end-to-end checks, 360 unit tests,
+263 integration tests against real Postgres, and a SIGKILL-mid-round restart
+drill with no double settlement.
