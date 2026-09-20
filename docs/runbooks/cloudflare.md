@@ -59,6 +59,30 @@ npx wrangler containers instances <APP_ID> # per-instance state
 - Every request `Canceled` in `wrangler tail` → your client timed out before the
   container finished booting; retry with a longer timeout.
 
+### The container refuses to start at all (wedged Durable Object state)
+
+Symptom: **every** request returns `The container is not running, consider calling
+start()` in ~0.3s (a fast refusal, not a 20s timeout), `wrangler containers
+instances` shows the instance `inactive`, and `containers info` reports
+`active: 0, failed: 0, errors: []`. Redeploying does not help. **Reverting the
+code that caused it does not help either** — that is the diagnostic tell.
+
+Cause: the `Container` class persists lifecycle state in Durable Object storage
+under `__CF_CONTAINER_STATE`. That state outlives your code. A hook that throws
+where the library does not expect it — notably `onError()`, which runs on the
+container monitor — can leave a status the library will never restart from.
+
+Fix: rotate the instance name to allocate a fresh Durable Object.
+
+```bash
+# wrangler.jsonc → vars.CONTAINER_INSTANCE: "scadium-api-v2" → "scadium-api-v3"
+npx wrangler deploy
+```
+
+Prevention: never throw from `onStart` / `onStop` / `onError`, and never replace
+the library's fast-fail start with a long blocking `startAndWaitForPorts()` —
+both were tried here and both made things worse.
+
 ## Running the economy jobs by hand
 
 ```bash
