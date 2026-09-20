@@ -54,32 +54,47 @@ export class ScadiumApi extends Container<Env> {
   }
 
   /**
-   * Explicitly start the container before proxying.
+   * Proxy to the container, recovering from the state desync that otherwise
+   * makes this deployment unrecoverable after the container sleeps.
    *
-   * The library documents that `fetch()` starts the container automatically, but
-   * in this deployment it does not after the container has slept: every request
-   * then returns "The container is not running, consider calling start()" and it
-   * never recovers without a redeploy. So we call start ourselves, exactly as
-   * that message suggests.
+   * Symptom: after a sleep, every request fails with "The container is not
+   * running, consider calling start()" and only a redeploy fixes it. That string
+   * is NOT one of the library's errors (`the container is not listening`, etc.)
+   * — it comes from the workerd runtime. So the Durable Object still believes
+   * the container is running and proxies straight through, while the runtime
+   * knows it is gone. Because the object's view says "running",
+   * `startAndWaitForPorts()` skips starting and the two views never reconcile.
    *
-   * The timeout is deliberately SHORT. An earlier attempt used 180s and held
-   * every request open for three minutes; here we give the start a bounded
-   * nudge and fall through to `super.fetch()` regardless, so a caller during a
-   * cold boot still gets a fast, honest error while the container finishes
-   * starting in the background.
+   * Recovery is therefore to force the state back in sync: `destroy()` (SIGKILL
+   * + onStop, which clears the object's belief) and then start for real.
+   *
+   * Timeouts are deliberately short and every failure is swallowed. An earlier
+   * attempt to await a 180s start held every request open for three minutes, and
+   * rethrowing from this path wedged the object outright — so on failure we fall
+   * through and let the caller get a fast, honest error while the container
+   * finishes starting in the background.
    */
   override async fetch(request: Request): Promise<Response> {
     try {
-      await this.startAndWaitForPorts(undefined, {
-        portReadyTimeoutMS: START_NUDGE_TIMEOUT_MS,
-        instanceGetTimeoutMS: 8_000,
-      });
-    } catch {
-      // Still booting, or the start could not be confirmed in time. Fall through
-      // — the container keeps starting in the background and the next request
-      // will find it. Never rethrow: throwing from here wedges the object.
+      return await super.fetch(request);
+    } catch (error) {
+      if (!isContainerGoneError(error)) throw error;
+      console.warn('container state desync — forcing a restart');
+      try {
+        await this.destroy();
+      } catch {
+        // Already gone; that is the outcome we wanted.
+      }
+      try {
+        await this.startAndWaitForPorts(undefined, {
+          portReadyTimeoutMS: START_NUDGE_TIMEOUT_MS,
+          instanceGetTimeoutMS: 8_000,
+        });
+      } catch {
+        // Still booting — fall through; the next request will find it.
+      }
+      return super.fetch(request);
     }
-    return super.fetch(request);
   }
 
   /**
@@ -142,6 +157,12 @@ const BOOT_COST_SECONDS = 40;
  * request fail fast. Short on purpose — see the note on `fetch()`.
  */
 const START_NUDGE_TIMEOUT_MS = 15_000;
+
+/** Does this error mean the runtime has no container behind this object? */
+function isContainerGoneError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /not running|no container instance|not listening/i.test(message);
+}
 
 interface StoredBudget {
   day: string;
