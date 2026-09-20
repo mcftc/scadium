@@ -54,6 +54,35 @@ export class ScadiumApi extends Container<Env> {
   }
 
   /**
+   * Explicitly start the container before proxying.
+   *
+   * The library documents that `fetch()` starts the container automatically, but
+   * in this deployment it does not after the container has slept: every request
+   * then returns "The container is not running, consider calling start()" and it
+   * never recovers without a redeploy. So we call start ourselves, exactly as
+   * that message suggests.
+   *
+   * The timeout is deliberately SHORT. An earlier attempt used 180s and held
+   * every request open for three minutes; here we give the start a bounded
+   * nudge and fall through to `super.fetch()` regardless, so a caller during a
+   * cold boot still gets a fast, honest error while the container finishes
+   * starting in the background.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    try {
+      await this.startAndWaitForPorts(undefined, {
+        portReadyTimeoutMS: START_NUDGE_TIMEOUT_MS,
+        instanceGetTimeoutMS: 8_000,
+      });
+    } catch {
+      // Still booting, or the start could not be confirmed in time. Fall through
+      // — the container keeps starting in the background and the next request
+      // will find it. Never rethrow: throwing from here wedges the object.
+    }
+    return super.fetch(request);
+  }
+
+  /**
    * Account for container active time against a per-UTC-day budget.
    *
    * Why this exists: container billing and Neon's free compute-hours both track
@@ -107,6 +136,12 @@ const DEFAULT_DAILY_ACTIVE_SECONDS = 3600;
 
 /** What a cold start really costs, charged when the container had been asleep. */
 const BOOT_COST_SECONDS = 40;
+
+/**
+ * How long to wait for an explicit start before giving up and letting the
+ * request fail fast. Short on purpose — see the note on `fetch()`.
+ */
+const START_NUDGE_TIMEOUT_MS = 15_000;
 
 interface StoredBudget {
   day: string;
