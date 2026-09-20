@@ -5,50 +5,37 @@ import type { Env } from './env';
 const CONTAINER_PORT = 4000;
 
 /**
- * Idle timeout default. Deliberately short: the Workers Paid plan includes
- * 25 GiB-hours of container memory per month, which is ~25 hours for the `basic`
- * (1 GiB) instance type. A short idle window keeps a pre-launch deployment inside
- * that allotment — see the cost model in the migration spec §7. Override with the
- * SLEEP_AFTER var; pin it long (or override onActivityExpired) once there are
- * real players. Note that Neon's free tier also caps compute-hours, so a pinned
- * always-on container requires a paid database plan too (spec §8.4).
- */
-/**
- * Idle timeout default. This is a BUDGET control as much as a performance one:
- * the crash engine writes a round every ~10-20s while the container is up, so
- * Neon's compute-hours track container uptime. With the hourly cron, 10m works
- * out at ~134 container-hours/month — over Neon free's 100 CU-hour cap — while
- * 5m lands at ~73 with headroom for real visitors. Raise it (and move Neon off
- * the free plan) when cold starts matter more than the bill.
+ * Idle timeout default.
+ *
+ * This is a BUDGET control as much as a latency one. The crash engine writes a
+ * round every ~10-20s while the container is up, so Neon's compute-hours track
+ * container uptime almost exactly, and container memory is billed per GiB-hour
+ * against the plan's included 25 GiB-hours. The hourly cron stops the container
+ * when it is done (see worker/index.ts), so this timeout only governs how long
+ * the container lingers after a real visitor.
  */
 const DEFAULT_SLEEP_AFTER = '5m';
 
 /**
  * COLD START, and why requests are not held open for it.
  *
- * Measured boot for this image is ~23s: redis-server, then `prisma migrate
- * deploy` (a real round trip to Neon), then a NestJS graph of ~40 modules.
- * The library waits TIMEOUT_TO_GET_PORTS_MS (20s) for the port, so the first
- * request after a sleep fails — but the container keeps booting in the
- * background and subsequent requests succeed. That is the intended behaviour
- * and it is deliberately NOT replaced with a long blocking wait: an earlier
- * attempt to await startAndWaitForPorts() with a 180s timeout held every
- * request open for three minutes and wedged the Durable Object.
+ * Measured time to listening: ~36s at 0.25 vCPU, ~28s at 0.5, ~22s at 1 — against
+ * the library's 20s `TIMEOUT_TO_GET_PORTS_MS`. Boot is redis-server, then
+ * `prisma migrate deploy` (a real round trip to Neon), then a NestJS graph of ~40
+ * modules; sub-20s is not reachable while migrations run on boot. So the first
+ * request after a sleep fails, the container finishes booting in the background,
+ * and later requests serve in ~1s. socket.io reconnects and TanStack Query
+ * retries, so a page loaded cold recovers on its own.
  *
- * Consequence for clients: the first page load after an idle period sees a
- * few failed calls, then works. socket.io reconnects automatically. To remove
- * cold starts entirely, stop the container sleeping (raise SLEEP_AFTER or
- * override onActivityExpired) — but note that always-on also requires a paid
- * Neon plan, because the free tier caps compute-hours (spec §8.4).
- */
-
-/**
- * The Scadium API container: one Durable Object, one long-lived Linux process
- * running NestJS (and, per PROCESS_MODE, the BullMQ worker) with Redis on loopback.
+ * Do NOT "fix" this by awaiting startAndWaitForPorts() with a long timeout — it
+ * was tried, and it held every request open for three minutes and wedged the
+ * Durable Object.
  *
- * `max_instances: 1` in wrangler.jsonc enforces the single-replica constraint the
- * app already requires: leader election has no request-forwarding, so a second
- * replica would reject gameplay writes (the H12 caveat).
+ * NOTE: this class deliberately declares NO lifecycle hooks (onStart/onStop/
+ * onError). An earlier `onError` that rethrew left the container's persisted
+ * state (`__CF_CONTAINER_STATE`) in a status the library would never restart
+ * from — and because that state outlives the code, reverting did not clear it.
+ * Keep this subclass to configuration only.
  */
 export class ScadiumApi extends Container<Env> {
   defaultPort = CONTAINER_PORT;
@@ -60,25 +47,6 @@ export class ScadiumApi extends Container<Env> {
     // Read lazily by the base class, so assigning here is safe.
     this.sleepAfter = env.SLEEP_AFTER ?? DEFAULT_SLEEP_AFTER;
     this.envVars = buildContainerEnv(env);
-  }
-
-  override onStart(): void {
-    console.log(`scadium container started (PROCESS_MODE=${this.env.PROCESS_MODE ?? 'api'})`);
-  }
-
-  override onStop(params: { exitCode: number; reason: string }): void {
-    // Expected on idle sleep, on deploys, and on the irregular host restarts
-    // Cloudflare makes no guarantee against. The API's boot recovery
-    // (recoverStrandedRounds/recoverScheduledBets) settles anything left mid-round.
-    console.log(`scadium container stopped: code=${params.exitCode} reason=${params.reason}`);
-  }
-
-  override onError(error: unknown): unknown {
-    console.error('scadium container error:', error);
-    // Deliberately does NOT rethrow. This hook runs on the container monitor;
-    // throwing from it wedged the Durable Object so the container could never
-    // restart. Report and let the library's own retry path handle recovery.
-    return error;
   }
 }
 

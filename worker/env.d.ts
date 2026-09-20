@@ -15,8 +15,14 @@ export interface Env {
   // ---- vars (wrangler.jsonc) ----
   /** `api` | `worker` | `both` — which process(es) the container runs. */
   PROCESS_MODE?: string;
-  /** Idle timeout before the container sleeps, e.g. "10m". Keeps spend inside the plan allotment. */
+  /** Idle timeout before the container sleeps, e.g. "5m". Keeps spend inside the plan allotment. */
   SLEEP_AFTER?: string;
+  /**
+   * "false" to leave the container running after the hourly cron sweep. Default
+   * stops it, which is what keeps an unvisited site inside the free allotments.
+   * Set to "false" once real players are online.
+   */
+  CRON_STOP_CONTAINER?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
   /**

@@ -94,6 +94,24 @@ export default {
             return;
           }
           console.log(`cron: job sweep ok after ${elapsed}ms: ${body}`);
+
+          // Put the container straight back to sleep instead of letting it idle
+          // out. This is the difference between the site costing nothing and
+          // costing real money while NOBODY is using it: at the hourly cron,
+          // lingering for SLEEP_AFTER works out at ~73 container-hours/month
+          // (8.8x over the plan's included 25 GiB-hours, and 73% of Neon free's
+          // 100 CU-hours) versus ~10 h/month if it stops as soon as it is done.
+          //
+          // Set CRON_STOP_CONTAINER=false once there are real players: stopping
+          // here would disconnect anyone mid-round.
+          if ((env.CRON_STOP_CONTAINER ?? 'true') !== 'false') {
+            try {
+              await apiContainer(env).stop();
+              console.log('cron: container stopped');
+            } catch (e) {
+              console.warn(`cron: could not stop container: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
         } catch (e) {
           console.error(`cron: job sweep threw: ${e instanceof Error ? e.message : String(e)}`);
         }

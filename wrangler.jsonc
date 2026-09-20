@@ -19,14 +19,12 @@
       "class_name": "ScadiumApi",
       "image": "./apps/api/Dockerfile",
       "image_build_context": ".",
-      // Custom instance: a FULL vCPU. `basic` gives 1/4 vCPU, on which this image
-      // takes ~36s to open its port — and @cloudflare/containers only waits 20s,
-      // so every cold start failed. Boot is CPU-bound (NestJS graph of ~40 modules
-      // plus `prisma migrate deploy`), so cores are what matter, not memory.
-      // Custom types require >= 1 vCPU and >= 3 GiB per vCPU; disk <= 2 GB per GiB.
-      // At ~73 container-hours/month this costs ~$1.90/mo against the plan's
-      // included 25 GiB-hours — see the cost model in the migration spec §7.
-      "instance_type": { "vcpu": 1, "memory_mib": 3072, "disk_mb": 6144 },
+      // `basic` (1/4 vCPU, 1 GiB, 4 GB). Deliberately the small one: with the
+      // cron stopping the container as soon as its sweep finishes, an unvisited
+      // site runs ~10 h/month, which fits entirely inside the plan's included
+      // 25 GiB-hours / 200 GB-hours / 375 vCPU-minutes — i.e. $0. A bigger
+      // instance boots faster but costs from the first hour. Revisit at launch.
+      "instance_type": "basic",
       "max_instances": 1
     }
   ],
@@ -57,6 +55,8 @@
     // Rotate (-v3, -v4, …) to get a clean Durable Object if the container wedges.
     "CONTAINER_INSTANCE": "scadium-api-v2",
     "SLEEP_AFTER": "5m",
+    // "false" once real players are online — stopping would disconnect them.
+    "CRON_STOP_CONTAINER": "true",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
     "SOLANA_NETWORK": "devnet"
