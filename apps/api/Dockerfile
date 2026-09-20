@@ -13,7 +13,12 @@ FROM node:20-alpine AS build
 RUN apk add --no-cache openssl && npm install -g pnpm@10.33.0
 WORKDIR /app
 COPY . .
-RUN pnpm install --frozen-lockfile
+# Install ONLY what the API + worker need (`pkg...` = the package and its
+# dependencies). Without this filter the image carries the whole workspace —
+# apps/web drags in next, workerd, @next/swc, six copies of viem, three.js,
+# lucide-react and react-aria, which took the image to 3.65 GB against the
+# `basic` instance type's 4 GB disk. None of it is reachable from the API.
+RUN pnpm install --frozen-lockfile --filter "@scadium/api..." --filter "@scadium/worker..."
 RUN pnpm --filter @scadium/shared --filter @scadium/fair build
 RUN pnpm --filter @scadium/api exec prisma generate
 RUN pnpm --filter @scadium/api exec tsc -p tsconfig.json

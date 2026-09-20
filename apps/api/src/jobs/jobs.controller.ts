@@ -13,6 +13,14 @@ import { InternalSecretGuard } from './internal-secret.guard';
 import { JobRunnerService } from './job-runner.service';
 import { JOB_NAMES, isJobName, type JobPayload } from './job-registry';
 
+/** Outcome of one job in a run-all sweep. */
+interface JobRunResult {
+  job: string;
+  ok: boolean;
+  durationMs?: number;
+  error?: string;
+}
+
 /**
  * ONE generic route for all 9 economy jobs — deliberately not one endpoint per
  * job. A new job arrives as a new entry in `JOB_HANDLERS`, not a new route here.
@@ -36,6 +44,30 @@ import { JOB_NAMES, isJobName, type JobPayload } from './job-registry';
 @Controller('internal/jobs')
 export class JobsController {
   constructor(private readonly runner: JobRunnerService) {}
+
+  /**
+   * Run EVERY job, sequentially. This is what the hourly Cloudflare Cron Trigger
+   * calls, so the cron Worker never has to know the job names — one source of
+   * truth (`JOB_HANDLERS`), one request.
+   *
+   * A failing job is recorded and the rest still run: a broken reconcile must not
+   * stop the dividend round. Every handler is a no-op when its period is already
+   * settled, so running the full set hourly is cheap.
+   */
+  @Post()
+  @HttpCode(200)
+  async runAll(): Promise<{ ok: boolean; results: JobRunResult[] }> {
+    const results: JobRunResult[] = [];
+    for (const name of JOB_NAMES) {
+      try {
+        const { durationMs } = await this.runner.run(name);
+        results.push({ job: name, ok: true, durationMs });
+      } catch (e) {
+        results.push({ job: name, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return { ok: results.every((r) => r.ok), results };
+  }
 
   @Post(':name')
   @HttpCode(200)

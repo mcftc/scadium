@@ -94,3 +94,7 @@ apps/web/playwright-report/
 apps/web/test-results/
 apps/web/blob-report/
 .vercel
+
+# Cloudflare / wrangler
+.wrangler/
+.dev.vars
