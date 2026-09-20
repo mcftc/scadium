@@ -135,6 +135,10 @@ Notes:
   than taking the site down.
 - Accounting is conservative (a wake is charged a full 40s cold start), so the
   real spend is at or below the cap, never above.
+- The hourly cron **records** its own runtime against the same budget but is never
+  **blocked** by it. The economy jobs are period-keyed, so a skipped hour is a
+  permanent gap in airdrops/dividends/block-mining rather than something that
+  catches up later. Budget for it: the cron uses roughly 24 min/day of the hour.
 - Raise it, or set it very high, when the project is ready to be always-on —
   but remember that also requires moving Neon off the free plan.
 
