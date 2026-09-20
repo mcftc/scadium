@@ -62,6 +62,17 @@ async function runScheduledSweep(env: Env, secret: string): Promise<void> {
   const backoffMs = Number(env.CRON_SWEEP_BACKOFF_MS ?? DEFAULT_SWEEP_BACKOFF_MS);
   const started = Date.now();
 
+  // Count the cron's own runtime against the daily budget, but never let it be
+  // BLOCKED by it: the economy jobs are period-keyed, so a skipped hour is a
+  // permanent gap in airdrops/dividends/block-mining, not something that catches
+  // up later. Recording without gating keeps `DAILY_ACTIVE_SECONDS` an honest
+  // total rather than a visitors-only figure.
+  try {
+    await apiContainer(env).consumeActiveBudget(true);
+  } catch {
+    // Accounting is best-effort; never let it stop the jobs running.
+  }
+
   try {
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
