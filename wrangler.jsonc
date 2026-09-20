@@ -41,7 +41,6 @@
   "vars": {
     "PROCESS_MODE": "both",
     "SLEEP_AFTER": "10m",
-    "BOOT_TIMEOUT_MS": "180000",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
     "SOLANA_NETWORK": "devnet"

@@ -52,13 +52,26 @@ case "$PROCESS_MODE" in
     exec node /app/apps/worker/dist/main.js
     ;;
   both)
-    # The worker runs in the background and the API is exec'd into PID 1, so SIGTERM
-    # from the platform reaches the API directly and its enableShutdownHooks() runs —
-    # that is the process whose OnModuleDestroy releases engine leadership and clears
-    # the crash/jackpot/lottery loops. The worker is deliberately NOT given a graceful
-    # stop: every job it runs is idempotent and period-keyed, and Cloudflare Cron is
-    # the scheduling guarantee, so losing it mid-job is a no-op on the next run.
-    node /app/apps/worker/dist/main.js &
+    # Start the worker only AFTER the API is listening.
+    #
+    # Booting both at once cost the API ~14s: the worker builds its own full Nest
+    # graph and connects to Postgres, competing for CPU on a 1/4-vCPU instance.
+    # Cloudflare Containers only waits 20s for the port, so that delay turned every
+    # cold start into a failed request. Waiting on /health is deterministic — no
+    # magic sleep — and costs the worker nothing, since Cloudflare Cron is the real
+    # scheduling guarantee (see the migration spec §5.2) and every job is idempotent.
+    #
+    # The API is exec'd into PID 1 so the platform's SIGTERM reaches it directly and
+    # enableShutdownHooks() runs — that is the process whose OnModuleDestroy releases
+    # engine leadership and clears the crash/jackpot/lottery loops. The worker is
+    # deliberately not given a graceful stop; losing it mid-job is a no-op next run.
+    (
+      until wget -q -O /dev/null "http://127.0.0.1:${API_PORT:-4000}/health" 2>/dev/null; do
+        sleep 1
+      done
+      echo "[entrypoint] api is listening — starting worker"
+      exec node /app/apps/worker/dist/main.js
+    ) &
     exec node /app/apps/api/dist/main.js
     ;;
   *)

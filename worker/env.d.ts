@@ -17,8 +17,6 @@ export interface Env {
   PROCESS_MODE?: string;
   /** Idle timeout before the container sleeps, e.g. "10m". Keeps spend inside the plan allotment. */
   SLEEP_AFTER?: string;
-  /** Milliseconds to wait for the container to listen on its port during a cold start. */
-  BOOT_TIMEOUT_MS?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
   /** Public API origin, used when building the cron's internal request URL. */

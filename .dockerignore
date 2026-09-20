@@ -24,3 +24,6 @@ test-ledger
 **/test-ledger
 .anchor
 **/*.so
+
+# apps/web build output — never needed in the API image.
+**/.open-next

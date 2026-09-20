@@ -16,17 +16,23 @@ const CONTAINER_PORT = 4000;
 const DEFAULT_SLEEP_AFTER = '10m';
 
 /**
- * How long to wait for the container to start listening on its port.
+ * COLD START, and why requests are not held open for it.
  *
- * The library default is 20s (TIMEOUT_TO_GET_PORTS_MS), which this image cannot
- * meet: boot is redis-server + `prisma migrate deploy` (a real round trip to
- * Neon) + a NestJS graph of ~40 modules, measured at 25-35s. Under the default
- * every cold start timed out and the Worker reported
- * "the container is not listening in the TCP address" / "not running".
- * Migrating before serving is a deliberate safety property (#16) and is not
- * being traded away, so the timeout is raised to fit the real boot instead.
+ * Measured boot for this image is ~23s: redis-server, then `prisma migrate
+ * deploy` (a real round trip to Neon), then a NestJS graph of ~40 modules.
+ * The library waits TIMEOUT_TO_GET_PORTS_MS (20s) for the port, so the first
+ * request after a sleep fails — but the container keeps booting in the
+ * background and subsequent requests succeed. That is the intended behaviour
+ * and it is deliberately NOT replaced with a long blocking wait: an earlier
+ * attempt to await startAndWaitForPorts() with a 180s timeout held every
+ * request open for three minutes and wedged the Durable Object.
+ *
+ * Consequence for clients: the first page load after an idle period sees a
+ * few failed calls, then works. socket.io reconnects automatically. To remove
+ * cold starts entirely, stop the container sleeping (raise SLEEP_AFTER or
+ * override onActivityExpired) — but note that always-on also requires a paid
+ * Neon plan, because the free tier caps compute-hours (spec §8.4).
  */
-const DEFAULT_BOOT_TIMEOUT_MS = 180_000;
 
 /**
  * The Scadium API container: one Durable Object, one long-lived Linux process
@@ -48,23 +54,6 @@ export class ScadiumApi extends Container<Env> {
     this.envVars = buildContainerEnv(env);
   }
 
-  /**
-   * Start the container with a boot timeout that fits this image, then delegate.
-   *
-   * `super.fetch()` would call startAndWaitForPorts() with the library's 20s
-   * default; starting explicitly first means the container is already listening
-   * by the time the base implementation proxies the request. A cold start is
-   * therefore slow (image pull + boot) but correct, rather than fast and broken.
-   */
-  override async fetch(request: Request): Promise<Response> {
-    const timeoutMs = Number(this.env.BOOT_TIMEOUT_MS ?? DEFAULT_BOOT_TIMEOUT_MS);
-    await this.startAndWaitForPorts(undefined, {
-      portReadyTimeoutMS: timeoutMs,
-      instanceGetTimeoutMS: 30_000,
-    });
-    return super.fetch(request);
-  }
-
   override onStart(): void {
     console.log(`scadium container started (PROCESS_MODE=${this.env.PROCESS_MODE ?? 'api'})`);
   }
@@ -78,9 +67,10 @@ export class ScadiumApi extends Container<Env> {
 
   override onError(error: unknown): unknown {
     console.error('scadium container error:', error);
-    // Re-throw rather than returning: swallowing a start failure leaves the
-    // Durable Object believing the container is fine while it is not.
-    throw error;
+    // Deliberately does NOT rethrow. This hook runs on the container monitor;
+    // throwing from it wedged the Durable Object so the container could never
+    // restart. Report and let the library's own retry path handle recovery.
+    return error;
   }
 }
 
