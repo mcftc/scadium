@@ -59,6 +59,31 @@ npx wrangler containers instances <APP_ID> # per-instance state
 - Every request `Canceled` in `wrangler tail` → your client timed out before the
   container finished booting; retry with a longer timeout.
 
+### The container never restarts after it stops (`max_instances` deadlock)
+
+**Check this first** — it looks identical to the wedged-state failure below but
+is far more common, and the fix is different.
+
+Symptom: the container works once, then after it sleeps (or the cron stops it)
+every request returns `The container is not running, consider calling start()`.
+
+Diagnosis:
+
+```bash
+npx wrangler containers instances <APP_ID>
+```
+
+Stopped instances stay **registered** as `inactive`. If the number of registered
+instances has reached `max_instances`, there is no slot left to schedule a new
+container and it can never start again. A stale instance from an earlier
+`CONTAINER_INSTANCE` name counts too — that is how this deployment ended up with
+two registered instances against a cap of one.
+
+Fix: raise `max_instances` in `wrangler.jsonc` and redeploy. It is **headroom,
+not replicas** — the Worker addresses a single Durable Object by name, so exactly
+one container ever serves, and the H12 single-replica constraint is enforced by
+the DO identity rather than by this number.
+
 ### The container refuses to start at all (wedged Durable Object state)
 
 Symptom: **every** request returns `The container is not running, consider calling
