@@ -121,7 +121,15 @@ export interface BudgetState {
   day: string;
 }
 
-/** Parse a sleepAfter expression ("5m", "90s", or a number of seconds) to seconds. */
+/**
+ * Parse a sleepAfter expression to seconds: "5m", "90s", "2h".
+ *
+ * Only used to clamp budget accounting, never to configure the container itself,
+ * so precision here is not load-bearing. A bare number is read as minutes (a
+ * bare *numeric type* is passed through as seconds, matching the library); with
+ * the configured "5m" neither path is reachable, and an unparseable value falls
+ * back to 5 minutes. Erring long only makes accounting more conservative.
+ */
 function parseMinutes(expr: string | number): number {
   if (typeof expr === 'number') return expr;
   const m = /^(\d+)\s*([smh])?$/.exec(expr.trim());
