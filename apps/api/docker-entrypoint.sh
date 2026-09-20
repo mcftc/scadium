@@ -38,7 +38,10 @@ if [ -z "$REDIS_URL" ]; then
 fi
 
 echo "[entrypoint] applying database migrations (prisma migrate deploy)…"
-pnpm exec prisma migrate deploy
+# Call the CLI binary directly rather than via `pnpm exec`: pnpm's own startup
+# added seconds to every cold start, and Cloudflare Containers only waits a
+# bounded time for the process to start listening.
+./node_modules/.bin/prisma migrate deploy
 
 echo "[entrypoint] migrations applied — starting PROCESS_MODE=${PROCESS_MODE}"
 case "$PROCESS_MODE" in

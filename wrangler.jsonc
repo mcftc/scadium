@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Zone route rather than a custom domain — see apps/web/wrangler.jsonc for why.
+  "routes": [{ "pattern": "api.scadium.com/*", "zone_name": "scadium.com" }],
+
   // The API + BullMQ worker, as one long-lived container built from the image the
   // project already had. max_instances is 1 on purpose: leader election has no
   // request-forwarding, so a second replica would reject gameplay writes (H12).
@@ -37,7 +40,8 @@
   // GEO_IP_SALT, GEO_PROXY_SECRET.
   "vars": {
     "PROCESS_MODE": "both",
-    "SLEEP_AFTER": "2m",
+    "SLEEP_AFTER": "10m",
+    "BOOT_TIMEOUT_MS": "180000",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
     "SOLANA_NETWORK": "devnet"

@@ -98,3 +98,5 @@ apps/web/blob-report/
 # Cloudflare / wrangler
 .wrangler/
 .dev.vars
+.open-next/
+worker-configuration.d.ts

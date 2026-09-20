@@ -1,0 +1,25 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "scadium-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Zone routes rather than custom domains. The apex and www already resolve
+  // through Cloudflare's proxy (they were orange-clouded for Railway), so a route
+  // intercepts the request at the edge and the Worker answers it — the old origin
+  // is never contacted. This avoids needing DNS:Edit to delete the stale records;
+  // they can be cleaned up later without affecting traffic.
+  "routes": [
+    { "pattern": "scadium.com/*", "zone_name": "scadium.com" },
+    { "pattern": "www.scadium.com/*", "zone_name": "scadium.com" }
+  ],
+
+  // Static output (_next/static, public/) is served by Workers Static Assets,
+  // which is unmetered — only genuinely dynamic requests reach the Worker.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}
