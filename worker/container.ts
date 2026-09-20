@@ -75,25 +75,32 @@ export class ScadiumApi extends Container<Env> {
    * finishes starting in the background.
    */
   override async fetch(request: Request): Promise<Response> {
+    const first = await this.tryFetch(request);
+    if (!(await isContainerGone(first))) return unwrap(first);
+
+    console.warn('container state desync — forcing a restart');
+    try {
+      await this.destroy();
+    } catch {
+      // Already gone; that is the outcome we wanted.
+    }
+    try {
+      await this.startAndWaitForPorts(undefined, {
+        portReadyTimeoutMS: START_NUDGE_TIMEOUT_MS,
+        instanceGetTimeoutMS: 8_000,
+      });
+    } catch {
+      // Still booting — fall through; the next request will find it.
+    }
+    return unwrap(await this.tryFetch(request));
+  }
+
+  /** Run the base fetch, capturing a throw as a value so both shapes are handled. */
+  private async tryFetch(request: Request): Promise<Response | Error> {
     try {
       return await super.fetch(request);
     } catch (error) {
-      if (!isContainerGoneError(error)) throw error;
-      console.warn('container state desync — forcing a restart');
-      try {
-        await this.destroy();
-      } catch {
-        // Already gone; that is the outcome we wanted.
-      }
-      try {
-        await this.startAndWaitForPorts(undefined, {
-          portReadyTimeoutMS: START_NUDGE_TIMEOUT_MS,
-          instanceGetTimeoutMS: 8_000,
-        });
-      } catch {
-        // Still booting — fall through; the next request will find it.
-      }
-      return super.fetch(request);
+      return error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -158,10 +165,34 @@ const BOOT_COST_SECONDS = 40;
  */
 const START_NUDGE_TIMEOUT_MS = 15_000;
 
-/** Does this error mean the runtime has no container behind this object? */
-function isContainerGoneError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /not running|no container instance|not listening/i.test(message);
+/** Signatures meaning the runtime has no container behind this Durable Object. */
+const CONTAINER_GONE = /not running|no container instance|not listening/i;
+
+/**
+ * Detect the desync from EITHER shape the failure takes.
+ *
+ * This is the subtlety that made the first attempt at this fix useless: the
+ * runtime does not always throw. It usually resolves with a 500 whose *body* is
+ * "The container is not running, consider calling start()", so a try/catch alone
+ * never fires. Check the body too — cloned, so the original stays readable.
+ */
+async function isContainerGone(result: Response | Error): Promise<boolean> {
+  if (result instanceof Error) return CONTAINER_GONE.test(result.message);
+  if (result.status < 500 || result.webSocket) return false;
+  try {
+    return CONTAINER_GONE.test(await result.clone().text());
+  } catch {
+    return false;
+  }
+}
+
+/** Surface a captured throw as a 503 rather than re-throwing (which wedges the object). */
+function unwrap(result: Response | Error): Response {
+  if (!(result instanceof Error)) return result;
+  return new Response(
+    JSON.stringify({ statusCode: 503, error: 'Service Unavailable', message: result.message }),
+    { status: 503, headers: { 'content-type': 'application/json', 'retry-after': '30' } },
+  );
 }
 
 interface StoredBudget {
