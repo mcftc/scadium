@@ -19,7 +19,14 @@
       "class_name": "ScadiumApi",
       "image": "./apps/api/Dockerfile",
       "image_build_context": ".",
-      "instance_type": "basic",
+      // Custom instance: a FULL vCPU. `basic` gives 1/4 vCPU, on which this image
+      // takes ~36s to open its port — and @cloudflare/containers only waits 20s,
+      // so every cold start failed. Boot is CPU-bound (NestJS graph of ~40 modules
+      // plus `prisma migrate deploy`), so cores are what matter, not memory.
+      // Custom types require >= 1 vCPU and >= 3 GiB per vCPU; disk <= 2 GB per GiB.
+      // At ~73 container-hours/month this costs ~$1.90/mo against the plan's
+      // included 25 GiB-hours — see the cost model in the migration spec §7.
+      "instance_type": { "vcpu": 1, "memory_mib": 3072, "disk_mb": 6144 },
       "max_instances": 1
     }
   ],
@@ -35,12 +42,19 @@
   // container is allowed to sleep; see the migration spec §5.2.
   "triggers": { "crons": ["0 * * * *"] },
 
+  // SLEEP_AFTER is load-bearing for the BUDGET, not just for container cost.
+  // The crash engine writes a round every ~10-20s while it is up, so Neon's
+  // compute-time tracks container uptime almost exactly. With the hourly cron:
+  //   10m -> ~134 container-hours/month  (OVER Neon free's 100 CU-hours)
+  //    5m -> ~73  container-hours/month  (under, with headroom for real visitors)
+  // Raising it improves cold-start UX and costs Neon compute-hours. See spec §8.4/§8.6.
+  //
   // Non-secret configuration. Secrets go in with `wrangler secret put` and are
   // never committed: DATABASE_URL, JWT_SECRET, INTERNAL_JOB_SECRET, METRICS_TOKEN,
   // GEO_IP_SALT, GEO_PROXY_SECRET.
   "vars": {
     "PROCESS_MODE": "both",
-    "SLEEP_AFTER": "10m",
+    "SLEEP_AFTER": "5m",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
     "SOLANA_NETWORK": "devnet"

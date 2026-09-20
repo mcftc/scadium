@@ -13,7 +13,15 @@ const CONTAINER_PORT = 4000;
  * real players. Note that Neon's free tier also caps compute-hours, so a pinned
  * always-on container requires a paid database plan too (spec §8.4).
  */
-const DEFAULT_SLEEP_AFTER = '10m';
+/**
+ * Idle timeout default. This is a BUDGET control as much as a performance one:
+ * the crash engine writes a round every ~10-20s while the container is up, so
+ * Neon's compute-hours track container uptime. With the hourly cron, 10m works
+ * out at ~134 container-hours/month — over Neon free's 100 CU-hour cap — while
+ * 5m lands at ~73 with headroom for real visitors. Raise it (and move Neon off
+ * the free plan) when cold starts matter more than the bill.
+ */
+const DEFAULT_SLEEP_AFTER = '5m';
 
 /**
  * COLD START, and why requests are not held open for it.
