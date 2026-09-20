@@ -250,22 +250,34 @@ and stripped from any client-supplied value.
 ## 7. Cost model
 
 Containers bill per 10 ms of *active* runtime. The Workers Paid plan already includes
-**25 GiB-hours memory, 375 vCPU-minutes CPU and 200 GB-hours disk** per month.
-On the `basic` instance type (1/4 vCPU, 1 GiB memory, 4 GB disk), memory binds first:
-25 GiB-h ÷ 1 GiB = **25 free container-hours per month**.
+**25 GiB-hours memory, 375 vCPU-minutes CPU and 200 GB-hours disk** per month, on the
+`basic` instance type (1/4 vCPU, 1 GiB memory, 4 GB disk).
 
-| Mode | Runtime | Marginal cost |
+**The question that decides this design: what does the site cost with nobody on it?**
+
+The hourly Cron Trigger wakes the container whether or not anyone visits. If the container
+is then left to idle out, that alone is the dominant cost:
+
+| Cron behaviour | Unvisited uptime | Against the included allotments |
 |---|---|---|
-| Cron-wake hourly, `sleepAfter = 2m` | ~24 h/mo | **$0** (inside the included allotment) |
-| Cron-wake hourly, `sleepAfter = 10m` (default) | ~122 h/mo | **~$0.94/mo** |
-| Pinned always-on 24/7 (post-launch) | 730 h/mo | **~$8.17/mo** — *and forces a paid Postgres plan, see §8.4* |
+| Linger for `SLEEP_AFTER` (5m) | **~73 h/month** | memory 219 GiB-h vs 25 → **8.8× over, ~$1.75/mo**; Neon 73 of 100 free CU-hours |
+| **`stop()` as soon as the sweep finishes** | **~10 h/month** | memory 10 GiB-h, disk 41 GB-h, CPU 155 vCPU-min → **all inside; $0** |
+
+So the scheduled handler stops the container when it is done (`CRON_STOP_CONTAINER`,
+default on). That is what makes an unvisited site actually free rather than ~$2/month, and
+it leaves ~90 of Neon's 100 free CU-hours for real traffic.
 
 | Line item | Cost |
 |---|---|
 | Workers Paid | **$5/mo — already being paid** |
-| Container (pre-launch) | **< $1/mo** |
-| Neon Postgres, Upstash Redis, R2, DNS/CDN/WAF, Turnstile, Access | **$0** |
+| Container, zero visitors | **$0** (inside the included allotments) |
+| Container, pinned always-on 24/7 | ~$7/mo **and** forces a paid Neon plan (§8.4) |
+| Neon Postgres, Upstash-free (unused), R2, DNS/CDN/WAF, Turnstile | **$0** |
 | Railway | **deleted (−$20–27/mo)** |
+
+A larger instance was measured and rejected: a custom 1 vCPU / 3 GiB instance boots ~14 s
+faster, but bills from the first hour (~$0.35/mo unvisited, ~$1.90 if left to idle). Boot
+speed is worth paying for at launch, not before.
 
 ## 8. Risks, and what must be proven before it is trusted
 
