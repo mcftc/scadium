@@ -14,9 +14,11 @@ import {
   VaultAccrualService,
   RedisService,
   queueConnection,
-  withRedisLock,
   QUEUE_NAMES,
-  lastCompletedDayPeriod,
+  JOB_NAMES,
+  runJob,
+  type JobDeps,
+  type JobPayload,
 } from '@scadium/api';
 
 /**
@@ -49,104 +51,29 @@ async function bootstrap(): Promise<void> {
   const connection = queueConnection();
 
   // ---- consumers -----------------------------------------------------------
-  const consumers = [
-    new Worker(
-      QUEUE_NAMES.airdrop,
-      // distribute() is idempotent: it only pays the just-ended hour once
-      // (AirdropPool.distributed) and dedupes claims by (eventId,userId).
-      async (job: Job) => airdrop.distribute(job.data?.forcedByUserId),
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.burn,
-      // Redis lock so two workers never read the same NGR window and
-      // double-spend the cosigner. ttl < cadence so a crashed holder frees it.
-      async () => {
-        await withRedisLock(redis.client, 'lock:burn', 9 * 60_000, () => swap.runBuyAndBurn());
-      },
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.leaderboard,
-      async () => {
-        await leaderboard.snapshot('hourly');
-        // Daily race: settle the last COMPLETED UTC day. Idempotent (the
-        // RaceResult unique guard pays each winner once) + Redis-locked so
-        // replicas don't duplicate the work; safe to run every hour — it pays
-        // once when the day first completes, then no-ops.
-        await withRedisLock(redis.client, 'lock:race-settle', 9 * 60_000, () =>
-          leaderboard.settleRace(lastCompletedDayPeriod(Date.now())),
-        );
-      },
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.reconcile,
-      // #30: the solvency monitor rides the reconcile cadence — gauge + alert
-      // when house_vault drops under rent floor + buffer.
-      async () => {
-        await reconciliation.reconcileAll();
-        await reconciliation.houseSolvency();
-        // SCAD Engine: spendable + staked $SCAD ledger drift + USDS solvency.
-        await reconciliation.scadLedgerDrift();
-        await reconciliation.stakeLedgerDrift();
-        await reconciliation.usdsSolvency();
-      },
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.lotteryPayouts,
-      // #29: pay_prize retry sweep — Payout PDA per (draw,winner) backstops
-      // double-pays; solvency-budgeted per run.
-      async () => reconciliation.sweepLotteryPrizes(),
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.rewardClaims,
-      // #28: sweep pending claims — every transition is status-guarded and the
-      // on-chain ClaimRecord PDA blocks double-pays, so N workers are safe.
-      async () => rewards.reconcilePendingClaims(),
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.distribution,
-      // SCAD Engine: hourly GGR→USDS staker dividend. Idempotent per hour
-      // (DistributionRound.period unique + distributed flag + DistributionClaim
-      // @@unique), but a Redis lock still serializes the staker-credit loop so
-      // two replicas don't both walk it.
-      async () => {
-        await withRedisLock(redis.client, 'lock:distribution', 9 * 60_000, () =>
-          distribution.distribute(),
-        );
-      },
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.blockMining,
-      // SCAD Engine v2: hourly Proof-of-Play block mint. Idempotent per hour
-      // (EngineBlock.period unique + distributed flag + EngineBlockShare
-      // @@unique); a Redis lock serializes the per-miner credit loop so two
-      // replicas don't both walk it.
-      async () => {
-        await withRedisLock(redis.client, 'lock:block-mining', 9 * 60_000, () =>
-          blockMining.mineBlock(),
-        );
-      },
-      { connection },
-    ),
-    new Worker(
-      QUEUE_NAMES.vaultAccrual,
-      // SCAD Vault: hourly NGR→$SCAD term-pool yield. Idempotent per hour
-      // (VaultAccrualRound.period unique + distributed flag); a Redis lock still
-      // serializes the per-pool index updates so two replicas don't both walk it.
-      async () => {
-        await withRedisLock(redis.client, 'lock:vault-accrual', 9 * 60_000, () =>
-          vaultAccrual.accrue(),
-        );
-      },
-      { connection },
-    ),
-  ];
+  // The job bodies live in @scadium/api's shared job registry, NOT here: the
+  // Cloudflare Cron route (POST /internal/jobs/:name) drives the same handlers,
+  // and two copies of money-moving logic would be a defect. This process supplies
+  // the dependencies and the BullMQ plumbing; the registry supplies the behaviour.
+  const deps: JobDeps = {
+    airdrop,
+    swap,
+    leaderboard,
+    reconciliation,
+    rewards,
+    distribution,
+    blockMining,
+    vaultAccrual,
+    redis,
+  };
+
+  const consumers = JOB_NAMES.map(
+    (name) =>
+      new Worker(name, async (job: Job) => runJob(name, deps, job.data as JobPayload), {
+        connection,
+      }),
+  );
+
   for (const c of consumers) {
     c.on('failed', (job, err) =>
       logger.error(`${c.name} job ${job?.id ?? '?'} failed: ${err.message}`),

@@ -17,11 +17,18 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @scadium/shared --filter @scadium/fair build
 RUN pnpm --filter @scadium/api exec prisma generate
 RUN pnpm --filter @scadium/api exec tsc -p tsconfig.json
+# @scadium/worker imports the compiled @scadium/api (dist/index.js), so it builds
+# after the API. One image now carries BOTH processes — PROCESS_MODE picks which
+# run (Cloudflare Containers deploys a single container running `both`).
+RUN pnpm --filter @scadium/worker build
 
 FROM node:20-alpine AS runner
 # Pick up alpine security fixes newer than the base tag (e.g. libcrypto3 HIGH
 # CVEs flagged by the #39 Trivy gate).
-RUN apk upgrade --no-cache && apk add --no-cache openssl && npm install -g pnpm@10.33.0
+# redis: Cloudflare has no managed Redis and Scadium only needs EPHEMERAL coordination
+# state (nonces, throttle counters, TTL'd locks, BullMQ), so the entrypoint runs
+# redis-server on loopback with persistence off when REDIS_URL is unset. No vendor.
+RUN apk upgrade --no-cache && apk add --no-cache openssl redis && npm install -g pnpm@10.33.0
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
@@ -33,6 +40,9 @@ COPY --from=build /app/apps/api/package.json ./apps/api/package.json
 # cannot resolve @nestjs/* without them, and the entrypoint's `pnpm exec
 # prisma` needs the .bin shims.
 COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build /app/apps/worker/dist ./apps/worker/dist
+COPY --from=build /app/apps/worker/package.json ./apps/worker/package.json
+COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
 COPY --from=build /app/apps/api/docker-entrypoint.sh ./apps/api/docker-entrypoint.sh
 EXPOSE 4000
 WORKDIR /app/apps/api

@@ -20,6 +20,17 @@ export {
   distributionRoundJobId,
 } from './queue/queue.constants';
 export { queueConnection } from './queue/queue.connection';
+// The 9 economy jobs, defined once and shared by BOTH drivers: the worker's
+// BullMQ consumers and the cron-called POST /internal/jobs/:name route.
+export {
+  JOB_HANDLERS,
+  JOB_NAMES,
+  isJobName,
+  runJob,
+  type JobDeps,
+  type JobHandler,
+  type JobPayload,
+} from './jobs/job-registry';
 export { withRedisLock } from './redis/redis-lock';
 export { RedisService } from './redis/redis.service';
 export { PrismaService } from './prisma/prisma.service';

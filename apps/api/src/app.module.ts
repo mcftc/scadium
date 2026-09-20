@@ -52,6 +52,7 @@ import { GeoGuard } from './compliance/geo.guard';
 import { ResponsibleGamblingModule } from './responsible-gambling/rg.module';
 import { KycModule } from './kyc/kyc.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -78,6 +79,9 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     PrismaModule,
     RedisModule,
     QueueModule,
+    // POST /internal/jobs/:name — Cloudflare Cron Triggers drive the 9 economy
+    // jobs here when the container has been asleep (spec §5.2). Shared-secret gated.
+    JobsModule,
     SolanaModule,
     FairnessModule,
     AuthModule,
