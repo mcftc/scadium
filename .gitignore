@@ -100,3 +100,10 @@ apps/web/blob-report/
 .dev.vars
 .open-next/
 worker-configuration.d.ts
+
+# EXCEPTION: apps/web's production build config is versioned on purpose. Every
+# key in it is NEXT_PUBLIC_*, which Next.js inlines into the CLIENT bundle — so
+# the values are public by definition and are not secrets. Without this the
+# Cloudflare build falls back to localhost defaults on a fresh clone.
+# NEVER put a non-NEXT_PUBLIC_ value in this file.
+!apps/web/.env.production
