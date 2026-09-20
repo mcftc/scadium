@@ -299,8 +299,40 @@ On the `basic` instance type (1/4 vCPU, 1 GiB memory, 4 GB disk), memory binds f
 5. **In-container Redis is ephemeral.** A restart clears nonces (users re-sign), throttle
    counters (reset) and locks (TTL'd) — all acceptable. Nothing durable may ever be put there.
    At 1 replica, leader election and the Socket.io Redis adapter are unnecessary anyway.
-6. **Cold start.** A woken container costs 1–3 s plus NestJS boot. Acceptable pre-launch;
-   pin the container always-on once there are real players.
+6. **Cold start — MEASURED, and worse than first assumed.**
+   `@cloudflare/containers` waits `TIMEOUT_TO_GET_PORTS_MS` = **20 s** for the container to
+   open its port. Measured time to listening, image `scadium-api` at the `basic` instance's
+   limits:
+
+   | CPU allotted | Time to listening |
+   |---|---|
+   | 0.25 vCPU (`basic`) | **36 s** |
+   | 0.5 vCPU (`standard-1`) | 28 s |
+   | 1 vCPU (custom minimum) | 22 s |
+
+   Breakdown: redis ~1 s, `prisma migrate deploy` ~8 s (a real round trip to Neon),
+   NestJS graph ~14 s. **Sub-20 s is not reachable while migrations run on boot**, at any
+   instance size — so the 20 s window will always be missed after an idle period.
+
+   **Resulting behaviour (verified live, and accepted):** the first request after a sleep
+   fails fast, the container finishes booting in the background, and subsequent requests
+   serve in ~1 s. `socket.io` reconnects automatically, and TanStack Query retries, so a
+   page loaded cold recovers on its own rather than staying broken.
+
+   Two things were tried and rejected:
+   - Holding requests open via `startAndWaitForPorts({ portReadyTimeoutMS: 180_000 })` —
+     made it far worse: every request hung for three minutes and the Durable Object wedged.
+   - Dropping the BullMQ worker process to save its ~14 s of boot contention — rejected
+     because `POST /airdrop/run` enqueues to BullMQ and would silently never run. Instead
+     the worker now waits for the API's `/health` before starting, so it never delays it.
+
+   **To remove cold starts entirely** (the real fix when there is budget): stop the
+   container sleeping — raise `SLEEP_AFTER` or override `onActivityExpired()`. Note this
+   is a *two-sided* cost: an always-on container is ~$8/mo, **and** it keeps Neon's compute
+   active 24/7, which the free tier's 100 CU-hours cannot cover (§8.4). Always-on therefore
+   requires a paid database plan too. For a 20 Hz authoritative game loop this is the
+   architecturally correct end state; the sleep model is a budget compromise, and rounds do
+   not advance while the container is asleep.
 
 ## 9. Success criteria
 
