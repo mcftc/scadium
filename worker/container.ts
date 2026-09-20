@@ -1,4 +1,5 @@
 import { Container } from '@cloudflare/containers';
+import type { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env';
 
 /** Port the NestJS API listens on inside the image (matches `EXPOSE 4000`). */
@@ -42,12 +43,91 @@ export class ScadiumApi extends Container<Env> {
   /** The container reaches Neon (Postgres over TCP) and Solana RPC. */
   enableInternet = true;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  // `DurableObject['ctx']` is exactly what the Container base class declares;
+  // writing `DurableObjectState` here picks up a different generic default from
+  // @cloudflare/workers-types and fails to match.
+  constructor(ctx: DurableObject['ctx'], env: Env) {
     super(ctx, env);
     // Read lazily by the base class, so assigning here is safe.
     this.sleepAfter = env.SLEEP_AFTER ?? DEFAULT_SLEEP_AFTER;
     this.envVars = buildContainerEnv(env);
   }
+
+  /**
+   * Account for container active time against a per-UTC-day budget.
+   *
+   * Why this exists: container billing and Neon's free compute-hours both track
+   * how long this thing is awake, and a handful of visitors (or one crawler)
+   * could otherwise keep it running all day. This puts a hard ceiling on it —
+   * the owner's stated requirement is "active at most ~1 hour a day for now",
+   * with the live games simply offline outside that.
+   *
+   * Accounting is deliberately conservative. Each call adds the time since the
+   * previous call, clamped to the sleep window (a longer gap means the container
+   * had already slept, so only the cold start counts). A first call in a new
+   * window is charged BOOT_COST_SECONDS because waking it really does burn that.
+   *
+   * `record` is false for a read-only check (used by the cron, which must run
+   * regardless) and true when a visitor request is about to touch the container.
+   */
+  async consumeActiveBudget(record: boolean): Promise<BudgetState> {
+    const capSeconds = Number(this.env.DAILY_ACTIVE_SECONDS ?? DEFAULT_DAILY_ACTIVE_SECONDS);
+    const windowSeconds = parseMinutes(this.env.SLEEP_AFTER ?? DEFAULT_SLEEP_AFTER);
+    const now = Date.now();
+    const today = new Date(now).toISOString().slice(0, 10);
+
+    const stored = (await this.ctx.storage.get<StoredBudget>(BUDGET_KEY)) ?? null;
+    const fresh = !stored || stored.day !== today;
+    const state: StoredBudget = fresh
+      ? { day: today, usedSeconds: 0, lastSeenMs: 0 }
+      : { ...stored };
+
+    if (record) {
+      const gapSeconds = state.lastSeenMs ? (now - state.lastSeenMs) / 1000 : Infinity;
+      state.usedSeconds +=
+        gapSeconds <= windowSeconds ? Math.max(0, gapSeconds) : BOOT_COST_SECONDS;
+      state.lastSeenMs = now;
+      await this.ctx.storage.put(BUDGET_KEY, state);
+    }
+
+    return {
+      allowed: state.usedSeconds < capSeconds,
+      usedSeconds: Math.round(state.usedSeconds),
+      capSeconds,
+      day: state.day,
+    };
+  }
+}
+
+/** Storage key for the daily active-time budget. */
+const BUDGET_KEY = 'scadium:daily-active-budget';
+
+/** Default ceiling on container active time per UTC day. */
+const DEFAULT_DAILY_ACTIVE_SECONDS = 3600;
+
+/** What a cold start really costs, charged when the container had been asleep. */
+const BOOT_COST_SECONDS = 40;
+
+interface StoredBudget {
+  day: string;
+  usedSeconds: number;
+  lastSeenMs: number;
+}
+
+export interface BudgetState {
+  allowed: boolean;
+  usedSeconds: number;
+  capSeconds: number;
+  day: string;
+}
+
+/** Parse a sleepAfter expression ("5m", "90s", or a number of seconds) to seconds. */
+function parseMinutes(expr: string | number): number {
+  if (typeof expr === 'number') return expr;
+  const m = /^(\d+)\s*([smh])?$/.exec(expr.trim());
+  if (!m) return 300;
+  const n = Number(m[1]);
+  return m[2] === 'h' ? n * 3600 : m[2] === 's' ? n : n * 60;
 }
 
 /**

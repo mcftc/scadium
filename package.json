@@ -2,7 +2,7 @@
   "name": "scadium",
   "version": "0.1.0",
   "private": true,
-  "description": "Scadium — Solana-based decentralized casino platform",
+  "description": "Scadium \u2014 Solana-based decentralized casino platform",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=20.0.0"
@@ -15,10 +15,12 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rimraf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\""
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "typecheck:worker": "tsc -p worker/tsconfig.json"
   },
   "devDependencies": {
     "@cloudflare/containers": "^0.3.7",
+    "@cloudflare/workers-types": "^5.20260920.1",
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",

@@ -1,5 +1,4 @@
-import { getContainer } from '@cloudflare/containers';
-import { ScadiumApi } from './container';
+import { ScadiumApi, type BudgetState } from './container';
 import type { Env } from './env';
 
 export { ScadiumApi };
@@ -32,9 +31,18 @@ const DEFAULT_INSTANCE = 'scadium-api-v2';
 const DEFAULT_SWEEP_ATTEMPTS = 4;
 const DEFAULT_SWEEP_BACKOFF_MS = 30_000;
 
-/** Resolve the single authoritative container instance. */
-function apiContainer(env: Env) {
-  return getContainer(env.SCADIUM_API, env.CONTAINER_INSTANCE ?? DEFAULT_INSTANCE);
+/**
+ * Resolve the single authoritative container instance.
+ *
+ * Deliberately uses the namespace directly rather than the library's
+ * `getContainer()` helper: the helper's return type erases the subclass, which
+ * hides this Durable Object's own RPC methods (`consumeActiveBudget`). Resolving
+ * by name here is exactly what the helper does internally, and keeps the stub
+ * typed as `ScadiumApi`.
+ */
+function apiContainer(env: Env): DurableObjectStub<ScadiumApi> {
+  const name = env.CONTAINER_INSTANCE ?? DEFAULT_INSTANCE;
+  return env.SCADIUM_API.get(env.SCADIUM_API.idFromName(name));
 }
 
 /**
@@ -91,6 +99,42 @@ async function runScheduledSweep(env: Env, secret: string): Promise<void> {
   }
 }
 
+/**
+ * Response served once the container has used its daily active-time allowance.
+ * 503 + Retry-After so clients and crawlers back off properly rather than
+ * hammering a door that will not open until tomorrow.
+ */
+function offlineResponse(budget: BudgetState): Response {
+  const resetsAt = `${budget.day}T24:00:00Z`;
+  return new Response(
+    JSON.stringify({
+      statusCode: 503,
+      error: 'Service Unavailable',
+      message:
+        'Scadium is paused for today. The live games run on a capped daily budget while the project is pre-launch.',
+      dailyActiveSecondsUsed: budget.usedSeconds,
+      dailyActiveSecondsCap: budget.capSeconds,
+      resumesAt: resetsAt,
+    }),
+    {
+      status: 503,
+      headers: {
+        'content-type': 'application/json',
+        // Seconds until 00:00 UTC, when the budget resets.
+        'retry-after': String(secondsUntilUtcMidnight()),
+        'cache-control': 'no-store',
+      },
+    },
+  );
+}
+
+function secondsUntilUtcMidnight(): number {
+  const now = Date.now();
+  const midnight = new Date(now);
+  midnight.setUTCHours(24, 0, 0, 0);
+  return Math.max(60, Math.round((midnight.getTime() - now) / 1000));
+}
+
 export default {
   /**
    * Front door for api.scadium.com.
@@ -110,6 +154,27 @@ export default {
     // the edge rule; a leaked secret still should not be enough on its own.
     if (url.pathname.startsWith(RUN_ALL_JOBS_PATH)) {
       return new Response('not found', { status: 404 });
+    }
+
+    // Daily active-time cap. Container billing and Neon's free compute-hours both
+    // track how long the container is awake, so without a ceiling a crawler or a
+    // couple of curious visitors could keep it running all day. Over budget, the
+    // games go offline rather than quietly costing money — that is the deliberate
+    // trade while the project is pre-launch.
+    //
+    // Health probes are exempt so the service stays observable when capped.
+    if (!url.pathname.startsWith('/health')) {
+      try {
+        const budget = await apiContainer(env).consumeActiveBudget(true);
+        if (!budget.allowed) return offlineResponse(budget);
+      } catch (e) {
+        // Fail OPEN. This is a cost guard, not a security control: a transient
+        // Durable Object error must not take the site down. Logged loudly so the
+        // failure is visible rather than silently unbounded.
+        console.error(
+          `budget check failed, allowing request: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
 
     return apiContainer(env).fetch(request);

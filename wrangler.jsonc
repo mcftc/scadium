@@ -57,6 +57,10 @@
     "SLEEP_AFTER": "5m",
     // "false" once real players are online — stopping would disconnect them.
     "CRON_STOP_CONTAINER": "true",
+    // Hard ceiling on container active time per UTC day. Past it the API returns
+    // 503 and the live games are offline until midnight UTC — a deliberate
+    // pre-launch trade so an unattended site can never run up a bill.
+    "DAILY_ACTIVE_SECONDS": "3600",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
     "SOLANA_NETWORK": "devnet"

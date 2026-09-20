@@ -27,6 +27,12 @@ export interface Env {
   CRON_SWEEP_ATTEMPTS?: string;
   /** Pause between sweep attempts, in ms — long enough to cover a cold boot. */
   CRON_SWEEP_BACKOFF_MS?: string;
+  /**
+   * Hard ceiling on container active time per UTC day, in seconds (default 3600).
+   * Past it the API returns 503 and the live games are offline until midnight UTC.
+   * This is what keeps container billing and Neon's free compute-hours bounded.
+   */
+  DAILY_ACTIVE_SECONDS?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
   /**
