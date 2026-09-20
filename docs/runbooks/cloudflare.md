@@ -83,6 +83,32 @@ Prevention: never throw from `onStart` / `onStop` / `onError`, and never replace
 the library's fast-fail start with a long blocking `startAndWaitForPorts()` —
 both were tried here and both made things worse.
 
+## What the hourly cron actually does
+
+`0 * * * *` → the Worker's `scheduled()` handler:
+
+1. Wakes the container and POSTs once to `/api/v1/internal/jobs` (all 9 jobs).
+2. **Retries up to 4 times, 30s apart.** The container is almost always cold when
+   the cron fires and a cold start outlasts the container library's port wait, so
+   the first attempt reliably fails while it boots. Without the retry the economy
+   jobs would never run.
+3. **Always calls `stop()` afterwards, even if the sweep failed** (it is in a
+   `finally`). This is the single most important cost control in the deployment:
+
+   | Cron behaviour | Unvisited runtime | Cost against the $5 plan |
+   |---|---|---|
+   | let it idle out (`SLEEP_AFTER`) | ~73 h/month | 8.8× over the 25 GiB-h included → ~$2/mo |
+   | **stop when done** | ~10 h/month | inside every allotment → **$0** |
+
+   It also keeps Neon's free 100 CU-hours from being eaten by an empty site
+   (73 CU-h → 10 CU-h).
+
+**Set `CRON_STOP_CONTAINER=false` once real players are online** — stopping the
+container disconnects anyone mid-round. At that point the container is
+effectively always-on, which also means Neon must move off the free plan.
+
+Tunables: `CRON_SWEEP_ATTEMPTS` (4), `CRON_SWEEP_BACKOFF_MS` (30000).
+
 ## Running the economy jobs by hand
 
 ```bash
