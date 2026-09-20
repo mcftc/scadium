@@ -54,6 +54,8 @@
   // GEO_IP_SALT, GEO_PROXY_SECRET.
   "vars": {
     "PROCESS_MODE": "both",
+    // Rotate (-v3, -v4, …) to get a clean Durable Object if the container wedges.
+    "CONTAINER_INSTANCE": "scadium-api-v2",
     "SLEEP_AFTER": "5m",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",

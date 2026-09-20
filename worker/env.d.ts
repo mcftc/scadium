@@ -19,6 +19,11 @@ export interface Env {
   SLEEP_AFTER?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
+  /**
+   * Name of the singleton container instance. Rotate this (e.g. -v3) to allocate a
+   * fresh Durable Object if the container's persisted lifecycle state ever wedges.
+   */
+  CONTAINER_INSTANCE?: string;
   /** Public API origin, used when building the cron's internal request URL. */
   API_ORIGIN?: string;
 

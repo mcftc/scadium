@@ -15,6 +15,24 @@ const RUN_ALL_JOBS_PATH = '/api/v1/internal/jobs';
 /** Header the API's InternalSecretGuard checks. */
 const INTERNAL_SECRET_HEADER = 'x-internal-secret';
 
+/**
+ * Name of the singleton container instance.
+ *
+ * The Container class persists its lifecycle state in Durable Object storage
+ * (`__CF_CONTAINER_STATE`). A bad deploy can wedge that state so the container
+ * reports "not running, consider calling start()" forever and never restarts —
+ * reverting the offending code does NOT clear it, because the state outlives the
+ * code. Rotating this name allocates a fresh Durable Object with clean state and
+ * is the documented recovery procedure. It is config-driven so recovery is a
+ * variable change, not a code change.
+ */
+const DEFAULT_INSTANCE = 'scadium-api-v2';
+
+/** Resolve the single authoritative container instance. */
+function apiContainer(env: Env) {
+  return getContainer(env.SCADIUM_API, env.CONTAINER_INSTANCE ?? DEFAULT_INSTANCE);
+}
+
 export default {
   /**
    * Front door for api.scadium.com.
@@ -36,7 +54,7 @@ export default {
       return new Response('not found', { status: 404 });
     }
 
-    return getContainer(env.SCADIUM_API).fetch(request);
+    return apiContainer(env).fetch(request);
   },
 
   /**
@@ -59,7 +77,7 @@ export default {
       (async () => {
         const started = Date.now();
         try {
-          const response = await getContainer(env.SCADIUM_API).fetch(
+          const response = await apiContainer(env).fetch(
             new Request(`https://container${RUN_ALL_JOBS_PATH}`, {
               method: 'POST',
               headers: {
