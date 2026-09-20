@@ -25,7 +25,15 @@
       // 25 GiB-hours / 200 GB-hours / 375 vCPU-minutes — i.e. $0. A bigger
       // instance boots faster but costs from the first hour. Revisit at launch.
       "instance_type": "basic",
-      "max_instances": 1
+      // Headroom, NOT replicas. The app addresses one Durable Object by name, so
+      // exactly one container ever serves — the H12 single-replica constraint is
+      // enforced by the DO identity, not by this number.
+      //
+      // At 1 the deployment deadlocked: stopped instances stay registered
+      // (`inactive`), and a stale one from an earlier instance name still
+      // occupied the only slot, so no new container could ever be scheduled.
+      // Every request then failed with "not running, consider calling start()".
+      "max_instances": 3
     }
   ],
 
