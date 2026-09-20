@@ -28,9 +28,67 @@ const INTERNAL_SECRET_HEADER = 'x-internal-secret';
  */
 const DEFAULT_INSTANCE = 'scadium-api-v2';
 
+/** Sweep attempts, and the pause between them — long enough to cover a cold boot (~36s). */
+const DEFAULT_SWEEP_ATTEMPTS = 4;
+const DEFAULT_SWEEP_BACKOFF_MS = 30_000;
+
 /** Resolve the single authoritative container instance. */
 function apiContainer(env: Env) {
   return getContainer(env.SCADIUM_API, env.CONTAINER_INSTANCE ?? DEFAULT_INSTANCE);
+}
+
+/**
+ * Wake the container, run every economy job, then put it straight back to sleep.
+ *
+ * Retries matter here. The container is almost always cold when the cron fires,
+ * and a cold start takes longer than the container library waits for the port —
+ * so the first attempt reliably fails while the container boots in the
+ * background. Without a retry the hourly jobs would simply never run. The cron
+ * has no latency budget to protect, so it can afford to wait and try again.
+ *
+ * The stop is in a `finally`: a failed sweep must not leave the container idling
+ * for SLEEP_AFTER, which is exactly the runtime this design exists to avoid.
+ */
+async function runScheduledSweep(env: Env, secret: string): Promise<void> {
+  const attempts = Number(env.CRON_SWEEP_ATTEMPTS ?? DEFAULT_SWEEP_ATTEMPTS);
+  const backoffMs = Number(env.CRON_SWEEP_BACKOFF_MS ?? DEFAULT_SWEEP_BACKOFF_MS);
+  const started = Date.now();
+
+  try {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const response = await apiContainer(env).fetch(
+          new Request(`https://container${RUN_ALL_JOBS_PATH}`, {
+            method: 'POST',
+            headers: { [INTERNAL_SECRET_HEADER]: secret, 'content-type': 'application/json' },
+            body: '{}',
+          }),
+        );
+        const body = await response.text();
+        if (response.ok) {
+          console.log(`cron: job sweep ok on attempt ${attempt} after ${Date.now() - started}ms: ${body}`);
+          return;
+        }
+        console.warn(`cron: sweep attempt ${attempt}/${attempts} failed (${response.status}): ${body.slice(0, 200)}`);
+      } catch (e) {
+        console.warn(
+          `cron: sweep attempt ${attempt}/${attempts} threw: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      if (attempt < attempts) await new Promise((r) => setTimeout(r, backoffMs));
+    }
+    console.error(`cron: job sweep gave up after ${attempts} attempts (${Date.now() - started}ms)`);
+  } finally {
+    // Always, even when the sweep failed — see the doc comment.
+    if ((env.CRON_STOP_CONTAINER ?? 'true') !== 'false') {
+      try {
+        await apiContainer(env).stop();
+        console.log('cron: container stopped');
+      } catch (e) {
+        console.warn(`cron: could not stop container: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
 }
 
 export default {
@@ -73,49 +131,6 @@ export default {
       return;
     }
 
-    ctx.waitUntil(
-      (async () => {
-        const started = Date.now();
-        try {
-          const response = await apiContainer(env).fetch(
-            new Request(`https://container${RUN_ALL_JOBS_PATH}`, {
-              method: 'POST',
-              headers: {
-                [INTERNAL_SECRET_HEADER]: secret,
-                'content-type': 'application/json',
-              },
-              body: '{}',
-            }),
-          );
-          const body = await response.text();
-          const elapsed = Date.now() - started;
-          if (!response.ok) {
-            console.error(`cron: job sweep failed (${response.status}) after ${elapsed}ms: ${body}`);
-            return;
-          }
-          console.log(`cron: job sweep ok after ${elapsed}ms: ${body}`);
-
-          // Put the container straight back to sleep instead of letting it idle
-          // out. This is the difference between the site costing nothing and
-          // costing real money while NOBODY is using it: at the hourly cron,
-          // lingering for SLEEP_AFTER works out at ~73 container-hours/month
-          // (8.8x over the plan's included 25 GiB-hours, and 73% of Neon free's
-          // 100 CU-hours) versus ~10 h/month if it stops as soon as it is done.
-          //
-          // Set CRON_STOP_CONTAINER=false once there are real players: stopping
-          // here would disconnect anyone mid-round.
-          if ((env.CRON_STOP_CONTAINER ?? 'true') !== 'false') {
-            try {
-              await apiContainer(env).stop();
-              console.log('cron: container stopped');
-            } catch (e) {
-              console.warn(`cron: could not stop container: ${e instanceof Error ? e.message : String(e)}`);
-            }
-          }
-        } catch (e) {
-          console.error(`cron: job sweep threw: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      })(),
-    );
+    ctx.waitUntil(runScheduledSweep(env, secret));
   },
 } satisfies ExportedHandler<Env>;

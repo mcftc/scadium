@@ -23,6 +23,10 @@ export interface Env {
    * Set to "false" once real players are online.
    */
   CRON_STOP_CONTAINER?: string;
+  /** How many times the cron retries the job sweep (the container is usually cold). */
+  CRON_SWEEP_ATTEMPTS?: string;
+  /** Pause between sweep attempts, in ms — long enough to cover a cold boot. */
+  CRON_SWEEP_BACKOFF_MS?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
   /**
