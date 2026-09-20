@@ -59,6 +59,39 @@ npx wrangler containers instances <APP_ID> # per-instance state
 - Every request `Canceled` in `wrangler tail` → your client timed out before the
   container finished booting; retry with a longer timeout.
 
+### The container never restarts after it sleeps (state desync) — THE one to know
+
+Symptom: the container runs perfectly after a deploy, then the first time it
+sleeps every request fails with:
+
+```
+The container is not running, consider calling start()
+```
+
+and it never recovers until you redeploy.
+
+**The tell:** that string is *not* one of the library's own errors — those read
+`the container is not listening` or `there is no container instance that can be
+provided to this durable object`. It comes from the **workerd runtime**.
+
+So the Durable Object still believes the container is running and proxies
+straight through, while the runtime knows it is gone. And because the object's
+own view says "running", `startAndWaitForPorts()` skips starting — the two views
+can never reconcile by themselves.
+
+This is why several plausible-looking fixes only *appeared* to work: raising
+`max_instances`, rotating `CONTAINER_INSTANCE`, and nudging `start()` each
+forced a fresh Durable Object, and the very next sleep broke it again.
+
+**Handled in code** (`worker/container.ts`): `ScadiumApi.fetch()` catches that
+specific error, calls `destroy()` (SIGKILL + `onStop`, which clears the object's
+belief), starts for real, and retries once. Timeouts are short and failures are
+swallowed deliberately — a long await holds every request open, and rethrowing
+from this path wedges the object.
+
+If you ever see it again, check `worker/container.ts` still has that recovery
+before suspecting anything else.
+
 ### The container never restarts after it stops (`max_instances` deadlock)
 
 **Check this first** — it looks identical to the wedged-state failure below but
