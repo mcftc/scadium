@@ -267,6 +267,14 @@ So the scheduled handler stops the container when it is done (`CRON_STOP_CONTAIN
 default on). That is what makes an unvisited site actually free rather than ~$2/month, and
 it leaves ~90 of Neon's 100 free CU-hours for real traffic.
 
+**Hard ceiling (added 2026-09-21, at the owner's request).** Beyond stopping the
+container after the cron, the API enforces `DAILY_ACTIVE_SECONDS` (default 3600) of
+container active time per UTC day, accounted in the Durable Object's own storage.
+Past it the API returns 503 and the live games are offline until midnight UTC. This
+makes the worst case bounded rather than merely unlikely: no amount of crawler or
+visitor traffic can run the container — or Neon's free compute-hours — past the cap.
+It fails open on error, because it is a cost guard rather than a security control.
+
 | Line item | Cost |
 |---|---|
 | Workers Paid | **$5/mo — already being paid** |

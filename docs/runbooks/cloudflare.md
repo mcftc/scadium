@@ -109,6 +109,35 @@ effectively always-on, which also means Neon must move off the free plan.
 
 Tunables: `CRON_SWEEP_ATTEMPTS` (4), `CRON_SWEEP_BACKOFF_MS` (30000).
 
+## Daily active-time cap (the site goes offline when spent)
+
+The container is capped at **`DAILY_ACTIVE_SECONDS` (default 3600 = 1 hour) of
+active time per UTC day**. Past it, `api.scadium.com` returns 503 with
+`Retry-After` and the live games are offline until midnight UTC. The web pages
+themselves keep serving — only the API is gated.
+
+This exists because both container billing and Neon's free compute-hours track
+how long the container is awake, and without a ceiling a crawler or a handful of
+visitors could keep it running all day.
+
+```bash
+curl -s https://api.scadium.com/api/v1/crash/snapshot | jq .
+# when spent:
+# { "statusCode": 503, "message": "Scadium is paused for today...",
+#   "dailyActiveSecondsUsed": 3601, "dailyActiveSecondsCap": 3600,
+#   "resumesAt": "YYYY-MM-DDT24:00:00Z" }
+```
+
+Notes:
+- `/health` is exempt, so the service stays observable while capped.
+- The check **fails open**: it is a cost guard, not a security control, so a
+  transient Durable Object error logs loudly and lets the request through rather
+  than taking the site down.
+- Accounting is conservative (a wake is charged a full 40s cold start), so the
+  real spend is at or below the cap, never above.
+- Raise it, or set it very high, when the project is ready to be always-on —
+  but remember that also requires moving Neon off the free plan.
+
 ## Running the economy jobs by hand
 
 ```bash
