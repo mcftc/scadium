@@ -83,11 +83,21 @@ This is why several plausible-looking fixes only *appeared* to work: raising
 `max_instances`, rotating `CONTAINER_INSTANCE`, and nudging `start()` each
 forced a fresh Durable Object, and the very next sleep broke it again.
 
-**Handled in code** (`worker/container.ts`): `ScadiumApi.fetch()` catches that
-specific error, calls `destroy()` (SIGKILL + `onStop`, which clears the object's
-belief), starts for real, and retries once. Timeouts are short and failures are
-swallowed deliberately — a long await holds every request open, and rethrowing
-from this path wedges the object.
+**Handled in code** (`worker/container.ts`): `ScadiumApi.fetch()` detects that
+error, calls `destroy()` (SIGKILL + `onStop`, which clears the object's belief),
+starts for real, and retries once.
+
+**The subtlety that matters if you ever touch this:** the runtime usually does
+*not* throw — it resolves with a **500 whose body** is that message. A plain
+`try/catch` therefore never fires, which is exactly how the first attempt at
+this fix shipped and did nothing. The code checks both shapes: a captured throw
+*and* a cloned 500 body. WebSocket responses are excluded from the body check so
+upgrades are never consumed. Timeouts are short and failures are swallowed
+deliberately — a long await holds every request open, and rethrowing from this
+path wedges the object.
+
+Verified: after an 8-minute idle (the exact window that reliably broke it), the
+first request returns 200.
 
 If you ever see it again, check `worker/container.ts` still has that recovery
 before suspecting anything else.
