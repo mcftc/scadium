@@ -5,22 +5,7 @@ import { Radio } from 'lucide-react';
 import { useLiveFeed, type LiveBet } from '@/hooks/use-live-feed';
 import { formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
-
-/** Route each game to its page so a ticker chip is clickable. */
-const GAME_META: Record<string, { label: string; href: string }> = {
-  crash: { label: 'Crash', href: '/crash' },
-  coinflip: { label: 'Coinflip', href: '/coinflip' },
-  dice: { label: 'Dice', href: '/dice' },
-  limbo: { label: 'Limbo', href: '/limbo' },
-  wheel: { label: 'Wheel', href: '/wheel' },
-  plinko: { label: 'Plinko', href: '/plinko' },
-  mines: { label: 'Mines', href: '/mines' },
-  hilo: { label: 'HiLo', href: '/hilo' },
-  tower: { label: 'Tower', href: '/tower' },
-  blackjack: { label: 'Blackjack', href: '/blackjack' },
-  jackpot: { label: 'Jackpot', href: '/jackpot' },
-  lottery: { label: 'Lottery', href: '/lottery' },
-};
+import { gameMeta, isGameVisible } from '@/config/games';
 
 /**
  * Sitewide live-bet ticker (#roadmap-4) — the social-proof surface every
@@ -48,21 +33,25 @@ export function LiveBetTicker() {
 }
 
 function TickerChip({ bet }: { bet: LiveBet }) {
-  const meta = GAME_META[bet.gameType] ?? { label: bet.gameType, href: '/' };
+  // Lookup, not a menu: ALL_GAMES (via gameMeta) so a settled bet on a game
+  // that's since been hidden — or long gone — still resolves a label. Only
+  // a currently-visible game gets a href; a hidden one's page 404s, so its
+  // chip renders as a non-clickable span with the label still shown.
+  const meta = gameMeta(bet.gameType);
+  const label = meta?.label ?? bet.gameType;
+  const href = meta && isGameVisible(meta.id) ? meta.href : undefined;
   const mult = bet.multiplier != null && bet.won ? `${bet.multiplier.toFixed(2)}×` : null;
-  return (
-    <Link
-      href={meta.href}
-      title={`${bet.player} · ${meta.label} · ${formatSol(bet.amountLamports)}`}
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] transition-colors',
-        bet.won
-          ? 'border-success/25 bg-success/5 hover:border-success/50'
-          : 'border-border/60 bg-background/40 hover:border-border',
-      )}
-    >
+  const title = `${bet.player} · ${label} · ${formatSol(bet.amountLamports)}`;
+  const className = cn(
+    'flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] transition-colors',
+    bet.won
+      ? 'border-success/25 bg-success/5 hover:border-success/50'
+      : 'border-border/60 bg-background/40 hover:border-border',
+  );
+  const content = (
+    <>
       <span className="max-w-[72px] truncate font-medium text-foreground-muted">{bet.player}</span>
-      <span className="text-foreground-muted/50">{meta.label}</span>
+      <span className="text-foreground-muted/50">{label}</span>
       <span className="font-mono tabular-nums text-foreground-muted">
         {formatSol(bet.amountLamports, 2)}
       </span>
@@ -71,6 +60,20 @@ function TickerChip({ bet }: { bet: LiveBet }) {
       ) : (
         <span className="font-semibold text-danger/70">—</span>
       )}
+    </>
+  );
+
+  if (!href) {
+    return (
+      <span title={title} className={className}>
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <Link href={href} title={title} className={className}>
+      {content}
     </Link>
   );
 }

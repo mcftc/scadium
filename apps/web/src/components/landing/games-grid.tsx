@@ -1,112 +1,8 @@
 import Link from 'next/link';
-import {
-  TrendingUp,
-  Coins,
-  Spade,
-  Dices,
-  Rocket,
-  Circle,
-  Bomb,
-  Gem,
-  Layers,
-  ArrowUpDown,
-} from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Card } from '@/components/ui/card';
 import { ChainCopy } from '@/components/chain/chain-copy';
-
-const games = [
-  {
-    id: 'crash',
-    title: 'Crash',
-    description: 'Ride the multiplier. Cash out before it busts.',
-    icon: TrendingUp,
-    href: '/crash',
-    accent: 'from-[#FFCE5E] to-[#FF7A45]',
-    rtp: '95%',
-  },
-  {
-    id: 'coinflip',
-    title: 'Coinflip',
-    description: 'Heads or tails. 50/50 odds, 1.9× payout.',
-    icon: Coins,
-    href: '/coinflip',
-    accent: 'from-[#2DD4BF] to-[#14B8A6]',
-    rtp: '95%',
-  },
-  {
-    id: 'blackjack',
-    title: 'Blackjack',
-    description: 'Beat the dealer. Up to 5 seats per table.',
-    icon: Spade,
-    href: '/blackjack',
-    accent: 'from-[#FF7A45] to-[#F43F5E]',
-    rtp: '99.5%',
-  },
-  {
-    id: 'dice',
-    title: 'Dice',
-    description: 'Roll under your target. Set your own odds.',
-    icon: Dices,
-    href: '/dice',
-    accent: 'from-[#FFCE5E] to-[#FF7A45]',
-    rtp: '99%',
-  },
-  {
-    id: 'limbo',
-    title: 'Limbo',
-    description: 'Pick a multiplier. Beat the roll, win big.',
-    icon: Rocket,
-    href: '/limbo',
-    accent: 'from-[#2DD4BF] to-[#14B8A6]',
-    rtp: '95%',
-  },
-  {
-    id: 'plinko',
-    title: 'Plinko',
-    description: 'Drop the ball. Bounce into a payout bin.',
-    icon: Circle,
-    href: '/plinko',
-    accent: 'from-[#FF7A45] to-[#F43F5E]',
-    rtp: '95%',
-  },
-  {
-    id: 'wheel',
-    title: 'Wheel',
-    description: 'Spin the wheel. Land on a multiplier.',
-    icon: Bomb,
-    href: '/wheel',
-    accent: 'from-[#34D399] to-[#14B8A6]',
-    rtp: '95%',
-  },
-  {
-    id: 'mines',
-    title: 'Mines',
-    description: 'Reveal gems, dodge the mines. Cash out any time.',
-    icon: Gem,
-    href: '/mines',
-    accent: 'from-[#FFCE5E] to-[#FF7A45]',
-    rtp: '95%',
-  },
-  {
-    id: 'tower',
-    title: 'Tower',
-    description: 'Climb row by row. One trap each step.',
-    icon: Layers,
-    href: '/tower',
-    accent: 'from-[#2DD4BF] to-[#14B8A6]',
-    rtp: '95%',
-  },
-  {
-    id: 'hilo',
-    title: 'Hi-Lo',
-    description: 'Higher or lower? Compound your streak.',
-    icon: ArrowUpDown,
-    href: '/hilo',
-    accent: 'from-[#FF7A45] to-[#F43F5E]',
-    rtp: '95%',
-  },
-];
+import { GAMES } from '@/config/games';
 
 export function GamesGrid() {
   return (
@@ -124,7 +20,7 @@ export function GamesGrid() {
           </p>
         </div>
         <div className="grid md:grid-cols-3 gap-6">
-          {games.map((game) => {
+          {GAMES.map((game) => {
             const Icon = game.icon;
             return (
               <Link key={game.id} href={game.href}>
@@ -134,7 +30,7 @@ export function GamesGrid() {
                   >
                     <Icon className="h-7 w-7 text-white" />
                   </div>
-                  <h3 className="text-2xl font-bold mb-2">{game.title}</h3>
+                  <h3 className="text-2xl font-bold mb-2">{game.label}</h3>
                   <p className="text-foreground-muted mb-4">{game.description}</p>
                   <div className="flex items-center justify-between pt-4 border-t border-border/50">
                     <span className="text-xs uppercase tracking-wider text-foreground-muted">

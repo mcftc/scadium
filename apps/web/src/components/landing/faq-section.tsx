@@ -22,7 +22,7 @@ const faqs: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'How does earning $SCAD work?',
-    a: 'Playing builds your playrate; each hour the $SCAD mining block is split across players by playrate, so the more you play the bigger your share. Stake $SCAD to keep a passive playrate even while idle. Every house-banked game keeps a small, fully-disclosed 5% edge (Blackjack is rules-based), all verifiable on the Fairness page.',
+    a: 'Playing builds your playrate; each hour the $SCAD mining block is split across players by playrate, so the more you play the bigger your share. Stake $SCAD to keep a passive playrate even while idle. Every house-banked game keeps a small, fully-disclosed 5% edge, all verifiable on the Fairness page.',
   },
   {
     q: 'Which wallets are supported?',

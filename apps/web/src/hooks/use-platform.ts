@@ -5,12 +5,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useSocket } from '@/providers/socket-provider';
 
+/**
+ * Live game counters from `GET /platform/live`.
+ *
+ * Every game key is OPTIONAL: the API reports only the games it actually
+ * serves (see apps/api/src/platform/platform.service.ts), so a game that is
+ * switched off via ENABLED_GAMES is absent rather than null. Typing these as
+ * always-present would be a lie the compiler then helps you believe — and the
+ * first mismatched roster between the API and a web build would be a runtime
+ * TypeError in the header, not a caught error.
+ */
 export interface PlatformLive {
-  crash: { phase: string; multiplier: number | null };
-  coinflip: { openCount: number };
-  blackjack: { active: number };
-  jackpot: { status: 'waiting' | 'open'; players: number };
-  lottery: { drawAt: number; ticketPriceUsd: number };
+  crash?: { phase: string; multiplier: number | null };
+  coinflip?: { openCount: number };
+  blackjack?: { active: number };
+  jackpot?: { status: 'waiting' | 'open'; players: number };
+  lottery?: { drawAt: number; ticketPriceUsd: number };
   totalBets: number;
 }
 

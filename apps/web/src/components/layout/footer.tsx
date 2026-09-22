@@ -3,24 +3,14 @@ import { Container } from '@/components/ui/container';
 import { Logo } from '@/components/brand/logo';
 import { ChainCopy } from '@/components/chain/chain-copy';
 import { LicensingLine } from '@/components/layout/licensing-line';
+import { GAMES } from '@/config/games';
 
 const footerSections = [
   {
+    // Links come from the registry, not hand-listed, so a game added/removed
+    // there doesn't need this file touched too.
     title: 'Games',
-    links: [
-      { href: '/crash', label: 'Crash' },
-      { href: '/coinflip', label: 'Coinflip' },
-      { href: '/blackjack', label: 'Blackjack' },
-      { href: '/jackpot', label: 'Jackpot' },
-      { href: '/lottery', label: 'Lottery' },
-      { href: '/dice', label: 'Dice' },
-      { href: '/limbo', label: 'Limbo' },
-      { href: '/plinko', label: 'Plinko' },
-      { href: '/wheel', label: 'Wheel' },
-      { href: '/mines', label: 'Mines' },
-      { href: '/tower', label: 'Tower' },
-      { href: '/hilo', label: 'Hi-Lo' },
-    ],
+    links: GAMES.map((g) => ({ href: g.href, label: g.label })),
   },
   {
     title: 'Features',

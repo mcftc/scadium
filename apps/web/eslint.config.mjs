@@ -35,7 +35,10 @@ const eslintConfig = [
     },
   },
   {
-    ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts'],
+    // `.open-next/**` is the Cloudflare Workers build output (bundled vendor
+    // code, not source). Without it, any `pnpm lint` run after `pnpm cf:build`
+    // reports ~75 problems from generated bundles and can OOM eslint outright.
+    ignores: ['.next/**', '.open-next/**', 'node_modules/**', 'next-env.d.ts'],
   },
 ];
 

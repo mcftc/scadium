@@ -3,22 +3,12 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  ArrowUpDown,
-  Bomb,
-  Circle,
   Coins,
-  Dices,
   Gamepad2,
-  Gem,
   Gift,
   Layers,
   Link2,
-  Rocket,
   ShoppingCart,
-  Spade,
-  Ticket,
-  TrendingUp,
-  Trophy,
   Users,
   Vault,
   Zap,
@@ -34,22 +24,29 @@ import { PromoBar } from '@/components/layout/promo-bar';
 import { NavDropdown } from '@/components/layout/nav-dropdown';
 import { usePlatformLive, type PlatformLive } from '@/hooks/use-platform';
 import { cn } from '@/lib/cn';
+import { GAMES, STATEFUL_GAMES, INSTANT_GAMES, type GameMeta } from '@/config/games';
 
 /** Per-game live status chip text for the stateful games in the Games menu. */
 function liveLabel(live: PlatformLive | undefined, key: string): string | null {
   if (!live) return null;
   switch (key) {
+    // Each key is optional — /platform/live reports only the enabled games — so
+    // every branch bails out rather than assuming its game is in the response.
     case 'crash':
+      if (!live.crash) return null;
       return live.crash.phase === 'running' && live.crash.multiplier
         ? `${live.crash.multiplier.toFixed(2)}x`
         : 'Starting…';
     case 'coinflip':
+      if (!live.coinflip) return null;
       return `${live.coinflip.openCount} Flip${live.coinflip.openCount === 1 ? '' : 's'}`;
     case 'blackjack':
-      return String(live.blackjack.active);
+      return live.blackjack ? String(live.blackjack.active) : null;
     case 'jackpot':
+      if (!live.jackpot) return null;
       return live.jackpot.status === 'open' ? `${live.jackpot.players} in` : 'Waiting…';
     case 'lottery': {
+      if (!live.lottery) return null;
       const ms = Math.max(0, live.lottery.drawAt - Date.now());
       const h = Math.floor(ms / 3_600_000);
       const m = Math.floor((ms % 3_600_000) / 60_000);
@@ -59,29 +56,6 @@ function liveLabel(live: PlatformLive | undefined, key: string): string | null {
       return null;
   }
 }
-
-type GameItem = { key: string; href: string; label: string; icon: typeof TrendingUp };
-
-// Stateful (live) games keep their realtime chip; instant games just link.
-const statefulGames: GameItem[] = [
-  { key: 'crash', href: '/crash', label: 'Crash', icon: TrendingUp },
-  { key: 'coinflip', href: '/coinflip', label: 'Coinflip', icon: Coins },
-  { key: 'blackjack', href: '/blackjack', label: 'Blackjack', icon: Spade },
-  { key: 'jackpot', href: '/jackpot', label: 'Jackpot', icon: Trophy },
-  { key: 'lottery', href: '/lottery', label: 'Lottery', icon: Ticket },
-];
-
-const instantGames: GameItem[] = [
-  { key: 'dice', href: '/dice', label: 'Dice', icon: Dices },
-  { key: 'limbo', href: '/limbo', label: 'Limbo', icon: Rocket },
-  { key: 'plinko', href: '/plinko', label: 'Plinko', icon: Circle },
-  { key: 'wheel', href: '/wheel', label: 'Wheel', icon: Bomb },
-  { key: 'mines', href: '/mines', label: 'Mines', icon: Gem },
-  { key: 'tower', href: '/tower', label: 'Tower', icon: Layers },
-  { key: 'hilo', href: '/hilo', label: 'Hi-Lo', icon: ArrowUpDown },
-];
-
-const allGames = [...statefulGames, ...instantGames];
 
 const engineLinks = [
   { href: '/engine', label: 'Engine', icon: Zap },
@@ -100,14 +74,14 @@ const affiliateLinks: { href: string; label: string; icon: LucideIcon }[] = [
 ];
 
 /**
- * Top bar: logo + Games dropdown (all 12 games, live chips for the stateful
- * ones) + Trade + SCAD Engine link on the left; Rewards, balance, avatar on
- * the right. The promo strip renders under the bar.
+ * Top bar: logo + Games dropdown (games on the registry's menu, live chips
+ * for the stateful ones) + Trade + SCAD Engine link on the left; Rewards,
+ * balance, avatar on the right. The promo strip renders under the bar.
  */
 export function Header() {
   const pathname = usePathname();
   const { data: live } = usePlatformLive();
-  const onGame = allGames.some((g) => pathname.startsWith(g.href));
+  const onGame = GAMES.some((g) => pathname.startsWith(g.href));
   const onEngine = engineLinks.some((l) => pathname.startsWith(l.href));
   const onAffiliates = pathname.startsWith('/affiliates');
 
@@ -130,19 +104,20 @@ export function Header() {
               >
                 {(close) => (
                   <div className="space-y-0.5">
-                    {statefulGames.map((g) => (
+                    {/* Stateful (live) games keep their realtime chip; instant games just link. */}
+                    {STATEFUL_GAMES.map((g) => (
                       <GameMenuItem
-                        key={g.key}
+                        key={g.id}
                         game={g}
                         active={pathname.startsWith(g.href)}
-                        chip={liveLabel(live, g.key)}
-                        running={g.key === 'crash' && live?.crash.phase === 'running'}
+                        chip={liveLabel(live, g.id)}
+                        running={g.id === 'crash' && live?.crash?.phase === 'running'}
                         onClick={close}
                       />
                     ))}
-                    {instantGames.map((g) => (
+                    {INSTANT_GAMES.map((g) => (
                       <GameMenuItem
-                        key={g.key}
+                        key={g.id}
                         game={g}
                         active={pathname.startsWith(g.href)}
                         chip={null}
@@ -264,7 +239,7 @@ function GameMenuItem({
   running,
   onClick,
 }: {
-  game: GameItem;
+  game: GameMeta;
   active: boolean;
   chip: string | null;
   running: boolean;

@@ -48,8 +48,8 @@ export default function AboutPage() {
               />
             </p>
             <p>
-              Crash, Coinflip, Blackjack, Jackpot and a bc.game-style Lottery — every round
-              verifiable by anyone.{' '}
+              Crash, Coinflip, Jackpot and a bc.game-style Lottery — every round verifiable by
+              anyone.{' '}
               <ChainCopy
                 onchain="Every payout settled on-chain."
                 playMoney="Play-money beta — settlement runs off-chain today."

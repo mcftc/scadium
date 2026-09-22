@@ -5,46 +5,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import {
-  Gamepad2,
-  ShoppingCart,
-  Zap,
-  Gift,
-  Users,
-  User,
-  TrendingUp,
-  Coins,
-  Spade,
-  Ticket,
-  Trophy,
-  Dices,
-  Rocket,
-  Circle,
-  Bomb,
-  Gem,
-  Layers,
-  ArrowUpDown,
-  type LucideIcon,
-} from 'lucide-react';
+import { Gamepad2, ShoppingCart, Zap, Gift, Users, User, type LucideIcon } from 'lucide-react';
 import { useHydrated } from '@/hooks/use-hydrated';
 import { cn } from '@/lib/cn';
-
-type NavLink = { href: string; label: string; icon: LucideIcon };
-
-const GAMES: NavLink[] = [
-  { href: '/crash', label: 'Crash', icon: TrendingUp },
-  { href: '/coinflip', label: 'Coinflip', icon: Coins },
-  { href: '/blackjack', label: 'Blackjack', icon: Spade },
-  { href: '/jackpot', label: 'Jackpot', icon: Trophy },
-  { href: '/lottery', label: 'Lottery', icon: Ticket },
-  { href: '/dice', label: 'Dice', icon: Dices },
-  { href: '/limbo', label: 'Limbo', icon: Rocket },
-  { href: '/plinko', label: 'Plinko', icon: Circle },
-  { href: '/wheel', label: 'Wheel', icon: Bomb },
-  { href: '/mines', label: 'Mines', icon: Gem },
-  { href: '/tower', label: 'Tower', icon: Layers },
-  { href: '/hilo', label: 'Hi-Lo', icon: ArrowUpDown },
-];
+import { GAMES, type GameMeta } from '@/config/games';
 
 /** Engine section routes — the Engine tab stays lit across all of them, mirroring the header link. */
 const ENGINE_PATHS = ['/engine', '/vault', '/token', '/pools'];
@@ -189,7 +153,7 @@ function SheetTile({
   active,
   onSelect,
 }: {
-  link: NavLink;
+  link: GameMeta;
   active: boolean;
   onSelect: () => void;
 }) {
