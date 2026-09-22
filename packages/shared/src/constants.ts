@@ -15,9 +15,106 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
 export const HOUSE_EDGE = 0.05; // 5% hold
 export const RTP = 1 - HOUSE_EDGE; // 0.95 return-to-player
 
-// ---------- Game types ----------
-export const GAME_TYPES = ['crash', 'coinflip', 'blackjack', 'lottery', 'jackpot'] as const;
-export type GameType = (typeof GAME_TYPES)[number];
+// ---------- Game catalogue ----------
+/**
+ * THE source of truth for which games exist and which are on the menu.
+ *
+ * Before this, the catalogue was spelled out by hand in ~18 places across the
+ * API and the web app, and they had already drifted apart — `games-grid.tsx`
+ * omitted Jackpot and Lottery entirely, so two live games were missing from the
+ * landing page. Every surface now derives from here.
+ *
+ * This list is DATA, not presentation: no icons or React here, so it stays
+ * isomorphic and the API can import it too. The web app maps `id` to an icon.
+ *
+ * The catalogue always contains EVERY game the platform has ever shipped, even
+ * disabled ones, because historical bets still need a label and a fairness
+ * verifier. Availability is a separate, config-driven concern — see
+ * `DEFAULT_ENABLED_GAMES`.
+ */
+export type GameCategory = 'stateful' | 'instant';
+
+export interface GameCatalogEntry {
+  /** Matches the Prisma `GameType` enum value and the web route slug. */
+  readonly id: string;
+  readonly label: string;
+  readonly href: string;
+  /**
+   * `stateful` = server-driven rounds others can watch (crash, jackpot…).
+   * `instant` = single-player, resolved on request (dice, plinko…).
+   */
+  readonly category: GameCategory;
+}
+
+export const GAME_CATALOG = [
+  { id: 'crash', label: 'Crash', href: '/crash', category: 'stateful' },
+  { id: 'coinflip', label: 'Coinflip', href: '/coinflip', category: 'stateful' },
+  { id: 'jackpot', label: 'Jackpot', href: '/jackpot', category: 'stateful' },
+  { id: 'lottery', label: 'Lottery', href: '/lottery', category: 'stateful' },
+  { id: 'blackjack', label: 'Blackjack', href: '/blackjack', category: 'stateful' },
+  { id: 'dice', label: 'Dice', href: '/dice', category: 'instant' },
+  { id: 'limbo', label: 'Limbo', href: '/limbo', category: 'instant' },
+  { id: 'wheel', label: 'Wheel', href: '/wheel', category: 'instant' },
+  { id: 'plinko', label: 'Plinko', href: '/plinko', category: 'instant' },
+  { id: 'mines', label: 'Mines', href: '/mines', category: 'instant' },
+  { id: 'hilo', label: 'Hi-Lo', href: '/hilo', category: 'instant' },
+  { id: 'tower', label: 'Tower', href: '/tower', category: 'instant' },
+] as const satisfies readonly GameCatalogEntry[];
+
+/** Every game id the platform knows about, including disabled ones. */
+export type GameId = (typeof GAME_CATALOG)[number]['id'];
+
+export const ALL_GAME_IDS = GAME_CATALOG.map((g) => g.id) as readonly GameId[];
+
+/**
+ * Backwards-compatible alias for `GameId`.
+ *
+ * This used to be a hand-written union of only five games, which meant
+ * `BetRecord.gameType` could not represent a bet on any of the seven instant
+ * games — a latent bug — and `deriveOutcome` had to widen its parameter to
+ * `GameType | string` to compile. It now covers the full catalogue.
+ */
+export type GameType = GameId;
+
+/**
+ * Games on the menu when `ENABLED_GAMES` is unset.
+ *
+ * Narrowed to four on 2026-09-22 at the owner's request: the rest are finished
+ * and tested but out of scope while these four are reworked. Nothing was
+ * deleted — re-enabling is a config change, whereas deletion would have meant a
+ * Postgres enum migration that cannot run without destroying the bet history
+ * the provably-fair audit trail depends on.
+ */
+export const DEFAULT_ENABLED_GAMES = ['crash', 'coinflip', 'jackpot', 'lottery'] as const;
+
+/**
+ * Parse an `ENABLED_GAMES` value (comma-separated ids) into a validated set.
+ *
+ * Fails SOFT on unknown ids — they are ignored rather than throwing, so a typo
+ * in an env var cannot take the whole site down. An empty or unset value falls
+ * back to the default four rather than enabling nothing, because a casino with
+ * zero games is never the intended configuration.
+ */
+export function parseEnabledGames(raw?: string | null): readonly GameId[] {
+  if (!raw?.trim()) return DEFAULT_ENABLED_GAMES;
+  const known = new Set<string>(ALL_GAME_IDS);
+  const parsed = raw
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => known.has(s)) as GameId[];
+  return parsed.length > 0 ? parsed : DEFAULT_ENABLED_GAMES;
+}
+
+/** Catalogue entries for the enabled games, in catalogue order. */
+export function enabledGames(enabled: readonly GameId[]): readonly GameCatalogEntry[] {
+  const set = new Set<string>(enabled);
+  return GAME_CATALOG.filter((g) => set.has(g.id));
+}
+
+/** Is this game currently on the menu? Unknown ids are never enabled. */
+export function isGameEnabled(id: string, enabled: readonly GameId[]): boolean {
+  return (enabled as readonly string[]).includes(id);
+}
 
 // ---------- Coinflip ----------
 export const COINFLIP = {

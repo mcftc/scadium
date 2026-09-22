@@ -52,6 +52,7 @@ import { GeoGuard } from './compliance/geo.guard';
 import { ResponsibleGamblingModule } from './responsible-gambling/rg.module';
 import { KycModule } from './kyc/kyc.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { onlyIfEnabled } from './games/enabled-games';
 import { JobsModule } from './jobs/jobs.module';
 
 @Module({
@@ -86,18 +87,23 @@ import { JobsModule } from './jobs/jobs.module';
     FairnessModule,
     AuthModule,
     UsersModule,
-    CoinflipModule,
-    CrashModule,
-    LotteryModule,
-    JackpotModule,
-    BlackjackModule,
-    DiceModule,
-    LimboModule,
-    WheelModule,
-    PlinkoModule,
-    MinesModule,
-    TowerModule,
-    HiloModule,
+    // Games are registered from the shared catalogue, gated by ENABLED_GAMES.
+    // This is the REAL enforcement point: an unregistered game's controllers and
+    // gateway never exist, so its REST routes 404 and its Socket.io namespace
+    // refuses connections. Hiding a game only in the web nav would leave every
+    // endpoint live and bettable by URL. See games/enabled-games.ts.
+    ...onlyIfEnabled('coinflip', CoinflipModule),
+    ...onlyIfEnabled('crash', CrashModule),
+    ...onlyIfEnabled('lottery', LotteryModule),
+    ...onlyIfEnabled('jackpot', JackpotModule),
+    ...onlyIfEnabled('blackjack', BlackjackModule),
+    ...onlyIfEnabled('dice', DiceModule),
+    ...onlyIfEnabled('limbo', LimboModule),
+    ...onlyIfEnabled('wheel', WheelModule),
+    ...onlyIfEnabled('plinko', PlinkoModule),
+    ...onlyIfEnabled('mines', MinesModule),
+    ...onlyIfEnabled('tower', TowerModule),
+    ...onlyIfEnabled('hilo', HiloModule),
     BotsModule,
     ChatModule,
     LeaderboardModule,
