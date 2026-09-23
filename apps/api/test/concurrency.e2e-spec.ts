@@ -76,6 +76,33 @@ describe('concurrency / money-safety (integration, real Postgres)', () => {
     expect(after.playBalanceLamports >= 0n).toBe(true);
   });
 
+  // --------------------------- duplicate bet keeps the accepted bet's row (A2)
+
+  it('duplicate bets from one user (balance covers all) → 1 accepted, its CrashBet row survives', async () => {
+    const bet = BigInt(CRASH.MIN_BET_LAMPORTS);
+    const N = 5;
+    const { user, token } = await seedUser(bet * BigInt(N), harness.signToken, prisma);
+    const roundId = harness.app.get(CrashEngine).currentRoundId();
+
+    const responses = await Promise.all(
+      Array.from({ length: N }, () =>
+        request(harness.server)
+          .post('/api/v1/crash/bet')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ amountLamports: bet.toString() }),
+      ),
+    );
+    expect(responses.filter((r) => r.status >= 200 && r.status < 300).length).toBe(1);
+
+    // The rejected duplicates must not delete the ACCEPTED bet's durable row —
+    // it is what lets a cash-out persist and a restart refund the stake.
+    const rows = await prisma.crashBet.findMany({ where: { roundId, userId: user.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.remainingLamports).toBe(bet);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.playBalanceLamports).toBe(bet * BigInt(N - 1)); // exactly one stake taken
+  });
+
   // ------------------------------------- no double-settle (direct engine, #4)
 
   it('no double-settle: settling a round with N participants writes exactly one Bet + one CrashBet each', async () => {

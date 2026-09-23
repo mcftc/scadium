@@ -302,6 +302,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   placeBet(params: {
+    /** Round the caller debited against; a mismatch means that round is gone. */
+    roundId?: string;
     userId: string;
     username: string | null;
     walletAddress: string;
@@ -309,6 +311,12 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     autoCashout: number | null;
   }): { ok: true; roundId: string } {
     if (this.current.phase !== 'waiting') {
+      throw new Error('Betting window closed');
+    }
+    // A slow debit tx can outlive its round: the bet would then ride round R+1
+    // in RAM while its durable row points at the already-busted R, so a cash-out
+    // could not persist and a restart could not refund it.
+    if (params.roundId !== undefined && params.roundId !== this.current.id) {
       throw new Error('Betting window closed');
     }
     if (this.current.bets.has(params.userId)) {

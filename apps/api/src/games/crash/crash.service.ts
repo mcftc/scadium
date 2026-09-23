@@ -81,8 +81,8 @@ export class CrashService {
       // engine.placeBet below still rejects (and we roll back) if the window
       // closed between roundId capture and now. skipDuplicates so a racing
       // double-bet's unique (roundId,userId) collision cannot abort the tx with
-      // a raw 23505 (the guarded debit above is the real one-bet guarantee).
-      await tx.crashBet.createMany({
+      // a raw 23505.
+      const { count } = await tx.crashBet.createMany({
         data: [
           {
             roundId,
@@ -96,6 +96,12 @@ export class CrashService {
         ],
         skipDuplicates: true,
       });
+      // Nothing inserted = this user already has a bet (and its row) in this
+      // round. Reject HERE, so the debit rolls back with the tx: letting it
+      // through meant the engine's rejection path below deleted the row by
+      // (roundId, userId) — the ACCEPTED bet's row — which broke every cash-out
+      // and stripped that stake of its restart refund.
+      if (count === 0) throw new BadRequestException('You already have a bet in this round');
       return { replay: null };
     });
     if (claim.replay) return claim.replay;
@@ -103,6 +109,7 @@ export class CrashService {
     let response: { ok: true; roundId: string };
     try {
       response = this.engine.placeBet({
+        roundId,
         userId: params.userId,
         username: user.username,
         walletAddress: user.walletAddress,
@@ -112,7 +119,8 @@ export class CrashService {
     } catch (e) {
       // Roll back the debit on engine rejection — a separate atomic movement
       // (its own ledger row), which is correct double-entry. The CrashBet row
-      // committed alongside the debit, so delete it here too.
+      // committed alongside the debit, and this request created it (the
+      // count check above), so deleting it removes only our own row.
       await withSerializable(this.prisma, (tx) =>
         applyBalanceDelta(tx, params.userId, params.amountLamports, {
           reason: 'refund',
