@@ -262,3 +262,11 @@ jackpot recovery: 1 stranded round(s) — settling
 ```
 
 with no double settlement.
+
+**Correction (2026-09-23): the lottery line above was the H8 bug, not a
+recovery.** The draw it settled was not due — recovery then settled every
+`open` draw and overwrote its `drawAt`, and because the hourly cron boots the
+container, production ran ~35 draws a day against a once-a-day schedule. Recovery
+now settles only draws whose `drawAt` has passed and **resumes** the one that is
+not due (`lottery recovery: resumed draw … draws at …`). A healthy restart log
+shows that line, not "settling".

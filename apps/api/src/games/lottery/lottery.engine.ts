@@ -126,8 +126,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     if (!this.election) {
-      await this.recoverStrandedDraws();
-      await this.openNewDraw();
+      await this.bootDraws();
       return;
     }
     // Multi-instance: placeholder keeps reads safe until we lead; only the leader
@@ -167,8 +166,13 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
 
   private async assumeLeadership(): Promise<void> {
     this.logger.log('lottery: elected leader — driving draws');
-    await this.recoverStrandedDraws();
-    await this.openNewDraw();
+    await this.bootDraws();
+  }
+
+  /** Settle what is due, resume the draw that is not, and open one only if none is live. */
+  private async bootDraws(): Promise<void> {
+    const resumed = await this.recoverStrandedDraws();
+    if (!resumed) await this.openNewDraw();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -177,13 +181,18 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Boot recovery: a restart strands every draw left 'open'. For each,
-   * reconstruct `this.current` from the DB draw + its Seed and call the
-   * transactional `drawAndSettle()` (it recomputes sales from the tickets and
-   * has a synthetic-slot-hash fallback, so it always settles). The chained
-   * openNewDraw() is suppressed via `recovering`.
+   * Boot recovery. A restart leaves the current draw 'open' in the DB, and on
+   * Cloudflare that happens on every hourly cron boot and every wake from sleep —
+   * so "open" usually means "not due yet", not "stranded" (H8: settling every
+   * open draw here ran ~35 draws a day against a once-a-day schedule).
+   *
+   * A draw whose `drawAt` has passed is settled via the transactional
+   * `drawAndSettle()` (it recomputes sales from the tickets, so nothing in RAM
+   * is needed). The newest draw that is NOT due is resumed: `this.current` is
+   * rebuilt from its row and tickets and its timer re-armed. Returns true when a
+   * draw was resumed, so the caller does not open a second one.
    */
-  private async recoverStrandedDraws(): Promise<void> {
+  private async recoverStrandedDraws(): Promise<boolean> {
     let stranded: {
       id: string;
       drawIndex: bigint | null;
@@ -192,6 +201,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       rolloverScadBase: bigint;
       ticketPriceScadBase: bigint;
       targetSlot: bigint | null;
+      commitTxSignature: string | null;
+      drawAt: Date;
     }[];
     try {
       stranded = await this.prisma.lotteryDraw.findMany({
@@ -204,6 +215,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
           rolloverScadBase: true,
           ticketPriceScadBase: true,
           targetSlot: true,
+          commitTxSignature: true,
+          drawAt: true,
         },
         orderBy: { createdAt: 'asc' },
       });
@@ -211,35 +224,24 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       this.logger.error(
         `lottery recovery scan failed: ${e instanceof Error ? e.message : String(e)}`,
       );
-      return;
+      return false;
     }
-    if (stranded.length === 0) return;
-    this.logger.warn(`lottery recovery: ${stranded.length} stranded draw(s) — settling`);
+    if (stranded.length === 0) return false;
+
+    // Only one draw is ever open by design; keep the newest not-yet-due one
+    // live and settle everything else (due draws, plus any anomalous duplicate).
+    const now = Date.now();
+    const live = [...stranded].reverse().find((d) => d.drawAt.getTime() > now) ?? null;
+    const toSettle = stranded.filter((d) => d !== live);
+    if (toSettle.length > 0) {
+      this.logger.warn(`lottery recovery: ${toSettle.length} due draw(s) — settling`);
+    }
 
     this.recovering = true;
     try {
-      for (const d of stranded) {
+      for (const d of toSettle) {
         try {
-          const seed = await this.prisma.seed.findUniqueOrThrow({ where: { id: d.seedId } });
-          this.current = {
-            id: d.id,
-            drawIndex: d.drawIndex ?? BigInt(0),
-            seedId: seed.id,
-            serverSeed: seed.serverSeed ?? '',
-            serverSeedHash: seed.serverSeedHash,
-            clientSeed: seed.clientSeed,
-            nonce: seed.nonce,
-            drawAt: Date.now(),
-            status: 'open',
-            ticketCount: 0,
-            ticketPriceScadBase: d.ticketPriceScadBase,
-            injectionScadBase: d.injectionScadBase,
-            rolloverScadBase: d.rolloverScadBase,
-            salesScadBase: BigInt(0),
-            potLamports: BigInt(0),
-            commitTxSignature: null,
-            targetSlot: d.targetSlot ?? null,
-          };
+          this.current = await this.rebuildDraw(d);
           await this.drawAndSettle();
           this.logger.log(`lottery recovery: draw ${d.id} settled`);
         } catch (e) {
@@ -270,6 +272,78 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.recovering = false;
     }
+
+    if (!live) return false;
+    try {
+      this.current = await this.rebuildDraw(live);
+    } catch (e) {
+      this.logger.error(
+        `lottery recovery could not resume draw ${live.id}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return false;
+    }
+    this.armDrawTimer(this.current.drawAt);
+    this.logger.log(
+      `lottery recovery: resumed draw ${live.id} (${this.current.ticketCount} tickets), ` +
+        `draws at ${new Date(this.current.drawAt).toISOString()}`,
+    );
+    return true;
+  }
+
+  /**
+   * Rebuild the in-memory draw from its DB row. Tallies come from the tickets
+   * themselves, the same source the settle uses, so a resumed draw's snapshot
+   * matches what it will actually pay out.
+   */
+  private async rebuildDraw(d: {
+    id: string;
+    drawIndex: bigint | null;
+    seedId: string;
+    injectionScadBase: bigint;
+    rolloverScadBase: bigint;
+    ticketPriceScadBase: bigint;
+    targetSlot: bigint | null;
+    commitTxSignature: string | null;
+    drawAt: Date;
+  }): Promise<CurrentDraw> {
+    const [seed, tally] = await Promise.all([
+      this.prisma.seed.findUniqueOrThrow({ where: { id: d.seedId } }),
+      this.prisma.lotteryTicket.aggregate({
+        where: { drawId: d.id },
+        _count: { _all: true },
+        _sum: { costScadBase: true, costLamports: true },
+      }),
+    ]);
+    return {
+      id: d.id,
+      drawIndex: d.drawIndex ?? BigInt(0),
+      seedId: seed.id,
+      serverSeed: seed.serverSeed ?? '',
+      serverSeedHash: seed.serverSeedHash,
+      clientSeed: seed.clientSeed,
+      nonce: seed.nonce,
+      drawAt: d.drawAt.getTime(),
+      status: 'open',
+      ticketCount: tally._count._all,
+      ticketPriceScadBase: d.ticketPriceScadBase,
+      injectionScadBase: d.injectionScadBase,
+      rolloverScadBase: d.rolloverScadBase,
+      salesScadBase: tally._sum.costScadBase ?? BigInt(0),
+      potLamports: tally._sum.costLamports ?? BigInt(0),
+      commitTxSignature: d.commitTxSignature,
+      targetSlot: d.targetSlot ?? null,
+    };
+  }
+
+  /** One draw timer at a time: re-arming always clears the previous one. */
+  private armDrawTimer(drawAt: number): void {
+    if (this.drawTimer) clearTimeout(this.drawTimer);
+    this.drawTimer = setTimeout(
+      () => {
+        void this.drawAndSettle();
+      },
+      Math.max(0, drawAt - Date.now()),
+    );
   }
 
   // ---------- Public API consumed by LotteryService ----------
@@ -451,12 +525,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       drawAt,
     });
 
-    this.drawTimer = setTimeout(
-      () => {
-        void this.drawAndSettle();
-      },
-      Math.max(0, drawAt - Date.now()),
-    );
+    this.armDrawTimer(drawAt);
   }
 
   /** Dev/demo: resolve the current draw immediately (cancels the timer). */

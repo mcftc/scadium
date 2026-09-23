@@ -126,6 +126,58 @@ describe('round recovery on boot (integration, real Postgres)', () => {
     ).not.toBe('open');
   });
 
+  it('lottery (H8): an open draw that is NOT due survives a boot — resumed, then drawn on time', async () => {
+    // Clear any open draw a previous case left, so "the newest not-yet-due draw"
+    // is unambiguously ours.
+    await prisma.lotteryDraw.updateMany({ where: { status: 'open' }, data: { status: 'drawn' } });
+    const seed = await makeSeed();
+    const drawAt = new Date(Date.now() + 1_500);
+    const draw = await prisma.lotteryDraw.create({
+      data: {
+        seedId: seed.id,
+        nonce: 0,
+        status: 'open',
+        drawIndex: BigInt(Date.now()),
+        drawAt,
+        ticketPriceScadBase: ticketPriceScadBase(),
+      },
+    });
+    const u = await makeUser(0n);
+    for (let i = 0; i < 3; i += 1) {
+      await prisma.lotteryTicket.create({
+        data: {
+          drawId: draw.id,
+          userId: u.id,
+          digits: [i, 2, 3, 4, 5, 6],
+          costLamports: 1_000n,
+          costScadBase: ticketPriceScadBase(),
+        },
+      });
+    }
+
+    const engine = makeLotteryEngine();
+    try {
+      // Boot: the draw is not due, so it is resumed rather than drawn early.
+      expect(await recover(engine, 'recoverStrandedDraws')).toBe(true);
+      expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: draw.id } })).status).toBe(
+        'open',
+      );
+      const snap = engine.snapshot();
+      expect(snap.drawId).toBe(draw.id);
+      expect(snap.drawAt).toBe(drawAt.getTime());
+      expect(snap.ticketCount).toBe(3);
+      expect(snap.potLamports).toBe('3000');
+
+      // …and its re-armed timer draws it at the scheduled time.
+      await new Promise((r) => setTimeout(r, 2_500));
+      expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: draw.id } })).status).toBe(
+        'drawn',
+      );
+    } finally {
+      await engine.onModuleDestroy();
+    }
+  });
+
   it('blackjack: unfinished round → seat stakes refunded with ledger, table back to waiting', async () => {
     const table = await prisma.blackjackTable.create({
       data: {
