@@ -12,5 +12,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  // node:test specs run under Node (`node --test worker/budget.test.ts`), not workerd.
+  "exclude": ["**/*.test.ts"]
 }

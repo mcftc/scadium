@@ -32,6 +32,24 @@ const DEFAULT_SWEEP_ATTEMPTS = 4;
 const DEFAULT_SWEEP_BACKOFF_MS = 30_000;
 
 /**
+ * Paths still served once the daily budget is spent (comma-separated prefixes,
+ * overridable with BUDGET_EXEMPT_PATHS). Health probes keep the service
+ * observable; crash cash-out lets a player who is riding a round when the cap
+ * trips still take their winnings while the container drains that round.
+ */
+/** Headroom past the worst-case sweep (every attempt backing off) — a cold boot plus the jobs. */
+const SWEEP_GRACE_MS = 120_000;
+
+const DEFAULT_BUDGET_EXEMPT_PATHS = '/health,/api/v1/crash/cashout';
+
+function budgetExempt(pathname: string, env: Env): boolean {
+  return (env.BUDGET_EXEMPT_PATHS ?? DEFAULT_BUDGET_EXEMPT_PATHS)
+    .split(',')
+    .map((p) => p.trim())
+    .some((p) => p !== '' && pathname.startsWith(p));
+}
+
+/**
  * Resolve the single authoritative container instance.
  *
  * Deliberately uses the namespace directly rather than the library's
@@ -66,9 +84,10 @@ async function runScheduledSweep(env: Env, secret: string): Promise<void> {
   // BLOCKED by it: the economy jobs are period-keyed, so a skipped hour is a
   // permanent gap in airdrops/dividends/block-mining, not something that catches
   // up later. Recording without gating keeps `DAILY_ACTIVE_SECONDS` an honest
-  // total rather than a visitors-only figure.
+  // total rather than a visitors-only figure. The sweep window stops the budget
+  // heartbeat from stopping the container mid-sweep on an over-budget day.
   try {
-    await apiContainer(env).consumeActiveBudget(true);
+    await apiContainer(env).consumeActiveBudget(true, attempts * backoffMs + SWEEP_GRACE_MS);
   } catch {
     // Accounting is best-effort; never let it stop the jobs running.
   }
@@ -85,10 +104,14 @@ async function runScheduledSweep(env: Env, secret: string): Promise<void> {
         );
         const body = await response.text();
         if (response.ok) {
-          console.log(`cron: job sweep ok on attempt ${attempt} after ${Date.now() - started}ms: ${body}`);
+          console.log(
+            `cron: job sweep ok on attempt ${attempt} after ${Date.now() - started}ms: ${body}`,
+          );
           return;
         }
-        console.warn(`cron: sweep attempt ${attempt}/${attempts} failed (${response.status}): ${body.slice(0, 200)}`);
+        console.warn(
+          `cron: sweep attempt ${attempt}/${attempts} failed (${response.status}): ${body.slice(0, 200)}`,
+        );
       } catch (e) {
         console.warn(
           `cron: sweep attempt ${attempt}/${attempts} threw: ${e instanceof Error ? e.message : String(e)}`,
@@ -104,7 +127,9 @@ async function runScheduledSweep(env: Env, secret: string): Promise<void> {
         await apiContainer(env).stop();
         console.log('cron: container stopped');
       } catch (e) {
-        console.warn(`cron: could not stop container: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(
+          `cron: could not stop container: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
   }
@@ -173,11 +198,11 @@ export default {
     // games go offline rather than quietly costing money — that is the deliberate
     // trade while the project is pre-launch.
     //
-    // Health probes are exempt so the service stays observable when capped.
+    // Exempt paths (health probes, crash cash-out) are served even when capped.
     if (!url.pathname.startsWith('/health')) {
       try {
         const budget = await apiContainer(env).consumeActiveBudget(true);
-        if (!budget.allowed) return offlineResponse(budget);
+        if (!budget.allowed && !budgetExempt(url.pathname, env)) return offlineResponse(budget);
       } catch (e) {
         // Fail OPEN. This is a cost guard, not a security control: a transient
         // Durable Object error must not take the site down. Logged loudly so the

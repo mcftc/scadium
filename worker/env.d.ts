@@ -33,6 +33,10 @@ export interface Env {
    * This is what keeps container billing and Neon's free compute-hours bounded.
    */
   DAILY_ACTIVE_SECONDS?: string;
+  /** Seconds between budget heartbeats (default 60) — the most the cap can overrun by. */
+  BUDGET_HEARTBEAT_SECONDS?: string;
+  /** Comma-separated path prefixes served even past the cap (default: health + crash cash-out). */
+  BUDGET_EXEMPT_PATHS?: string;
   /** Allowed browser origin for the API's CORS. */
   CORS_ORIGIN?: string;
   /**

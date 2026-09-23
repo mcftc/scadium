@@ -1,6 +1,16 @@
 import { Container } from '@cloudflare/containers';
 import type { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env';
+import {
+  budgetState,
+  chargeHeartbeat,
+  forToday,
+  shouldStop,
+  type BudgetState,
+  type StoredBudget,
+} from './budget';
+
+export type { BudgetState } from './budget';
 
 /** Port the NestJS API listens on inside the image (matches `EXPOSE 4000`). */
 const CONTAINER_PORT = 4000;
@@ -105,48 +115,77 @@ export class ScadiumApi extends Container<Env> {
   }
 
   /**
-   * Account for container active time against a per-UTC-day budget.
+   * The per-UTC-day active-time budget: read it, and make sure its heartbeat is
+   * running.
    *
    * Why this exists: container billing and Neon's free compute-hours both track
    * how long this thing is awake, and a handful of visitors (or one crawler)
-   * could otherwise keep it running all day. This puts a hard ceiling on it —
-   * the owner's stated requirement is "active at most ~1 hour a day for now",
-   * with the live games simply offline outside that.
+   * could otherwise keep it running all day. The owner's stated requirement is
+   * "active at most ~1 hour a day for now", with the live games offline outside it.
    *
-   * Accounting is deliberately conservative. Each call adds the time since the
-   * previous call, clamped to the sleep window (a longer gap means the container
-   * had already slept, so only the cold start counts). A first call in a new
-   * window is charged BOOT_COST_SECONDS because waking it really does burn that.
+   * What is charged is RUNNING time, sampled by `budgetHeartbeat` — not the gaps
+   * between HTTP requests. An open WebSocket keeps the container awake with no
+   * requests at all (the library counts it as in-flight), which is how the old
+   * request-gap accounting let one idle tab run the container nearly all day.
    *
-   * `record` is false for a read-only check (used by the cron, which must run
-   * regardless) and true when a visitor request is about to touch the container.
+   * `record` is true when a request is about to touch the container (it starts
+   * the heartbeat chain if none is running). `sweepMs` > 0 marks a cron sweep in
+   * progress for that long, which the budget must never stop mid-run.
    */
-  async consumeActiveBudget(record: boolean): Promise<BudgetState> {
+  async consumeActiveBudget(record: boolean, sweepMs = 0): Promise<BudgetState> {
     const capSeconds = Number(this.env.DAILY_ACTIVE_SECONDS ?? DEFAULT_DAILY_ACTIVE_SECONDS);
-    const windowSeconds = parseMinutes(this.env.SLEEP_AFTER ?? DEFAULT_SLEEP_AFTER);
     const now = Date.now();
-    const today = new Date(now).toISOString().slice(0, 10);
-
-    const stored = (await this.ctx.storage.get<StoredBudget>(BUDGET_KEY)) ?? null;
-    const fresh = !stored || stored.day !== today;
-    const state: StoredBudget = fresh
-      ? { day: today, usedSeconds: 0, lastSeenMs: 0 }
-      : { ...stored };
+    let budget = forToday(await this.ctx.storage.get<StoredBudget>(BUDGET_KEY), now);
 
     if (record) {
-      const gapSeconds = state.lastSeenMs ? (now - state.lastSeenMs) / 1000 : Infinity;
-      state.usedSeconds +=
-        gapSeconds <= windowSeconds ? Math.max(0, gapSeconds) : BOOT_COST_SECONDS;
-      state.lastSeenMs = now;
-      await this.ctx.storage.put(BUDGET_KEY, state);
+      let changed = false;
+      if (sweepMs > 0) {
+        budget = { ...budget, sweepUntilMs: now + sweepMs };
+        changed = true;
+      }
+      if ((await this.listSchedules(HEARTBEAT_CALLBACK)).length === 0) {
+        budget = { ...budget, lastBeatMs: now };
+        changed = true;
+        await this.schedule(heartbeatSeconds(this.env), HEARTBEAT_CALLBACK);
+      }
+      if (changed) await this.ctx.storage.put(BUDGET_KEY, budget);
     }
 
-    return {
-      allowed: state.usedSeconds < capSeconds,
-      usedSeconds: Math.round(state.usedSeconds),
-      capSeconds,
-      day: state.day,
-    };
+    return budgetState(budget, capSeconds);
+  }
+
+  /**
+   * Heartbeat (scheduled through the library's `schedule()`, which runs inside
+   * its own alarm loop). Charges the running time since the last beat, stops
+   * the container once the day's budget is spent — SIGTERM, so the API drains
+   * the crash round in flight — and re-schedules itself while the container
+   * runs. Must never throw: this is library-driven code on the lifecycle path.
+   */
+  async budgetHeartbeat(): Promise<void> {
+    try {
+      const capSeconds = Number(this.env.DAILY_ACTIVE_SECONDS ?? DEFAULT_DAILY_ACTIVE_SECONDS);
+      const now = Date.now();
+      const running = this.ctx.container?.running ?? false;
+      const intervalSeconds = heartbeatSeconds(this.env);
+      const budget = chargeHeartbeat(
+        forToday(await this.ctx.storage.get<StoredBudget>(BUDGET_KEY), now),
+        now,
+        running,
+        2 * intervalSeconds * 1000,
+      );
+      await this.ctx.storage.put(BUDGET_KEY, budget);
+      if (!running) return; // chain ends; the next visitor request restarts it
+      if (shouldStop(budget, capSeconds, now)) {
+        console.warn(
+          `daily active-time budget spent (${Math.round(budget.usedSeconds)}s of ${capSeconds}s) — stopping the container`,
+        );
+        await this.stop();
+        return;
+      }
+      await this.schedule(intervalSeconds, HEARTBEAT_CALLBACK);
+    } catch (e) {
+      console.error(`budget heartbeat failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 }
 
@@ -156,8 +195,19 @@ const BUDGET_KEY = 'scadium:daily-active-budget';
 /** Default ceiling on container active time per UTC day. */
 const DEFAULT_DAILY_ACTIVE_SECONDS = 3600;
 
-/** What a cold start really costs, charged when the container had been asleep. */
-const BOOT_COST_SECONDS = 40;
+/** Method name the library's scheduler calls for the budget heartbeat. */
+const HEARTBEAT_CALLBACK = 'budgetHeartbeat';
+
+/**
+ * Heartbeat period, in seconds. 60s bounds how far past the cap the container
+ * can run (one interval) while costing one storage write a minute.
+ */
+const DEFAULT_BUDGET_HEARTBEAT_SECONDS = 60;
+
+function heartbeatSeconds(env: Env): number {
+  const n = Number(env.BUDGET_HEARTBEAT_SECONDS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_BUDGET_HEARTBEAT_SECONDS;
+}
 
 /**
  * How long to wait for an explicit start before giving up and letting the
@@ -193,36 +243,6 @@ function unwrap(result: Response | Error): Response {
     JSON.stringify({ statusCode: 503, error: 'Service Unavailable', message: result.message }),
     { status: 503, headers: { 'content-type': 'application/json', 'retry-after': '30' } },
   );
-}
-
-interface StoredBudget {
-  day: string;
-  usedSeconds: number;
-  lastSeenMs: number;
-}
-
-export interface BudgetState {
-  allowed: boolean;
-  usedSeconds: number;
-  capSeconds: number;
-  day: string;
-}
-
-/**
- * Parse a sleepAfter expression to seconds: "5m", "90s", "2h".
- *
- * Only used to clamp budget accounting, never to configure the container itself,
- * so precision here is not load-bearing. A bare number is read as minutes (a
- * bare *numeric type* is passed through as seconds, matching the library); with
- * the configured "5m" neither path is reachable, and an unparseable value falls
- * back to 5 minutes. Erring long only makes accounting more conservative.
- */
-function parseMinutes(expr: string | number): number {
-  if (typeof expr === 'number') return expr;
-  const m = /^(\d+)\s*([smh])?$/.exec(expr.trim());
-  if (!m) return 300;
-  const n = Number(m[1]);
-  return m[2] === 'h' ? n * 3600 : m[2] === 's' ? n : n * 60;
 }
 
 /**
