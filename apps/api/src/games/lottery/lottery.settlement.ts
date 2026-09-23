@@ -43,7 +43,6 @@ export function splitBracketPrizes(
   const winnerShare = totalPool - burn;
   const allocated = bracketSlices.reduce((a, c) => a + c, BigInt(0));
   const splitResidual = winnerShare - allocated;
-  const nextRollover =
-    bracketRollover.reduce((a, c) => a + c, BigInt(0)) + splitResidual;
+  const nextRollover = bracketRollover.reduce((a, c) => a + c, BigInt(0)) + splitResidual;
   return { bracketSlices, perWinner, bracketRollover, burn, nextRollover };
 }

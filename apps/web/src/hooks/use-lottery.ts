@@ -331,11 +331,23 @@ export function useBuyBulkTickets(snap: LotterySnapshot | null) {
         return results;
       }
 
-      // Play-money fallback (chain disabled).
+      // Play-money (chain disabled): ONE request per purchase, charged once at
+      // the bulk price the slip shows. Looping single-ticket POSTs paid the full
+      // unit price per ticket and ran into the bet throttle part-way through.
+      const max = snap?.config.maxTicketsPerPurchase ?? tickets.length;
       const results = [];
-      for (const t of tickets) {
-        results.push(await api('/lottery/ticket', { method: 'POST', body: t, token }));
-        onProgress?.(++done);
+      for (let i = 0; i < tickets.length; i += max) {
+        const batch = tickets.slice(i, i + max);
+        results.push(
+          await api<{ count: number }>('/lottery/ticket', {
+            method: 'POST',
+            body: { tickets: batch.map((t) => t.digits) },
+            token,
+            headers: { 'Idempotency-Key': crypto.randomUUID() },
+          }),
+        );
+        done += batch.length;
+        onProgress?.(done);
       }
       return results;
     },
@@ -358,6 +370,8 @@ export function useBulkPrice(count: number) {
         totalScadBase: string;
         totalScad: number;
         discountBps: number;
+        /** What a play-money purchase of `count` takes from the SOL balance. */
+        totalLamports: string;
       }>(`/lottery/price?count=${count}`),
     staleTime: 60_000,
   });

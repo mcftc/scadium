@@ -25,9 +25,7 @@ export function PrizeTable({ snap }: { snap: LotterySnapshot | null }) {
     const slice = pool * pctOfTotal;
     const jackpot = i === breakdown.length - 1;
     return {
-      label: jackpot
-        ? `Match all ${breakdown.length} — Jackpot`
-        : `Match first ${i + 1}`,
+      label: jackpot ? `Match all ${breakdown.length} — Jackpot` : `Match first ${i + 1}`,
       pct: `${(pctOfTotal * 100).toFixed(pctOfTotal * 100 < 1 ? 2 : 0)}%`,
       value: pool > 0 ? fmtScad(slice) : `${(pctOfTotal * 100).toFixed(0)}% of pool`,
       jackpot,

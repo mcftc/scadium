@@ -132,9 +132,22 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
             0–9) on each ticket — or hit Quick Pick.
           </li>
           <li>
-            Each ticket is paid in <span className="text-foreground font-semibold">$SCAD</span> from
-            your wallet, with a bulk discount the more you buy. Buy as many as you like — beyond the
-            manual cards the rest are random quick-picks.
+            {snap?.chain.enabled ? (
+              <>
+                Each ticket is paid in <span className="text-foreground font-semibold">$SCAD</span>{' '}
+                from your wallet
+              </>
+            ) : (
+              // Play-money mode charges the SOL play balance, and prizes land there too.
+              <>
+                Tickets are priced in $SCAD and paid from your{' '}
+                <span className="text-foreground font-semibold">SOL play balance</span> (prizes are
+                credited there too)
+              </>
+            )}
+            , with a bulk discount the more you buy — up to{' '}
+            {snap?.config.maxTicketsPerPurchase ?? 100} per purchase; beyond the manual cards the
+            rest are random quick-picks.
           </li>
           <li>One draw per day at 12:00 (UTC+3).</li>
           <li>

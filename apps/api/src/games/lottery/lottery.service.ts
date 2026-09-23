@@ -46,6 +46,26 @@ export class LotteryService {
       totalScadBase: total.toString(),
       totalScad: Number(total) / SCAD_BASE,
       discountBps,
+      // What a play-money purchase of N actually takes from the SOL balance —
+      // the same figure buyTickets debits, so the button can quote it exactly.
+      totalLamports: this.batchCharge(n).debitLamports.toString(),
+    };
+  }
+
+  /**
+   * The charge for a batch of N: the bulk-discounted total split equally per
+   * ticket (the split the on-chain confirm records too). Flooring leaves < N
+   * base units of dust in the buyer's favour, so the debit is exactly the sum
+   * of the tickets' recorded costs.
+   */
+  private batchCharge(n: number) {
+    const perTicketScad = bulkDiscountTotal(this.engine.ticketPriceScadBase(), n) / BigInt(n);
+    const perTicketLamports = scadBaseToLamports(perTicketScad);
+    return {
+      perTicketScad,
+      perTicketLamports,
+      debitScad: perTicketScad * BigInt(n),
+      debitLamports: perTicketLamports * BigInt(n),
     };
   }
 
@@ -181,13 +201,18 @@ export class LotteryService {
       const user = await tx.user.findUnique({ where: { id: params.userId } });
       if (!user) throw new NotFoundException('User not found');
       if (user.banned) throw new ForbiddenException('Account banned');
-      if (user.totalWagered - user.freeTicketBaselineWagered < per) {
+      // Spend the earned ticket with ONE guarded update: it only matches while a
+      // whole ticket's worth of wager is still unspent. A read-then-increment
+      // let ~20 parallel requests each pass the same stale read and redeem one
+      // earned ticket twenty times. (Raw SQL: Prisma cannot compare two columns.)
+      const spent = await tx.$executeRaw`
+        UPDATE "User" SET "freeTicketBaselineWagered" = "freeTicketBaselineWagered" + ${per}
+        WHERE "id" = ${params.userId}::uuid
+          AND "totalWagered" - "freeTicketBaselineWagered" >= ${per}
+      `;
+      if (spent === 0) {
         throw new BadRequestException('No free tickets earned yet — wager 1 SOL to earn one');
       }
-      await tx.user.update({
-        where: { id: params.userId },
-        data: { freeTicketBaselineWagered: { increment: per } },
-      });
       const created = await tx.lotteryTicket.create({
         data: {
           drawId: open.id,
@@ -223,12 +248,21 @@ export class LotteryService {
     return { signature: sig, amountScadBase: amount.toString() };
   }
 
-  async buyTicket(params: { userId: string; digits: number[] }, key?: string) {
-    // Off-chain, a ticket is debited from the SOL play balance (below), so its
-    // lamport cost must count against the daily wager/loss limit (H20) — not 0.
-    const priceScad = this.engine.ticketPriceScadBase();
-    const priceLamports = scadBaseToLamports(priceScad);
-    await this.rg.assertCanWager(params.userId, priceLamports);
+  /**
+   * Buy one or more tickets off-chain (play money), charged ONCE at the
+   * advertised bulk price — the same `bulkDiscountTotal` the on-chain batch
+   * transfer uses. The web used to loop single-ticket POSTs: every ticket paid
+   * the full unit price (no discount, while the button showed the bulk total)
+   * and a 50-ticket buy ran into the 30-per-10s throttle part-way through.
+   */
+  async buyTickets(params: { userId: string; picks: number[][] }, key?: string) {
+    const n = params.picks.length;
+    if (n < 1 || n > LOTTERY.MAX_TICKETS_PER_PURCHASE) {
+      throw new BadRequestException(
+        `Buy between 1 and ${LOTTERY.MAX_TICKETS_PER_PURCHASE} tickets at a time`,
+      );
+    }
+    params.picks.forEach((digits) => this.validateDigits(digits));
     // When the on-chain lottery is live, the play-money path is closed —
     // tickets must be real wallet-signed $SCAD purchases (POST /confirm).
     if (this.chain.lotteryEnabled) {
@@ -236,7 +270,11 @@ export class LotteryService {
         'Tickets are bought on-chain with $SCAD — sign the purchase with your wallet',
       );
     }
-    this.validateDigits(params.digits);
+
+    const { perTicketScad, perTicketLamports, debitScad, debitLamports } = this.batchCharge(n);
+    // Off-chain the purchase is debited from the SOL play balance, so its
+    // lamport cost counts against the daily wager/loss limit (H20).
+    await this.rg.assertCanWager(params.userId, debitLamports);
 
     const open = this.engine.getOpenDraw();
     if (!open) {
@@ -247,33 +285,33 @@ export class LotteryService {
     if (!user) throw new NotFoundException('User not found');
     if (user.banned) throw new ForbiddenException('Account banned');
 
-    // Debit + create the ticket atomically. The conditional debit enforces
+    // Debit + create the tickets atomically. The conditional debit enforces
     // funds and closes the double-spend race.
     const outcome = await this.prisma.$transaction(async (tx) => {
       const replay = await claimIdempotency(tx, params.userId, 'lottery_buy', key);
       if (replay) {
-        return { response: replay as ReturnType<typeof this.serializeTicket>, replayed: true };
+        return { response: replay as ReturnType<typeof this.serializePurchase>, replayed: true };
       }
 
-      await applyBalanceDelta(tx, params.userId, -priceLamports, {
+      await applyBalanceDelta(tx, params.userId, -debitLamports, {
         reason: 'lottery_ticket',
         refType: 'LotteryDraw',
         refId: open.id,
       });
-      const ticket = await tx.lotteryTicket.create({
-        data: {
+      const tickets = await tx.lotteryTicket.createManyAndReturn({
+        data: params.picks.map((digits) => ({
           drawId: open.id,
           userId: params.userId,
-          digits: params.digits,
-          costLamports: priceLamports,
-          costScadBase: priceScad,
-        },
+          digits,
+          costLamports: perTicketLamports,
+          costScadBase: perTicketScad,
+        })),
       });
 
       // #215 — close the late-buy orphan window (see jackpot.service for the full
       // argument). getOpenDraw() above is pre-tx and races the settle: a draw can
       // claim the draw terminal between that check and this commit, orphaning the
-      // debit + ticket (no Bet, no payout, no refund). A guarded no-op write on
+      // debit + tickets (no Bet, no payout, no refund). A guarded no-op write on
       // the draw row makes the whole tx CONDITIONAL on the draw still being 'open'
       // at commit — it row-locks the same draw row the settle's claim updateMany
       // flips (open→drawn), so they serialize: a claimed draw rejects this buy and
@@ -281,14 +319,27 @@ export class LotteryService {
       // INSIDE its serializable tx after the claim and is settled.
       await this.assertDrawStillOpen(tx, open.id);
 
-      const response = this.serializeTicket(ticket);
+      const response = this.serializePurchase(tickets, debitScad, debitLamports);
       await storeIdempotency(tx, params.userId, 'lottery_buy', key, response);
       return { response, replayed: false };
     });
 
-    if (!outcome.replayed) await this.engine.onTicketSold(priceScad, priceLamports, 1);
+    if (!outcome.replayed) await this.engine.onTicketSold(debitScad, debitLamports, n);
 
     return outcome.response;
+  }
+
+  private serializePurchase(
+    tickets: { id: string; drawId: string; digits: number[] }[],
+    totalScadBase: bigint,
+    totalLamports: bigint,
+  ) {
+    return {
+      count: tickets.length,
+      totalScadBase: totalScadBase.toString(),
+      totalLamports: totalLamports.toString(),
+      tickets: tickets.map((t) => ({ id: t.id, drawId: t.drawId, digits: t.digits })),
+    };
   }
 
   /**
@@ -307,22 +358,6 @@ export class LotteryService {
     if (count === 0) {
       throw new BadRequestException('Draw just closed — your ticket was not bought');
     }
-  }
-
-  private serializeTicket(ticket: {
-    id: string;
-    drawId: string;
-    digits: number[];
-    costScadBase: bigint;
-    costLamports: bigint;
-  }) {
-    return {
-      id: ticket.id,
-      drawId: ticket.drawId,
-      digits: ticket.digits,
-      costScadBase: ticket.costScadBase.toString(),
-      costLamports: ticket.costLamports.toString(),
-    };
   }
 
   /**

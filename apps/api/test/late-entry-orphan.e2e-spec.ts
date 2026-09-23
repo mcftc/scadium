@@ -214,7 +214,7 @@ describe('#215 late-entry orphan window (integration, real Postgres)', () => {
     const svc = new LotteryService(prisma as never, engine as never, offChain, rgStub);
 
     await expect(
-      svc.buyTicket({ userId: latecomer.id, digits: [1, 2, 3, 4, 5, 6] }),
+      svc.buyTickets({ userId: latecomer.id, picks: [[1, 2, 3, 4, 5, 6]] }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(

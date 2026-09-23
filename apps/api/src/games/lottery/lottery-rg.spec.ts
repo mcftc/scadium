@@ -24,7 +24,7 @@ describe('LotteryService.buyTicket — RG gate sees the ticket cost (unit, H20)'
 
     const svc = new LotteryService(prisma, engine, chain, rg);
 
-    await expect(svc.buyTicket({ userId: 'u', digits: [1, 2, 3, 4, 5, 6] })).rejects.toThrow();
+    await expect(svc.buyTickets({ userId: 'u', picks: [[1, 2, 3, 4, 5, 6]] })).rejects.toThrow();
     expect(assertCanWager).toHaveBeenCalledWith('u', expectedLamports);
     expect(expectedLamports).toBeGreaterThan(0n); // guards against a 0n regression
   });

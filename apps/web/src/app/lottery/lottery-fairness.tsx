@@ -75,7 +75,9 @@ function SeedRow({ label, value }: { label: string; value: string }) {
       <div className="text-[9px] uppercase tracking-wider text-foreground-muted/70 mb-0.5">
         {label}
       </div>
-      <div className="font-mono text-[10px] break-all leading-tight text-foreground/90">{value}</div>
+      <div className="font-mono text-[10px] break-all leading-tight text-foreground/90">
+        {value}
+      </div>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { ConnectButton } from '@/components/wallet/connect-button';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { useAuthStore } from '@/store/auth-store';
 import { cn } from '@/lib/cn';
+import { formatSol } from '@/lib/format';
 import {
   useLottery,
   useBuyBulkTickets,
@@ -98,6 +99,9 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
 
   const maxManualRows = snap?.config.maxManualRows ?? 10;
   const perTx = snap?.config.batchTicketsPerTx ?? 12;
+  // One purchase buys at most this many — the price the slip quotes is for
+  // exactly that purchase, so the input may not go past it.
+  const maxPerPurchase = snap?.config.maxTicketsPerPurchase ?? 100;
 
   function randomPicks(): TicketPicks {
     return { digits: randomDigits() };
@@ -137,7 +141,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
   function setQty(n: number) {
     setError(null);
     setNotice(null);
-    setQuantity(Math.max(1, Math.floor(n)));
+    setQuantity(Math.min(maxPerPurchase, Math.max(1, Math.floor(n))));
   }
 
   function updateRow(i: number, patch: (t: TicketRow) => TicketRow) {
@@ -159,12 +163,16 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
   // the undiscounted unit × quantity until the price query resolves.
   const bulkPrice = useBulkPrice(quantity);
   const totalScad = bulkPrice.data?.totalScad ?? quantity * priceScad;
+  // Play money is charged in SOL: quote what actually leaves the balance.
+  const totalSol = bulkPrice.data ? formatSol(bulkPrice.data.totalLamports, 4) : null;
+  const totalLabel =
+    onChain || !totalSol ? `${totalScad.toLocaleString()} SCAD` : `${totalSol} SOL`;
   const txCount = Math.ceil(quantity / perTx);
 
   /**
    * Buy everything in one go: the visible cards verbatim plus
    * (quantity − cards) auto-generated random tickets deduped against the
-   * manual picks and each other. No quantity cap (bc.game parity).
+   * manual picks and each other, up to one purchase's cap.
    */
   async function buyAll() {
     setError(null);
@@ -320,7 +328,12 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
             <div className="flex items-center justify-between border-t border-border pt-2 text-xs">
               <span className="text-foreground-muted">Total Bet Amount</span>
               <span className="font-mono font-bold text-foreground">
-                {totalScad.toLocaleString()} SCAD
+                {totalLabel}
+                {!onChain && totalSol && (
+                  <span className="ml-1 font-normal text-foreground-muted">
+                    (≈{totalScad.toLocaleString()} SCAD)
+                  </span>
+                )}
               </span>
             </div>
 
@@ -375,7 +388,7 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
                     disabled={!allComplete || busy}
                   >
                     <Ticket className="h-5 w-5" />
-                    {`Buy ${quantity} ticket${quantity === 1 ? '' : 's'} · ${totalScad.toLocaleString()} SCAD`}
+                    {`Buy ${quantity} ticket${quantity === 1 ? '' : 's'} · ${totalLabel}`}
                   </Button>
                 )}
                 {onChain && txCount > 1 && !bulkProgress && (

@@ -100,8 +100,8 @@ export function MyBets() {
           />
         </div>
         <p className="mt-2 text-[10px] text-foreground-muted">
-          Earn 1 free ticket for every 1 SOL wagered across all games —{' '}
-          {Math.round(progress * 100)}% of the way to your next one.
+          Earn 1 free ticket for every 1 SOL wagered across all games — {Math.round(progress * 100)}
+          % of the way to your next one.
         </p>
       </Card>
 

@@ -17,7 +17,8 @@ import { IsString, Length } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CurrentUser, type AuthContextLike } from '../../auth/current-user.decorator';
 import { LotteryService } from './lottery.service';
-import { BuyTicketDto } from './dto/buy-ticket.dto';
+import { BuyTicketDto, TicketDigitsDto } from './dto/buy-ticket.dto';
+import { LOTTERY } from '@scadium/shared';
 
 class ConfirmTicketDto {
   @IsString()
@@ -45,7 +46,7 @@ export class LotteryController {
   @Get('price')
   @ApiOperation({ summary: 'Bulk-discounted $SCAD price for buying N tickets this round' })
   price(@Query('count') count?: string) {
-    const n = Math.max(1, Math.min(100, Number(count) || 1));
+    const n = Math.max(1, Math.min(LOTTERY.MAX_TICKETS_PER_PURCHASE, Number(count) || 1));
     return this.lottery.bulkPrice(n);
   }
 
@@ -79,24 +80,23 @@ export class LotteryController {
     @Query('limit') limit?: string,
     @Query('won') won?: string,
   ) {
-    return this.lottery.myTickets(
-      user.userId,
-      parseLimit(limit, 20, 50),
-      won === 'true',
-    );
+    return this.lottery.myTickets(user.userId, parseLimit(limit, 20, 50), won === 'true');
   }
 
   @Post('ticket')
   @Throttle({ default: BET_THROTTLE }) // ticket-flood cap (#34)
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Buy a ticket for the current draw (6 digits 0-9, paid in $SCAD)' })
+  @ApiOperation({
+    summary: 'Buy one ticket (`digits`) or a batch (`tickets`) at the bulk price, off-chain',
+  })
   buyTicket(
     @CurrentUser() user: AuthContextLike,
     @Body() dto: BuyTicketDto,
     @Headers('idempotency-key') key?: string,
   ) {
-    return this.lottery.buyTicket({ userId: user.userId, digits: dto.digits }, key);
+    const picks = dto.tickets ?? (dto.digits ? [dto.digits] : []);
+    return this.lottery.buyTickets({ userId: user.userId, picks }, key);
   }
 
   @Post('confirm')
@@ -118,10 +118,11 @@ export class LotteryController {
   }
 
   @Post('ticket/free')
+  @Throttle({ default: BET_THROTTLE })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Spend one earned free ticket on your picks' })
-  useFreeTicket(@CurrentUser() user: AuthContextLike, @Body() dto: BuyTicketDto) {
+  useFreeTicket(@CurrentUser() user: AuthContextLike, @Body() dto: TicketDigitsDto) {
     return this.lottery.useFreeTicket({ userId: user.userId, digits: dto.digits });
   }
 

@@ -14,11 +14,7 @@ export function PlayerCell({ player }: { player: LotteryPlayer }) {
     <span className="inline-flex items-center gap-2 min-w-0">
       {player.avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={player.avatarUrl}
-          alt=""
-          className="h-6 w-6 shrink-0 rounded-full object-cover"
-        />
+        <img src={player.avatarUrl} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
       ) : (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-primary text-[10px] font-bold text-white">
           {name.slice(0, 1).toUpperCase()}
