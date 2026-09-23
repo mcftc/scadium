@@ -127,6 +127,7 @@ export class JackpotService {
     // Skip the engine update on replay — the original entry already registered it.
     if (!outcome.replayed) {
       await this.engine.onEntry({
+        roundId: open.id,
         userId: user.id,
         username: user.username,
         walletAddress: user.walletAddress,
@@ -165,7 +166,9 @@ export class JackpotService {
 
   async recent(limit = 10) {
     const rounds = await this.prisma.jackpotRound.findMany({
-      where: { status: { in: ['drawn', 'refunded'] } },
+      // Drawn rounds only: this feeds "Recent winners", and on a quiet site the
+      // refunded single-player rounds used to crowd every real win out of it.
+      where: { status: 'drawn' },
       orderBy: { drawnAt: 'desc' },
       take: limit,
       include: {

@@ -692,7 +692,10 @@ model JackpotRound {
   winner         User?              @relation("jackpotWinner", fields: [winnerId], references: [id])
   winningTicket  BigInt? // the drawn lamport index in [0, totalLamports)
   payoutLamports BigInt             @default(0) // amount paid to the winner (after edge)
-  closeAt        DateTime // when the open window ends and the draw runs
+  // When entries close and the draw runs. Null while the round waits for its
+  // first player; set to the solo deadline by the first entry and to the real
+  // countdown by the MIN_PLAYERS-th distinct player.
+  closeAt        DateTime?
   drawnAt        DateTime?
   createdAt      DateTime           @default(now())
 

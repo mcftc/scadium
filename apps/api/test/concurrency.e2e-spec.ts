@@ -136,7 +136,7 @@ describe('concurrency / money-safety (integration, real Postgres)', () => {
     setCurrentRound(engine, round.id, seed, bets);
 
     const result = await settle(engine);
-    expect(result).not.toBeNull();
+    expect(result).toMatchObject({ kind: 'settled' });
 
     // Exactly one row per participant — no duplicates from a re-entrant settle.
     for (const p of participants) {
@@ -182,7 +182,7 @@ describe('concurrency / money-safety (integration, real Postgres)', () => {
     setCurrentRound(engine, round.id, seed, bets);
 
     const result = await settle(engine);
-    expect(result).toBeNull(); // failure signalled → bust() won't advance the round
+    expect(result).toMatchObject({ kind: 'failed' }); // bust() hands it to recovery
 
     // All-or-nothing: the valid user's balance is untouched, no ledger rows.
     const validAfter = await prisma.user.findUniqueOrThrow({ where: { id: valid.id } });

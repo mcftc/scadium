@@ -86,8 +86,14 @@ function primeLottery(
   };
 }
 
+// `force`: these cases settle a round/draw that is deliberately NOT due yet —
+// the in-memory view stays "open" while the DB goes terminal, which is the race.
 const settle = (engine: unknown) =>
-  (engine as { drawAndSettle: () => Promise<void> }).drawAndSettle();
+  (
+    engine as {
+      drawAndSettle: (id?: string, opts?: { force?: boolean }) => Promise<boolean>;
+    }
+  ).drawAndSettle(undefined, { force: true });
 
 /** All ledger rows the user has for this round/draw ref (orphan detector). */
 async function ledgerFor(userId: string, refType: string, refId: string) {

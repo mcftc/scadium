@@ -106,7 +106,7 @@ describe('BalanceLedger projection (integration, real Postgres)', () => {
     };
 
     const result = await (engine as unknown as { settleRound: () => Promise<unknown> }).settleRound();
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'failed' });
 
     // The credit that would have been written for `valid` rolled back with the
     // tx — no orphan ledger rows, balance untouched.
@@ -141,7 +141,7 @@ describe('BalanceLedger projection (integration, real Postgres)', () => {
     };
 
     const result = await (engine as unknown as { settleRound: () => Promise<unknown> }).settleRound();
-    expect(result).not.toBeNull();
+    expect(result).toMatchObject({ kind: 'settled' });
 
     const col = (await prisma.user.findUniqueOrThrow({ where: { id: winner.id } })).playBalanceLamports;
     expect(col).toBe(2_000n);

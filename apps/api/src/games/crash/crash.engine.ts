@@ -25,8 +25,31 @@ import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service
 import { LiveFeedService } from '../../live/live-feed.service';
 import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
+import {
+  RoundTimers,
+  errMessage,
+  retryDelayMs,
+  roundLoopTuning,
+  settleTxOptions,
+  sleep,
+} from '../round-loop';
 
 type Phase = 'waiting' | 'running' | 'busted';
+
+type SettleJob = {
+  betId: string;
+  walletAddress: string;
+  stake: bigint;
+  payout: bigint;
+  multiplier: number;
+};
+
+/** How a settle ended — only `failed` falls back to the refunding recovery path. */
+type SettleOutcome =
+  | { kind: 'settled'; settleJobs: SettleJob[] }
+  | { kind: 'claim-lost' }
+  | { kind: 'abandoned' }
+  | { kind: 'failed' };
 
 // Leader election (#13/#85): only the lock holder drives the loop; others mirror
 // its public round state from Redis so `snapshot()` is consistent across pods.
@@ -38,6 +61,8 @@ const CRASH_ENTROPY_SLOT_DELTA = 35; // ~14s at 400ms/slot — must stay under B
 const CRASH_LOCK_KEY = 'lock:engine:crash';
 const CRASH_MIRROR_KEY = 'round:crash:current';
 const CRASH_LOCK_TTL_MS = 10_000;
+/** Shown to a player who bets while the server is finishing its last round. */
+const DRAINING_MESSAGE = 'The server is restarting — betting resumes in a moment';
 
 /** True when `e` is a Prisma unique-constraint violation (P2002). */
 function isUniqueViolation(e: unknown): boolean {
@@ -106,6 +131,17 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private mirrored: ReturnType<CrashEngine['buildSnapshot']> | null = null;
   private mirrorPoll: NodeJS.Timeout | null = null;
 
+  // Liveness (see round-loop.ts). Every loop timer lives in `timers`, so a
+  // resume cancels the abandoned chain; the watchdog resumes a loop that stops
+  // advancing for any reason nobody anticipated.
+  private readonly timers = new RoundTimers();
+  private watchdog: NodeJS.Timeout | null = null;
+  private lastProgressAt = Date.now();
+  private resuming = false;
+  private settling = false;
+  /** Shutdown in progress: no new bets or rounds; the in-flight round busts and settles. */
+  private draining = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: CrashGateway,
@@ -138,6 +174,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       await this.recoverStrandedRounds();
       await this.recoverScheduledBets();
       await this.startNewRound();
+      this.startWatchdog();
       return;
     }
     // Multi-instance: a placeholder keeps snapshot() safe until we lead or mirror.
@@ -148,12 +185,61 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     await this.election.tick();
     if (this.isLeader()) await this.assumeLeadership();
     this.election.start((leader) => {
-      if (leader) void this.assumeLeadership();
-      else this.logger.warn('crash: lost leadership — standing by');
+      if (leader) this.guard(this.assumeLeadership(), 'assume leadership');
+      else {
+        this.timers.reset();
+        this.logger.warn('crash: lost leadership — standing by');
+      }
     });
     // Followers poll the leader's mirrored round so their snapshot stays current.
     this.mirrorPoll = setInterval(() => void this.pollMirror(), 500);
     this.mirrorPoll.unref?.();
+    this.startWatchdog();
+  }
+
+  /**
+   * Run a loop step whose failure must never be silent. Before this, a DB
+   * error in startNewRound/beginRun/bust was an unhandled rejection: the loop
+   * just stopped, and clients sat on a frozen round until the next restart.
+   */
+  private guard(step: Promise<void>, what: string): void {
+    step.catch((e: unknown) => {
+      this.logger.error(`crash: ${what} failed: ${errMessage(e)}`);
+      void this.resume(`${what} failed`);
+    });
+  }
+
+  /**
+   * Put the loop back on its feet: abandon the current chain, settle whatever
+   * round it left behind through boot recovery (value-conserving refund), and
+   * open a fresh round. Retries itself with backoff while the DB is unreachable.
+   */
+  private async resume(reason: string): Promise<void> {
+    if (this.resuming || this.draining || !this.isLeader()) return;
+    this.resuming = true;
+    this.timers.reset();
+    this.lastProgressAt = Date.now();
+    this.logger.warn(`crash: resuming the round loop (${reason})`);
+    try {
+      await this.recoverStrandedRounds();
+      await this.startNewRound();
+    } catch (e) {
+      this.logger.error(`crash: resume failed: ${errMessage(e)} — retrying`);
+      this.timers.schedule(() => void this.resume('retry'), retryDelayMs(2));
+    } finally {
+      this.resuming = false;
+    }
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      if (!this.isLeader() || this.resuming || this.draining) return;
+      if (Date.now() - this.lastProgressAt > roundLoopTuning().stallMs) {
+        void this.resume('no progress');
+      }
+    }, roundLoopTuning().watchdogIntervalMs);
+    this.watchdog.unref?.();
   }
 
   private placeholderRound(): Round {
@@ -177,6 +263,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   /** Won the lock: recover any stranded round then drive the loop. */
   private async assumeLeadership(): Promise<void> {
     this.logger.log('crash: elected leader — driving the round loop');
+    this.timers.reset();
+    this.lastProgressAt = Date.now();
     await this.recoverStrandedRounds();
     await this.recoverScheduledBets();
     await this.startNewRound();
@@ -198,10 +286,48 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       .catch(() => undefined);
   }
 
+  /**
+   * Nest runs this on SIGTERM BEFORE Prisma/Redis are torn down (destroy hooks
+   * go in reverse init order) and before the HTTP server closes — so the drain
+   * below still has the DB, the leader lock, and players' cash-out requests.
+   */
   async onModuleDestroy(): Promise<void> {
+    await this.drain();
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+    this.timers.reset();
     if (this.mirrorPoll) clearInterval(this.mirrorPoll);
     this.mirrorPoll = null;
     if (this.election) await this.election.stop();
+  }
+
+  /**
+   * Graceful shutdown (the hourly cron stop, the daily budget stop, a deploy).
+   * Previously the in-flight round was simply abandoned and voided at the next
+   * boot: a player riding at 3x got 1x back, with no explanation. Now: no new
+   * bets or rounds, queued next-round stakes are refunded immediately, and the
+   * round in flight runs to its committed bust and settles normally.
+   */
+  private async drain(): Promise<void> {
+    const { crashDrainTimeoutMs } = roundLoopTuning();
+    if (crashDrainTimeoutMs <= 0 || !this.isLeader() || !this.current?.id) return;
+    this.draining = true;
+    this.nextRoundBets.clear();
+    await this.recoverScheduledBets();
+    const deadline = Date.now() + crashDrainTimeoutMs;
+    while (this.roundInFlight() && Date.now() < deadline) await sleep(200);
+    this.logger.log(
+      this.roundInFlight()
+        ? 'crash: drain timed out — boot recovery will settle the round'
+        : 'crash: drained — no round in flight',
+    );
+  }
+
+  /** True while stakes are riding the current round or its settle is running. */
+  private roundInFlight(): boolean {
+    if (this.settling) return true;
+    if (this.current.phase === 'running') return true;
+    return this.current.phase === 'waiting' && this.current.bets.size > 0;
   }
 
   // ---------- Public API consumed by CrashService ----------
@@ -310,6 +436,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     amountLamports: bigint;
     autoCashout: number | null;
   }): { ok: true; roundId: string } {
+    if (this.draining) throw new Error(DRAINING_MESSAGE);
     if (this.current.phase !== 'waiting') {
       throw new Error('Betting window closed');
     }
@@ -362,6 +489,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     amountLamports: bigint;
     autoCashout: number | null;
   }): { ok: true } {
+    if (this.draining) throw new Error(DRAINING_MESSAGE);
     if (this.nextRoundBets.has(params.userId)) {
       throw new Error('You already have a bet scheduled for the next round');
     }
@@ -456,7 +584,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   private async startNewRound(): Promise<void> {
-    if (!this.isLeader()) return; // never create a round as a non-leader
+    if (!this.isLeader() || this.draining) return; // never create a round as a non-leader
+    const gen = this.timers.generation;
+    this.lastProgressAt = Date.now();
     const serverSeed = generateServerSeed();
     const clientSeed = generateClientSeed();
     const nonce = 0;
@@ -530,6 +660,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         exposure = new ExposureGuard(bankroll);
       }
     }
+
+    // Abandoned while awaiting (a resume took over): the round row just created
+    // has no bets and is closed out by recovery; do not install it.
+    if (gen !== this.timers.generation) return;
 
     this.current = {
       id: round.id,
@@ -608,9 +742,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     void this.mirror(); // publish the fresh waiting round to followers
 
     // Betting window → run
-    setTimeout(() => {
-      void this.beginRun();
-    }, CRASH.BET_WINDOW_MS);
+    if (gen !== this.timers.generation) return;
+    this.timers.schedule(() => this.guard(this.beginRun(), 'begin run'), CRASH.BET_WINDOW_MS);
   }
 
   /**
@@ -681,13 +814,17 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
 
   private async beginRun(): Promise<void> {
     if (!this.isLeader()) return; // leadership lost during the betting window
+    const gen = this.timers.generation;
     if (onchainEntropyOn()) await this.fulfillEntropy(); // derive the deferred bust
+    if (gen !== this.timers.generation) return;
     this.current.phase = 'running';
     this.current.startedAt = Date.now();
+    this.lastProgressAt = Date.now();
     await this.prisma.crashRound.update({
       where: { id: this.current.id },
       data: { status: 'running', startedAt: new Date(this.current.startedAt) },
     });
+    if (gen !== this.timers.generation) return;
     this.gateway.emitRunning(this.current.id);
     void this.mirror();
 
@@ -695,25 +832,29 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     const tickInterval = 1000 / CRASH.TICK_RATE_HZ;
     const tick = async (): Promise<void> => {
       if (!this.isLeader()) return; // stop driving if we lost the lock mid-round
+      this.lastProgressAt = Date.now();
       const m = this.currentMultiplier();
 
       // Auto-cashouts (full exit of whatever is still riding). Awaited so the
       // CrashBet row is persisted before bust settles the round.
       await this.runAutoCashouts(m);
+      if (gen !== this.timers.generation) return;
 
       if (m >= this.current.bustPoint) {
-        void this.bust();
+        this.guard(this.bust(), 'bust');
         return;
       }
       this.gateway.emitTick(this.current.id, m);
-      setTimeout(() => void tick(), tickInterval);
+      this.timers.schedule(() => this.guard(tick(), 'tick'), tickInterval);
     };
-    setTimeout(() => void tick(), tickInterval);
+    this.timers.schedule(() => this.guard(tick(), 'tick'), tickInterval);
   }
 
   private async bust(): Promise<void> {
     if (!this.isLeader()) return;
+    const gen = this.timers.generation;
     this.current.phase = 'busted';
+    this.lastProgressAt = Date.now();
     const bustM = this.current.bustPoint;
     this.history.unshift({ bustPoint: bustM, roundId: this.current.id });
     this.history = this.history.slice(0, 50);
@@ -721,14 +862,18 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     // Settle the ledger for all bets. The `busted` round flip + seed reveal now
     // happen INSIDE this transaction (see settleRound) so a round is never
     // marked terminal without its ledger writes landing atomically.
-    const settled = await this.settleRound();
-
-    if (!settled) {
-      // Unrecoverable settlement failure: the round stays non-terminal
-      // (status left 'running'/'waiting', seed unrevealed) for the recovery
-      // worker. Do NOT emit bust and do NOT advance to a new round.
+    const outcome = await this.settleRound(gen);
+    if (outcome.kind === 'abandoned' || gen !== this.timers.generation) return;
+    if (outcome.kind === 'failed') {
+      // Every retry failed. The round is still non-terminal, so the recovery
+      // path settles it (locked-in cash-outs paid, riding stakes refunded) and
+      // the game carries on — before, it froze here until the next restart.
+      await this.resume('settle failed');
       return;
     }
+    // 'claim-lost': another settler already made this round terminal. Players
+    // still need the bust to move on, and the loop still needs a next round.
+    const settled = outcome.kind === 'settled' ? outcome : null;
 
     this.gateway.emitBust({
       roundId: this.current.id,
@@ -739,7 +884,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
 
     // Fire on-chain settlement receipts AFTER the ledger tx commits
     // (fire-and-forget — never blocks the loop; no-op when disabled).
-    if (this.chain.enabled) {
+    if (this.chain.enabled && settled) {
       for (const job of settled.settleJobs) {
         void this.chain
           .recordBet({
@@ -764,40 +909,95 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // Short gap then next round — ONLY on a committed settlement.
-    setTimeout(() => {
-      void this.startNewRound();
-    }, 3_000);
+    // Short gap then next round — only once the round is terminal. A draining
+    // server stops here: that was the last round this process runs.
+    if (this.draining) return;
+    this.timers.schedule(() => this.guard(this.startNewRound(), 'start round'), 3_000);
+  }
+
+  /**
+   * Settle with bounded retries. A transient failure (Neon blip, pool timeout,
+   * an expired tx) used to dead-letter on the first attempt and stop the game;
+   * now it is retried with backoff, and only exhaustion is a failure. Losing
+   * the claim is not retried — the round is already terminal.
+   */
+  private async settleRound(gen = this.timers.generation): Promise<SettleOutcome> {
+    const attempts = roundLoopTuning().settleRetryAttempts;
+    const bets = Array.from(this.current.bets.values());
+    let lastError: unknown = null;
+    this.settling = true;
+    try {
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        this.lastProgressAt = Date.now();
+        try {
+          return { kind: 'settled', settleJobs: await this.settleOnce(bets) };
+        } catch (e) {
+          // #212 — benign loss of the settle claim (another settler/recovery
+          // pass already committed this round, or we were demoted mid-settle).
+          // The round is terminal and fully credited: no dead-letter, no retry.
+          if (isSettleClaimLost(e)) {
+            this.logger.warn(`crash settle skipped: ${errMessage(e)}`);
+            return { kind: 'claim-lost' };
+          }
+          lastError = e;
+          this.logger.warn(
+            `crash settle attempt ${attempt}/${attempts} for ${this.current.id} failed: ${errMessage(e)}`,
+          );
+        }
+        if (attempt < attempts) {
+          await sleep(retryDelayMs(attempt));
+          if (gen !== this.timers.generation) return { kind: 'abandoned' };
+        }
+      }
+    } finally {
+      this.settling = false;
+    }
+
+    this.logger.error(
+      `Failed to settle crash round ${this.current.id} after ${attempts} attempts: ${errMessage(lastError)}`,
+    );
+    // Best-effort dead-letter write — must never crash the loop itself.
+    try {
+      settlementsTotal.inc({ game: 'crash', outcome: 'failed' });
+      await this.prisma.settlementFailure.create({
+        data: {
+          gameType: 'crash',
+          roundId: this.current.id,
+          payloadJson: {
+            roundId: this.current.id,
+            bustPoint: this.current.bustPoint,
+            bets: bets.map((b) => ({
+              userId: b.userId,
+              stake: b.originalAmountLamports.toString(),
+              payout: b.payoutLamports.toString(),
+              cashedOutAt: b.cashedOutAt,
+              autoCashout: b.autoCashout,
+            })),
+          },
+          error: errMessage(lastError),
+        },
+      });
+    } catch (deadLetterErr) {
+      this.logger.error(
+        `Failed to write SettlementFailure for crash round ${this.current.id}: ${errMessage(deadLetterErr)}`,
+      );
+    }
+    return { kind: 'failed' };
   }
 
   /**
    * Settle every bet of the busted round in ONE serializable transaction:
    * per-user ledger update + CrashBet row + Bet row + the round `busted` flip +
-   * the seed reveal. Returns the on-chain settle jobs (data only) on success,
-   * or null if the transaction failed after retries (a SettlementFailure
-   * dead-letter row is written and the round is left non-terminal).
+   * the seed reveal. Returns the on-chain settle jobs (data only). Throws on
+   * failure (the tx rolls back, the round stays non-terminal) — the caller
+   * decides whether to retry.
    */
-  private async settleRound(): Promise<{
-    settleJobs: {
-      betId: string;
-      walletAddress: string;
-      stake: bigint;
-      payout: bigint;
-      multiplier: number;
-    }[];
-  } | null> {
-    const bets = Array.from(this.current.bets.values());
+  private async settleOnce(bets: LiveBet[]): Promise<SettleJob[]> {
     const bustM = this.current.bustPoint;
 
     // Pre-generate bet ids so the post-commit on-chain receipts can reference
     // them without re-querying, and collect chain jobs as DATA ONLY.
-    const settleJobs: {
-      betId: string;
-      walletAddress: string;
-      stake: bigint;
-      payout: bigint;
-      multiplier: number;
-    }[] = bets.map((bet) => ({
+    const settleJobs: SettleJob[] = bets.map((bet) => ({
       betId: randomUUID(),
       walletAddress: bet.walletAddress,
       stake: bet.originalAmountLamports,
@@ -805,8 +1005,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       multiplier: bet.cashedOutAt ?? bustM,
     }));
 
-    try {
-      await withSerializable(this.prisma, async (tx) => {
+    await withSerializable(
+      this.prisma,
+      async (tx) => {
         // #212 — re-assert leadership AFTER the tx opens: a leader demoted during
         // the betting/run window self-aborts before crediting anyone.
         assertStillLeader(() => this.isLeader(), 'crash');
@@ -933,51 +1134,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
           where: { id: this.current.seedId },
           data: { revealedAt: new Date() },
         });
-      });
-    } catch (e) {
-      // #212 — benign loss of the settle claim (another settler/recovery pass
-      // already committed this round, or we were demoted mid-settle). The round
-      // is already terminal and fully credited by the winner, so this is NOT a
-      // settlement failure: roll back silently with no dead-letter, no double pay.
-      if (isSettleClaimLost(e)) {
-        this.logger.warn(`crash settle skipped: ${e instanceof Error ? e.message : String(e)}`);
-        return null;
-      }
-      this.logger.error(
-        `Failed to settle crash round ${this.current.id} after retries: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-      // Best-effort dead-letter write — must never crash the loop itself.
-      try {
-        settlementsTotal.inc({ game: 'crash', outcome: 'failed' });
-        await this.prisma.settlementFailure.create({
-          data: {
-            gameType: 'crash',
-            roundId: this.current.id,
-            payloadJson: {
-              roundId: this.current.id,
-              bustPoint: bustM,
-              bets: bets.map((b) => ({
-                userId: b.userId,
-                stake: b.originalAmountLamports.toString(),
-                payout: b.payoutLamports.toString(),
-                cashedOutAt: b.cashedOutAt,
-                autoCashout: b.autoCashout,
-              })),
-            },
-            error: e instanceof Error ? e.message : String(e),
-          },
-        });
-      } catch (deadLetterErr) {
-        this.logger.error(
-          `Failed to write SettlementFailure for crash round ${this.current.id}: ${String(
-            deadLetterErr,
-          )}`,
-        );
-      }
-      return null;
-    }
+      },
+      undefined,
+      settleTxOptions(),
+    );
 
     // Post-commit, fire-and-forget: surface every player's settle on the feed.
     for (let i = 0; i < bets.length; i += 1) {
@@ -995,7 +1155,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    return { settleJobs };
+    return settleJobs;
   }
 
   /**
@@ -1029,100 +1189,107 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     for (const round of stranded) {
       try {
         const bets = await this.prisma.crashBet.findMany({ where: { roundId: round.id } });
-        await withSerializable(this.prisma, async (tx) => {
-          // #212 — CLAIM the round first so live-settle and recovery can never
-          // both credit it. Guarded terminal flip: only the pass that transitions
-          // it out of 'waiting'/'running' proceeds; a peer matches 0 rows and
-          // throws, rolling back the whole tx (no refunds/Bet rows).
-          const { count } = await tx.crashRound.updateMany({
-            where: { id: round.id, status: { in: ['waiting', 'running'] } },
-            data: { status: 'busted', endedAt: new Date() },
-          });
-          assertRoundClaimed(count, 'crash', round.id);
+        await withSerializable(
+          this.prisma,
+          async (tx) => {
+            // #212 — CLAIM the round first so live-settle and recovery can never
+            // both credit it. Guarded terminal flip: only the pass that transitions
+            // it out of 'waiting'/'running' proceeds; a peer matches 0 rows and
+            // throws, rolling back the whole tx (no refunds/Bet rows).
+            const { count } = await tx.crashRound.updateMany({
+              where: { id: round.id, status: { in: ['waiting', 'running'] } },
+              data: { status: 'busted', endedAt: new Date() },
+            });
+            assertRoundClaimed(count, 'crash', round.id);
 
-          for (const bet of bets) {
-            const payout = bet.payoutLamports; // locked-in (partial) cashouts
-            const refund = bet.remainingLamports; // still-riding stake
-            const credit = payout + refund;
-            const won = payout > BigInt(0);
-            if (credit > BigInt(0)) {
-              await applyBalanceDelta(tx, bet.userId, credit, {
-                reason: 'crash_recovery_refund',
-                refType: 'CrashRound',
-                refId: round.id,
+            for (const bet of bets) {
+              const payout = bet.payoutLamports; // locked-in (partial) cashouts
+              const refund = bet.remainingLamports; // still-riding stake
+              const credit = payout + refund;
+              const won = payout > BigInt(0);
+              if (credit > BigInt(0)) {
+                await applyBalanceDelta(tx, bet.userId, credit, {
+                  reason: 'crash_recovery_refund',
+                  refType: 'CrashRound',
+                  refId: round.id,
+                });
+              }
+              await tx.crashBet.update({
+                where: { id: bet.id },
+                data: { payoutLamports: payout, remainingLamports: BigInt(0), won },
               });
-            }
-            await tx.crashBet.update({
-              where: { id: bet.id },
-              data: { payoutLamports: payout, remainingLamports: BigInt(0), won },
-            });
-            // Stable Bet id so the wager-mining accrual's `scad` ledger row
-            // (refId) and the unified Bet row reference the same settlement.
-            const recoveredBetId = randomUUID();
-            // Mirror the live-settle aggregate update (see settle path above): the
-            // recovered Bet row counts as a played wager, so the denormalized User
-            // columns must move with it or hourly reconciliation flags drift on
-            // every kill-9 recovery (totalWagered/gamesPlayed derive from Bet).
-            // Matched to reconcileAll's GREATEST(payout-amount,0) derivation, with
-            // `credit` (= locked-in payout + refunded stake) as the Bet payout.
-            await tx.user.update({
-              where: { id: bet.userId },
-              data: {
-                totalWagered: { increment: bet.amountLamports },
-                totalWon: {
-                  increment: credit > bet.amountLamports ? credit - bet.amountLamports : BigInt(0),
+              // Stable Bet id so the wager-mining accrual's `scad` ledger row
+              // (refId) and the unified Bet row reference the same settlement.
+              const recoveredBetId = randomUUID();
+              // Mirror the live-settle aggregate update (see settle path above): the
+              // recovered Bet row counts as a played wager, so the denormalized User
+              // columns must move with it or hourly reconciliation flags drift on
+              // every kill-9 recovery (totalWagered/gamesPlayed derive from Bet).
+              // Matched to reconcileAll's GREATEST(payout-amount,0) derivation, with
+              // `credit` (= locked-in payout + refunded stake) as the Bet payout.
+              await tx.user.update({
+                where: { id: bet.userId },
+                data: {
+                  totalWagered: { increment: bet.amountLamports },
+                  totalWon: {
+                    increment:
+                      credit > bet.amountLamports ? credit - bet.amountLamports : BigInt(0),
+                  },
+                  totalLost: {
+                    increment:
+                      bet.amountLamports > credit ? bet.amountLamports - credit : BigInt(0),
+                  },
+                  gamesPlayed: { increment: 1 },
                 },
-                totalLost: {
-                  increment: bet.amountLamports > credit ? bet.amountLamports - credit : BigInt(0),
-                },
-                gamesPlayed: { increment: 1 },
-              },
-            });
-            // biggestWin = max(current, net) atomically under the row lock (no
-            // stale read-then-write). net = credit - amount, matching
-            // reconcileAll's GREATEST(payout-amount,0) where the recovered Bet's
-            // payout = credit. A never-cashed full-refund nets 0 → no change.
-            await tx.$executeRaw`
+              });
+              // biggestWin = max(current, net) atomically under the row lock (no
+              // stale read-then-write). net = credit - amount, matching
+              // reconcileAll's GREATEST(payout-amount,0) where the recovered Bet's
+              // payout = credit. A never-cashed full-refund nets 0 → no change.
+              await tx.$executeRaw`
               UPDATE "User" SET "biggestWin" = GREATEST("biggestWin", ${credit - bet.amountLamports})
               WHERE "id" = ${bet.userId}::uuid
             `;
-            // #182 — mint the wager-mining $SCAD the live-settle path credits.
-            // A restart between bet and bust must not silently drop the reward;
-            // accrue is idempotent per settlement (one call per recovered bet)
-            // and the Engine coverage contract requires every settlement to
-            // accrue. Same args as the live path (stake lamports + crash + betId).
-            await this.proofOfWager.accrue(tx, {
-              userId: bet.userId,
-              gameType: 'crash',
-              stakeLamports: bet.amountLamports,
-              betId: recoveredBetId,
-            });
-            await tx.bet.create({
-              data: {
-                id: recoveredBetId,
+              // #182 — mint the wager-mining $SCAD the live-settle path credits.
+              // A restart between bet and bust must not silently drop the reward;
+              // accrue is idempotent per settlement (one call per recovered bet)
+              // and the Engine coverage contract requires every settlement to
+              // accrue. Same args as the live path (stake lamports + crash + betId).
+              await this.proofOfWager.accrue(tx, {
                 userId: bet.userId,
                 gameType: 'crash',
-                amountLamports: bet.amountLamports,
-                payoutLamports: credit,
-                multiplier:
-                  bet.amountLamports > BigInt(0) && credit > BigInt(0)
-                    ? Number(credit) / Number(bet.amountLamports)
-                    : null,
-                status: won ? 'won' : 'lost',
-                seedId: round.seedId,
-                nonce: 0,
-                resultJson: {
-                  recovered: true,
-                  payoutLamports: payout.toString(),
-                  refundedLamports: refund.toString(),
+                stakeLamports: bet.amountLamports,
+                betId: recoveredBetId,
+              });
+              await tx.bet.create({
+                data: {
+                  id: recoveredBetId,
+                  userId: bet.userId,
+                  gameType: 'crash',
+                  amountLamports: bet.amountLamports,
+                  payoutLamports: credit,
+                  multiplier:
+                    bet.amountLamports > BigInt(0) && credit > BigInt(0)
+                      ? Number(credit) / Number(bet.amountLamports)
+                      : null,
+                  status: won ? 'won' : 'lost',
+                  seedId: round.seedId,
+                  nonce: 0,
+                  resultJson: {
+                    recovered: true,
+                    payoutLamports: payout.toString(),
+                    refundedLamports: refund.toString(),
+                  },
                 },
-              },
-            });
-          }
-          // Terminal flip already done at claim time above; only the seed reveal
-          // remains.
-          await tx.seed.update({ where: { id: round.seedId }, data: { revealedAt: new Date() } });
-        });
+              });
+            }
+            // Terminal flip already done at claim time above; only the seed reveal
+            // remains.
+            await tx.seed.update({ where: { id: round.seedId }, data: { revealedAt: new Date() } });
+          },
+          undefined,
+          settleTxOptions(),
+        );
         this.logger.log(`crash recovery: round ${round.id} settled (${bets.length} bet(s))`);
       } catch (e) {
         // #212 — another settler (live bust or a concurrent recovery pass) already

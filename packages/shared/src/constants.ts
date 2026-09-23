@@ -358,8 +358,12 @@ export function nextLotteryDrawAt(nowMs: number): number {
 export const JACKPOT = {
   MIN_ENTRY_LAMPORTS: 10_000_000, // 0.01 SOL minimum entry
   MAX_ENTRY_LAMPORTS: 50 * LAMPORTS_PER_SOL, // 50 SOL max per entry
-  ROUND_WINDOW_MS: 45_000, // 45s open window per round
+  ROUND_WINDOW_MS: 45_000, // 45s countdown, started by the MIN_PLAYERS-th distinct player
   MIN_PLAYERS: 2, // need 2+ distinct players to draw; else refund
+  // A lone entry waits this long for a second player, then is refunded. Bounded
+  // so a stake is never parked indefinitely on a quiet site; 5 minutes matches
+  // the container's idle window, so the refund lands even if everyone leaves.
+  SOLO_WAIT_MS: 5 * 60_000,
   HOUSE_EDGE: 0.05, // winner takes 95% of the pot
 } as const;
 

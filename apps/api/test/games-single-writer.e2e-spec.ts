@@ -35,6 +35,9 @@ describe('game engines single-writer leader election (issue #86)', () => {
 
   it('jackpot: only the leader opens a round', async () => {
     await r1.del('lock:engine:jackpot');
+    // A leader RESUMES a live round rather than opening a second one, so start
+    // from a DB with none (other specs leave open rounds behind).
+    await prisma.jackpotRound.updateMany({ where: { status: 'open' }, data: { status: 'refunded' } });
     const since = new Date();
     const a = new JackpotEngine(prisma as never, gw(), offChain, pow(), affiliatesStub(), redis(r1));
     const b = new JackpotEngine(prisma as never, gw(), offChain, pow(), affiliatesStub(), redis(r2));
@@ -52,6 +55,8 @@ describe('game engines single-writer leader election (issue #86)', () => {
 
   it('lottery: only the leader opens a draw', async () => {
     await r1.del('lock:engine:lottery');
+    // As above: a live draw is resumed, not duplicated — start with none open.
+    await prisma.lotteryDraw.updateMany({ where: { status: 'open' }, data: { status: 'drawn' } });
     const since = new Date();
     const a = new LotteryEngine(prisma as never, gw(), offChain, pow(), affiliatesStub(), redis(r1));
     const b = new LotteryEngine(prisma as never, gw(), offChain, pow(), affiliatesStub(), redis(r2));

@@ -31,5 +31,12 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30_000,
     hookTimeout: 60_000,
+    // Round-loop tuning for tests (see src/games/round-loop.ts): retry a failed
+    // settle after milliseconds, not seconds, and skip the crash shutdown drain
+    // so app.close() in teardown never waits on a live round.
+    env: {
+      SETTLE_RETRY_BASE_MS: '10',
+      CRASH_DRAIN_TIMEOUT_MS: '0',
+    },
   },
 });

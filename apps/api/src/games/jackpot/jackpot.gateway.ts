@@ -19,7 +19,8 @@ export class JackpotGateway {
     serverSeedHash: string;
     clientSeed: string;
     nonce: number;
-    closeAt: number;
+    /** Null: waiting for players — the clock starts with the first entry. */
+    closeAt: number | null;
   }) {
     this.server.emit('jackpot:round-open', payload);
   }
@@ -32,6 +33,8 @@ export class JackpotGateway {
     amountLamports: string;
     totalLamports: string;
     playerCount: number;
+    /** The round's (possibly just-started) deadline, so clients update without a refetch. */
+    closeAt: number | null;
   }) {
     this.server.emit('jackpot:entry', payload);
   }

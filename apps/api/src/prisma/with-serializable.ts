@@ -48,16 +48,25 @@ function sleep(ms: number): Promise<void> {
  * reads + writes behave as if no other transaction ran concurrently, which is
  * exactly what money-moving game settlements need. The cost is that concurrent
  * conflicting transactions abort with 40001 — hence the retry loop.
+ *
+ * `txOptions` overrides Prisma's interactive-transaction limits (5s timeout,
+ * 2s maxWait) for callers whose work legitimately runs longer — the round
+ * settles, whose size grows with the number of bets. Omitted = Prisma defaults.
  */
 export async function withSerializable<T>(
   prisma: PrismaService | PrismaClient,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
   attempts = 5,
+  txOptions: { timeoutMs?: number; maxWaitMs?: number } = {},
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await prisma.$transaction(fn, { isolationLevel: 'Serializable' });
+      return await prisma.$transaction(fn, {
+        isolationLevel: 'Serializable',
+        ...(txOptions.timeoutMs !== undefined ? { timeout: txOptions.timeoutMs } : {}),
+        ...(txOptions.maxWaitMs !== undefined ? { maxWait: txOptions.maxWaitMs } : {}),
+      });
     } catch (e) {
       lastError = e;
       if (!isRetryable(e) || attempt === attempts) throw e;

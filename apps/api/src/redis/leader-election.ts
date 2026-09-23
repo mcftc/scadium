@@ -39,10 +39,13 @@ export class LeaderElection {
         const renew =
           "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
         const ok = await this.redis.eval(renew, 1, this.key, this.instanceId, String(this.ttlMs));
-        this.leader = ok === 1;
-        if (!this.leader) await this.acquire(); // lost it — try to take it straight back
+        // Lost it — try to take it straight back. `leader` is only written once
+        // the outcome is known: flipping it to false for the duration of the
+        // re-acquire round trip let a loop tick landing in that window see
+        // "not leader" and quietly end its chain, with no onChange to restart it.
+        if (ok !== 1) this.leader = await this.tryAcquire();
       } else {
-        await this.acquire();
+        this.leader = await this.tryAcquire();
       }
     } catch {
       this.leader = false; // Redis hiccup → relinquish; a healthy replica takes over
@@ -50,16 +53,19 @@ export class LeaderElection {
     return this.leader;
   }
 
-  private async acquire(): Promise<void> {
+  private async tryAcquire(): Promise<boolean> {
     const res = await this.redis.set(this.key, this.instanceId, 'PX', this.ttlMs, 'NX');
-    this.leader = res === 'OK';
+    return res === 'OK';
   }
 
   /**
    * Begin periodic acquire/renew. `onChange(isLeader)` fires on every leadership
    * transition (e.g. start the loop when elected, stop scheduling when lost).
    */
-  start(onChange?: (isLeader: boolean) => void, intervalMs = Math.max(1000, Math.floor(this.ttlMs / 2))): void {
+  start(
+    onChange?: (isLeader: boolean) => void,
+    intervalMs = Math.max(1000, Math.floor(this.ttlMs / 2)),
+  ): void {
     this.onChange = onChange;
     const run = async () => {
       const was = this.leader;

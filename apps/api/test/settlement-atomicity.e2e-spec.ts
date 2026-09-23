@@ -113,7 +113,8 @@ describe('settlement atomicity (integration, real Postgres)', () => {
       engine as unknown as { settleRound: () => Promise<unknown> }
     ).settleRound();
 
-    expect(result).toBeNull(); // signalled failure → bust() won't advance the round
+    // Signalled failure → bust() hands the round to the recovery path.
+    expect(result).toMatchObject({ kind: 'failed' });
 
     // Zero partial effects: the valid user's balance is untouched, no rows.
     const u1After = await prisma.user.findUniqueOrThrow({ where: { id: u1.id } });
@@ -160,11 +161,11 @@ describe('settlement atomicity (integration, real Postgres)', () => {
     };
 
     const result = (await (
-      engine as unknown as { settleRound: () => Promise<{ settleJobs: unknown[] } | null> }
-    ).settleRound()) as { settleJobs: unknown[] } | null;
+      engine as unknown as { settleRound: () => Promise<{ kind: string; settleJobs?: unknown[] }> }
+    ).settleRound()) as { kind: string; settleJobs?: unknown[] };
 
-    expect(result).not.toBeNull();
-    expect(result!.settleJobs.length).toBe(2);
+    expect(result.kind).toBe('settled');
+    expect(result.settleJobs!.length).toBe(2);
 
     const winnerAfter = await prisma.user.findUniqueOrThrow({ where: { id: winner.id } });
     expect(winnerAfter.playBalanceLamports).toBe(2_000n); // payout credited
