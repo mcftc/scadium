@@ -22,6 +22,7 @@ import { JackpotReel, type JackpotReveal } from './jackpot-reel';
 import { useGameSound } from '@/components/instant/use-game-sound';
 import { cn } from '@/lib/cn';
 import { GAME_RTP } from '@scadium/shared';
+import { fairnessHref } from '@/lib/fairness-link';
 
 const QUICK = ['0.05', '0.25', '1', '5'];
 const BAR_COLORS = ['#22d3ee', '#FFBE3D', '#f59e0b', '#34d399', '#FF7A45', '#60a5fa'];
@@ -380,10 +381,15 @@ function RecentWinners() {
   return (
     <div className="space-y-2">
       {data.map((r) => {
-        const verifyHref =
-          `/fairness?game=jackpot&clientSeed=${encodeURIComponent(r.clientSeed)}` +
-          `&nonce=${r.nonce}&commit=${r.serverSeedHash}` +
-          (r.serverSeed ? `&serverSeed=${r.serverSeed}` : '');
+        // The round id lets the verifier check the winner, not just the roll.
+        const verifyHref = fairnessHref('jackpot', {
+          clientSeed: r.clientSeed,
+          nonce: r.nonce,
+          serverSeedHash: r.serverSeedHash,
+          serverSeed: r.serverSeed,
+          beaconRound: r.beaconRound,
+          round: r.id,
+        });
         return (
           <div
             key={r.id}
@@ -417,8 +423,14 @@ function JackpotFairness({ snap }: { snap: JackpotSnapshot | null }) {
   if (!snap) return null;
   const last = snap.lastResult;
   const verifyHref = last
-    ? `/fairness?game=jackpot&clientSeed=${encodeURIComponent(last.clientSeed)}` +
-      `&nonce=${last.nonce}&commit=${last.serverSeedHash}&serverSeed=${last.serverSeed}`
+    ? fairnessHref('jackpot', {
+        clientSeed: last.clientSeed,
+        nonce: last.nonce,
+        serverSeedHash: last.serverSeedHash,
+        serverSeed: last.serverSeed,
+        beaconRound: last.beaconRound,
+        round: last.status === 'drawn' ? last.roundId : null,
+      })
     : '/fairness';
   const rtp = GAME_RTP['jackpot'];
   return (
@@ -437,6 +449,12 @@ function JackpotFairness({ snap }: { snap: JackpotSnapshot | null }) {
       </h3>
       <SeedRow label="Current round — server seed (commit)" value={snap.serverSeedHash} />
       <SeedRow label="Client seed" value={snap.clientSeed} />
+      {snap.beaconRound != null && (
+        <SeedRow
+          label="Draws with drand beacon round (published after entries close)"
+          value={String(snap.beaconRound)}
+        />
+      )}
       {last && (
         <div className="pt-2 border-t border-border space-y-2">
           <SeedRow label="Last round — server seed (revealed)" value={last.serverSeed} />

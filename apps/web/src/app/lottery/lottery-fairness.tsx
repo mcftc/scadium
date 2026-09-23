@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ShieldCheck, ExternalLink, Lock, Unlock } from 'lucide-react';
 import { GAME_RTP } from '@scadium/shared';
 import type { LotterySnapshot } from '@/hooks/use-lottery';
+import { fairnessHref } from '@/lib/fairness-link';
 
 /**
  * Provably-fair disclosure for the current lottery draw. The server seed is
@@ -17,9 +18,14 @@ export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
   if (!snap) return null;
   const last = snap.lastResult;
   const verifyHref = last
-    ? `/fairness?game=lottery&clientSeed=${encodeURIComponent(last.clientSeed)}` +
-      `&nonce=${last.nonce}&commit=${last.serverSeedHash}&serverSeed=${last.serverSeed}` +
-      `&slotHash=${last.slotHash}`
+    ? fairnessHref('lottery', {
+        clientSeed: last.clientSeed,
+        nonce: last.nonce,
+        serverSeedHash: last.serverSeedHash,
+        serverSeed: last.serverSeed,
+        slotHash: last.slotHash,
+        beaconRound: last.beaconRound,
+      })
     : '/fairness';
 
   const rtp = GAME_RTP['lottery'];
@@ -47,6 +53,12 @@ export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
 
       <SeedRow label="Current draw — server seed (commit)" value={snap.serverSeedHash} />
       <SeedRow label="Client seed" value={snap.clientSeed} />
+      {snap.beaconRound && (
+        <SeedRow
+          label="Draws with drand beacon round (published after sales close)"
+          value={String(snap.beaconRound)}
+        />
+      )}
 
       {last && (
         <div className="pt-2 border-t border-border space-y-2">
@@ -55,7 +67,16 @@ export function LotteryFairness({ snap }: { snap: LotterySnapshot | null }) {
             Previous draw revealed
           </div>
           <SeedRow label="Server seed (revealed)" value={last.serverSeed} />
-          <SeedRow label="Slot hash (draw-time entropy)" value={last.slotHash} />
+          <SeedRow
+            label={
+              last.fairness === 'drand-quicknet'
+                ? `drand beacon round ${last.beaconRound} (published after sales closed)`
+                : last.fairness === 'onchain'
+                  ? 'Slot hash (on-chain draw-time entropy)'
+                  : 'Synthetic slot hash — NOT provably fair (predates the beacon)'
+            }
+            value={last.slotHash}
+          />
           <Link
             href={verifyHref}
             className="flex items-center justify-center gap-1.5 w-full rounded-lg border border-primary-400/40 bg-primary-400/10 py-2 text-xs font-semibold text-primary-400 hover:bg-primary-400/20 transition-colors"

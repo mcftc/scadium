@@ -70,9 +70,7 @@ export function AirdropDashboard() {
         </CardHeader>
         <CardContent className="text-center space-y-4">
           <div>
-            <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">
-              Pool
-            </div>
+            <div className="text-xs uppercase tracking-wider text-foreground-muted mb-2">Pool</div>
             <div className="text-3xl font-bold text-gradient">
               {next.data ? formatSol(next.data.poolLamports, 2) : '…'}
             </div>
@@ -98,7 +96,8 @@ export function AirdropDashboard() {
               <EligibilityRow
                 label="Wagered ≥ 0.001 SOL this hour"
                 ok={
-                  !!eligibility.data && BigInt(eligibility.data.wageredLamports) >= BigInt(1_000_000)
+                  !!eligibility.data &&
+                  BigInt(eligibility.data.wageredLamports) >= BigInt(1_000_000)
                 }
                 value={eligibility.data ? formatSol(eligibility.data.wageredLamports, 4) : '—'}
               />
@@ -155,23 +154,11 @@ export function AirdropDashboard() {
   );
 }
 
-function EligibilityRow({
-  label,
-  ok,
-  value,
-}: {
-  label: string;
-  ok: boolean;
-  value: string;
-}) {
+function EligibilityRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="flex items-center gap-2">
-        {ok ? (
-          <Check className="h-4 w-4 text-success" />
-        ) : (
-          <X className="h-4 w-4 text-danger" />
-        )}
+        {ok ? <Check className="h-4 w-4 text-success" /> : <X className="h-4 w-4 text-danger" />}
         {label}
       </span>
       <span className="font-mono text-xs text-foreground-muted">{value}</span>

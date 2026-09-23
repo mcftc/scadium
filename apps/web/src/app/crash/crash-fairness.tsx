@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ShieldCheck, ExternalLink, Lock, Unlock } from 'lucide-react';
 import { GAME_RTP } from '@scadium/shared';
 import type { CrashSnapshot } from '@/hooks/use-crash';
+import { fairnessHref } from '@/lib/fairness-link';
 
 /**
  * Per-round provably-fair disclosure for crash. Shows the up-front commitment
@@ -15,10 +16,14 @@ export function CrashFairness({ state }: { state: CrashSnapshot | null }) {
   if (!state) return null;
 
   const revealed = state.phase === 'busted' && !!state.serverSeed;
-  const verifyHref =
-    `/fairness?game=crash&clientSeed=${encodeURIComponent(state.clientSeed)}` +
-    `&nonce=${state.nonce}&commit=${state.serverSeedHash}` +
-    (revealed ? `&serverSeed=${state.serverSeed}` : '');
+  const verifyHref = fairnessHref('crash', {
+    clientSeed: state.clientSeed,
+    nonce: state.nonce,
+    serverSeedHash: state.serverSeedHash,
+    serverSeed: revealed ? state.serverSeed : null,
+    beaconRound: state.beaconRound,
+    slotHash: revealed ? state.slotHash : null,
+  });
 
   const rtp = GAME_RTP['crash'];
 
@@ -53,6 +58,15 @@ export function CrashFairness({ state }: { state: CrashSnapshot | null }) {
         value={revealed ? state.serverSeed! : '— revealed after bust —'}
         muted={!revealed}
       />
+      {state.beaconRound != null && (
+        // Announced before any bet; published only after betting closes — so
+        // nobody, the casino included, can know the bust while bets are open.
+        <SeedRow
+          label={`drand beacon round ${state.beaconRound} (folded into the bust)`}
+          value={revealed && state.slotHash ? state.slotHash : '— published after betting closes —'}
+          muted={!revealed}
+        />
+      )}
 
       <Link
         href={verifyHref}

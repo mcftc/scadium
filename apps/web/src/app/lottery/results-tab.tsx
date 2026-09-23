@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { useDrawResults, useRecentDraws } from '@/hooks/use-lottery';
 import { LotteryBalls } from './lottery-balls';
 import { PlayerCell } from './player-cell';
+import { fairnessHref } from '@/lib/fairness-link';
 
 /**
  * bc.game Results tab: game-number navigation, the round's winning numbers
@@ -123,12 +124,14 @@ export function ResultsTab() {
                   <span className="font-mono font-bold text-success">{r.winnersCount}</span>
                 </div>
                 <Link
-                  href={
-                    `/fairness?game=lottery&clientSeed=${encodeURIComponent(r.clientSeed)}` +
-                    `&nonce=${r.nonce}&commit=${r.serverSeedHash}` +
-                    (r.serverSeed ? `&serverSeed=${r.serverSeed}` : '') +
-                    (r.slotHash ? `&slotHash=${r.slotHash}` : '')
-                  }
+                  href={fairnessHref('lottery', {
+                    clientSeed: r.clientSeed,
+                    nonce: r.nonce,
+                    serverSeedHash: r.serverSeedHash,
+                    serverSeed: r.serverSeed,
+                    slotHash: r.slotHash,
+                    beaconRound: r.beaconRound,
+                  })}
                   className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-400 hover:text-primary-300 transition-colors"
                 >
                   Verify draw

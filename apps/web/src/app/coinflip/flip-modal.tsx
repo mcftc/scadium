@@ -14,6 +14,7 @@ import { useMe } from '@/hooks/use-me';
 import { shortAddress, formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { FlipCoin3D } from './flip-coin-3d';
+import { fairnessHref } from '@/lib/fairness-link';
 
 type Stage = 'waiting' | 'flipping' | 'done';
 
@@ -85,9 +86,12 @@ export function FlipModal({
 
   const verifyHref =
     game.serverSeed && game.clientSeed
-      ? `/fairness?game=coinflip&clientSeed=${encodeURIComponent(game.clientSeed)}` +
-        `&nonce=${game.nonce ?? 0}&commit=${game.serverSeedHash ?? ''}` +
-        `&serverSeed=${game.serverSeed}`
+      ? fairnessHref('coinflip', {
+          clientSeed: game.clientSeed,
+          nonce: game.nonce ?? 0,
+          serverSeedHash: game.serverSeedHash,
+          serverSeed: game.serverSeed,
+        })
       : null;
 
   return (

@@ -1,9 +1,4 @@
-import {
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  TransactionInstruction,
-} from '@solana/web3.js';
+import { PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
 
 /**
  * Client-side builders for the scadium_swap pool (user-signed swaps and
@@ -17,9 +12,7 @@ const DISC_ADD = Uint8Array.from([181, 157, 89, 67, 143, 182, 52, 72]);
 const DISC_REMOVE = Uint8Array.from([80, 85, 209, 72, 24, 206, 177, 108]);
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
-);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 
 export function ata(mint: PublicKey, owner: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
@@ -29,8 +22,7 @@ export function ata(mint: PublicKey, owner: PublicKey): PublicKey {
 }
 
 export function swapPdas(programId: PublicKey) {
-  const pda = (seed: string) =>
-    PublicKey.findProgramAddressSync([Buffer.from(seed)], programId)[0];
+  const pda = (seed: string) => PublicKey.findProgramAddressSync([Buffer.from(seed)], programId)[0];
   return { pool: pda('pool'), solVault: pda('sol_vault'), lpMint: pda('lp_mint') };
 }
 

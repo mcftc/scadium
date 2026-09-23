@@ -82,6 +82,8 @@ interface LastResult {
   clientSeed: string;
   nonce: number;
   drawnAt: number;
+  /** drand round the ticket folded in (ADR 0004); null for a refund or when off. */
+  beaconRound: number | null;
 }
 
 /** A stored round, as recovery reads it. */
@@ -955,7 +957,15 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    this.setLastResult(round, { roundId, status: 'drawn', winnerName, payout, total, ticket });
+    this.setLastResult(round, {
+      roundId,
+      status: 'drawn',
+      winnerName,
+      payout,
+      total,
+      ticket,
+      beaconRound,
+    });
     this.gateway.emitDrawResult({
       roundId,
       status: 'drawn',
@@ -1014,6 +1024,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       payout: bigint;
       total: bigint;
       ticket: bigint | null;
+      beaconRound?: number | null;
     },
   ): void {
     this.lastResult = {
@@ -1028,6 +1039,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       clientSeed: round.clientSeed,
       nonce: round.nonce,
       drawnAt: Date.now(),
+      beaconRound: p.beaconRound ?? null,
     };
   }
 }

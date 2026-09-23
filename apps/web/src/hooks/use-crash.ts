@@ -50,6 +50,10 @@ export interface CrashSnapshot {
   multiplier: number;
   bets: CrashBet[];
   history: { bustPoint: number; roundId: string }[];
+  /** drand round the bust folds in (ADR 0004) — public from round open. */
+  beaconRound?: number | null;
+  /** That round's value — revealed with the bust. */
+  slotHash?: string | null;
 }
 
 /** A round that ended while this client was disconnected (it never saw the bust). */
@@ -142,6 +146,7 @@ export function useCrash() {
         clientSeed: string;
         nonce: number;
         bettingWindowMs?: number;
+        beaconRound?: number | null;
       }) => {
         eventSeq.current += 1;
         setState((prev) => ({
@@ -158,6 +163,8 @@ export function useCrash() {
           multiplier: 1.0,
           bets: [],
           history: prev?.history ?? [],
+          beaconRound: p.beaconRound ?? null,
+          slotHash: null,
         }));
         setCashouts([]); // markers belong to the previous round
       },
@@ -185,10 +192,12 @@ export function useCrash() {
         roundId,
         bustPoint,
         serverSeed,
+        slotHash,
       }: {
         roundId?: string;
         bustPoint: number;
         serverSeed: string;
+        slotHash?: string | null;
       }) => {
         eventSeq.current += 1;
         setState((s) =>
@@ -199,6 +208,7 @@ export function useCrash() {
                 bustPoint,
                 multiplier: bustPoint,
                 serverSeed,
+                slotHash: slotHash ?? null,
                 history: [{ bustPoint, roundId: s.roundId }, ...s.history].slice(0, 20),
               }
             : s,

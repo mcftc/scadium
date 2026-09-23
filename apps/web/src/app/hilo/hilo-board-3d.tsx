@@ -49,7 +49,13 @@ export function HiloBoard3D({
   return (
     <div className="relative mx-auto aspect-[4/3] w-full sm:aspect-video">
       <GameStage className="h-full w-full" interactive fallback={<Fallback card={card} />}>
-        <HiloStage card={card} busted={busted} celebrate={celebrate} locked={locked} onGuess={onGuess} />
+        <HiloStage
+          card={card}
+          busted={busted}
+          celebrate={celebrate}
+          locked={locked}
+          onGuess={onGuess}
+        />
       </GameStage>
     </div>
   );

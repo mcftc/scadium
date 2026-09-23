@@ -92,9 +92,15 @@ export function DailyRaceCard() {
               <div className="border-b border-border/40 bg-surface/50 px-6 py-2.5 text-xs">
                 <span className="text-foreground-muted">Your position: </span>
                 <span className="font-bold text-foreground">#{mine.rank}</span>
-                <span className="text-foreground-muted"> · {formatSol(mine.volumeLamports, 2)} wagered</span>
+                <span className="text-foreground-muted">
+                  {' '}
+                  · {formatSol(mine.volumeLamports, 2)} wagered
+                </span>
                 {BigInt(mine.prizeLamports) > 0n && (
-                  <span className="text-success"> · in the prizes ({formatSol(mine.prizeLamports, 2)})</span>
+                  <span className="text-success">
+                    {' '}
+                    · in the prizes ({formatSol(mine.prizeLamports, 2)})
+                  </span>
                 )}
               </div>
             )}
@@ -144,7 +150,9 @@ function RaceRow({ entry, paid, isMe }: { entry: RaceEntry; paid: boolean; isMe:
           {entry.username ?? shortAddress(entry.walletAddress)}
           {isMe && <span className="ml-1.5 text-[10px] uppercase text-primary-400">you</span>}
         </div>
-        <div className="text-xs text-foreground-muted">{formatSol(entry.volumeLamports, 2)} wagered</div>
+        <div className="text-xs text-foreground-muted">
+          {formatSol(entry.volumeLamports, 2)} wagered
+        </div>
       </div>
       <div className="text-right">
         {prize > 0n ? (

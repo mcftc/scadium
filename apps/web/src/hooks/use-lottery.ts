@@ -20,6 +20,10 @@ export interface LotteryLastResult {
   clientSeed: string;
   nonce: number;
   slotHash: string; // hex — third entropy input, needed by the verifier
+  /** Where `slotHash` came from: 'drand-quicknet' | 'onchain' | 'synthetic-not-fair'. */
+  fairness: string;
+  /** drand round `slotHash` is the value of (ADR 0004). */
+  beaconRound: number | null;
   winnersCount: number;
   bracketWinnerCounts: number[];
   totalPoolScad: number;
@@ -50,6 +54,8 @@ export interface LotterySnapshot {
   clientSeed: string;
   nonce: number;
   drawAt: number;
+  /** The drand round this draw WILL fold in — the first after drawAt (ADR 0004). */
+  beaconRound: number | null;
   ticketCount: number;
   potLamports: string;
   ticketPriceScadBase: string;
@@ -116,6 +122,8 @@ export interface DrawResults {
   clientSeed: string;
   nonce: number;
   slotHash: string | null;
+  fairness: string | null;
+  beaconRound: string | null;
   winnersCount: number;
   winners: DrawWinner[];
 }
@@ -150,6 +158,8 @@ export interface LotteryDrawRow {
   clientSeed: string;
   nonce: number;
   slotHash: string | null;
+  fairness: string | null;
+  beaconRound: string | null;
 }
 
 /** Live current-draw state, seeded from REST and patched over Socket.io. */

@@ -428,8 +428,8 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
           <PrizeTable snap={snap} />
           <p className="mt-3 text-[11px] text-foreground-muted">
             Pooled $SCAD prizes — match your digits left-to-right; the more leading digits hit, the
-            higher your bracket. Every draw is provably fair — numbers are committed before tickets
-            open.
+            higher your bracket. The draw&apos;s seed is committed before tickets open and mixed
+            with a public drand beacon value published after sales close — verifiable per draw.
           </p>
         </Card>
       </div>

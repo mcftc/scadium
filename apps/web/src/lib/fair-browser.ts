@@ -471,10 +471,7 @@ export async function towerTraps(
  * Verify a server seed matches its committed hash. Lets the user prove the
  * server didn't swap in a different seed after the fact.
  */
-export async function verifyCommit(
-  serverSeed: string,
-  committedHash: string,
-): Promise<boolean> {
+export async function verifyCommit(serverSeed: string, committedHash: string): Promise<boolean> {
   const computed = await sha256Hex(serverSeed);
   return computed.toLowerCase() === committedHash.toLowerCase();
 }

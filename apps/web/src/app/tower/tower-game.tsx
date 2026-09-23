@@ -17,7 +17,12 @@ import { SoundToggle } from '@/components/instant/sound-toggle';
 import { useBustShake } from '@/hooks/use-bust-shake';
 import { cn } from '@/lib/cn';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
-import { useTower, isTowerSettled, type TowerRoundView, type TowerSettleResult } from '@/hooks/use-tower';
+import {
+  useTower,
+  isTowerSettled,
+  type TowerRoundView,
+  type TowerSettleResult,
+} from '@/hooks/use-tower';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { ApiError } from '@/lib/api-client';
@@ -214,7 +219,13 @@ export function TowerGame() {
             disabled={busy || (isAuthenticated && !validBet)}
             className="flex h-12 w-full items-center justify-center rounded-xl bg-gradient-primary font-semibold text-white shadow-glow-sm disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : isAuthenticated ? 'Start climb' : 'Connect wallet'}
+            {busy ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : isAuthenticated ? (
+              'Start climb'
+            ) : (
+              'Connect wallet'
+            )}
           </button>
         ) : (
           <button
@@ -223,12 +234,18 @@ export function TowerGame() {
             disabled={busy || currentRow < 1}
             className="flex h-12 w-full items-center justify-center rounded-xl bg-success font-semibold text-white shadow-glow-sm disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : `Cash out ${currentMult.toFixed(2)}×`}
+            {busy ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              `Cash out ${currentMult.toFixed(2)}×`
+            )}
           </button>
         )}
 
         <p className="text-center text-xs text-foreground-muted">
-          {active ? `pick a tile in the lit row · climbed ${currentRow}/${ROWS}` : 'climb row by row after starting'}
+          {active
+            ? `pick a tile in the lit row · climbed ${currentRow}/${ROWS}`
+            : 'climb row by row after starting'}
         </p>
 
         {error ? <p className="text-center text-xs text-danger">{error}</p> : null}

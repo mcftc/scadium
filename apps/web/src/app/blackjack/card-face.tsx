@@ -15,19 +15,11 @@ const SUIT_SYMBOL: Record<string, string> = {
  * Single playing card with a flip animation when going from face-down to
  * face-up. `placeholder` shows an empty outline for the initial empty seats.
  */
-export function CardFace({
-  card,
-  placeholder,
-}: {
-  card: Card | null;
-  placeholder?: boolean;
-}) {
+export function CardFace({ card, placeholder }: { card: Card | null; placeholder?: boolean }) {
   const isRed = card && (card.suit === 'H' || card.suit === 'D');
 
   if (placeholder) {
-    return (
-      <div className="h-24 w-16 rounded-lg border-2 border-dashed border-border/50" />
-    );
+    return <div className="h-24 w-16 rounded-lg border-2 border-dashed border-border/50" />;
   }
 
   if (!card) {

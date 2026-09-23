@@ -56,7 +56,9 @@ export function LeaderboardBoard() {
                 onClick={() => setPeriod(p.key)}
                 className={cn(
                   'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
-                  period === p.key ? 'bg-surface-elevated text-foreground' : 'text-foreground-muted',
+                  period === p.key
+                    ? 'bg-surface-elevated text-foreground'
+                    : 'text-foreground-muted',
                 )}
               >
                 {p.label}

@@ -50,6 +50,8 @@ export interface JackpotResult {
   clientSeed: string;
   nonce: number;
   drawnAt: number;
+  /** drand round the ticket folded in (ADR 0004). */
+  beaconRound: number | null;
 }
 
 export interface JackpotSnapshot {
@@ -64,6 +66,8 @@ export interface JackpotSnapshot {
    * `minPlayers`-th player on it is the draw countdown.
    */
   closeAt: number | null;
+  /** The drand round the draw WILL fold in, once the countdown runs (ADR 0004). */
+  beaconRound: number | null;
   totalLamports: string;
   playerCount: number;
   config: {
@@ -98,6 +102,9 @@ export interface JackpotRoundRow {
   winnerPlayerId: string | null;
   drawnAt: string | null;
   ranges: JackpotRange[];
+  /** drand round the ticket folded in, and its value (ADR 0004). */
+  beaconRound: string | null;
+  entropy: string | null;
   serverSeed: string | null;
   serverSeedHash: string;
   clientSeed: string;

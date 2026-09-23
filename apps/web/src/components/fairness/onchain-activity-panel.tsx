@@ -98,10 +98,11 @@ export function OnchainActivityPanel() {
             </>
           ) : (
             <>
-              The chain layer is in off-chain-first play-money mode: outcomes derive from a
-              deterministic synthetic slot hash (still provably fair, reproducible in the verifier).
-              Once <code>scadium_rng</code> is deployed to <strong>{data.cluster}</strong>, every
-              game anchors on it and the links below go live.
+              The chain layer is in off-chain-first play-money mode. Crash, jackpot and lottery
+              results fold in the public drand randomness beacon, published after betting closes, so
+              nobody can know them in advance — each is reproducible in the verifier. Once{' '}
+              <code>scadium_rng</code> is deployed to <strong>{data.cluster}</strong>, every game
+              anchors on it and the links below go live.
             </>
           )}
         </p>

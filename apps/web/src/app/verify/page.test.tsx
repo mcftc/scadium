@@ -4,7 +4,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 const meMock = vi.fn();
 const startMutate = vi.fn();
 vi.mock('@/hooks/use-me', () => ({ useMe: () => meMock() }));
-vi.mock('@/hooks/use-kyc', () => ({ useStartKyc: () => ({ mutate: startMutate, isPending: false }) }));
+vi.mock('@/hooks/use-kyc', () => ({
+  useStartKyc: () => ({ mutate: startMutate, isPending: false }),
+}));
 
 import Page from './page';
 

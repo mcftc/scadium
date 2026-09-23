@@ -1,9 +1,4 @@
-import {
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  TransactionInstruction,
-} from '@solana/web3.js';
+import { PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
 
 /**
  * Client-side builders for the scadium_vault program's USER-signed

@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import type { MeResponse } from '@/hooks/use-me';
+import { fairnessHref as verifyLink } from '@/lib/fairness-link';
 
 /**
  * Server-authoritative result for the instant, house-banked single-player games
@@ -43,15 +44,10 @@ export function useInstantGame<TBody extends Record<string, unknown>>(game: stri
   });
 }
 
-/** Build a deep link into the /fairness verifier, mirroring crash-fairness. */
+/** Deep link into the /fairness verifier for an instant-game bet. */
 export function fairnessHref(
   game: string,
   fairness: { serverSeedHash: string; clientSeed: string; nonce: number },
 ): string {
-  return (
-    `/fairness?game=${game}` +
-    `&clientSeed=${encodeURIComponent(fairness.clientSeed)}` +
-    `&nonce=${fairness.nonce}` +
-    `&commit=${fairness.serverSeedHash}`
-  );
+  return verifyLink(game, fairness);
 }

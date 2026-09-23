@@ -11,6 +11,10 @@ import {
   reproduceRound,
   lotteryDraw,
   jackpotRoll,
+  crashPointFromEntropy,
+  jackpotTicketFromEntropy,
+  jackpotWinnerIndex,
+  fetchBeaconRandomness,
   diceRoll,
   limboResult,
   wheelSpin,
@@ -21,7 +25,10 @@ import {
   verifyCommit,
   type DealLogEntry,
 } from '@/lib/fair-browser';
+import { api } from '@/lib/api-client';
 import {
+  FAIR_BEACON,
+  beaconRoundUrl,
   DICE,
   LIMBO,
   WHEEL_SEGMENTS,
@@ -72,7 +79,32 @@ interface Result {
   game: Game;
   output: string;
   commitOk: boolean | null;
+  /** Further independent checks (beacon value, winning ticket, winner), each pass/fail. */
+  checks: { label: string; ok: boolean }[];
 }
+
+/** A settled jackpot round as GET /jackpot/rounds/:id serves it. */
+interface JackpotRoundDetail {
+  serverSeed: string | null;
+  serverSeedHash: string;
+  clientSeed: string;
+  nonce: number;
+  totalLamports: string;
+  winningTicket: string | null;
+  winnerPlayerId: string | null;
+  beaconRound: string | null;
+  entropy: string | null;
+  ranges: {
+    playerId: string;
+    player: string;
+    amountLamports: string;
+    start: string;
+    end: string;
+  }[];
+}
+
+/** Games whose result folds in a public drand beacon value (ADR 0004). */
+const BEACON_GAMES: Game[] = ['crash', 'lottery', 'jackpot'];
 
 /**
  * Client-side verifier. Uses WebCrypto directly — the server never sees
@@ -86,6 +118,8 @@ export function VerifierForm() {
   const [nonce, setNonce] = useState('0');
   const [commitHash, setCommitHash] = useState('');
   const [slotHash, setSlotHash] = useState(''); // lottery only — draw-time entropy
+  const [beaconRound, setBeaconRound] = useState(''); // crash/lottery/jackpot — drand round (ADR 0004)
+  const [jackpotRoundId, setJackpotRoundId] = useState(''); // jackpot — settled round to check
   const [dealLog, setDealLog] = useState(''); // blackjack only — round deal order / seat deck indices
   const [target, setTarget] = useState(''); // dice / limbo only — chosen target (optional)
   const [diceMode, setDiceMode] = useState<DiceMode>('under'); // dice only — win rule
@@ -120,41 +154,113 @@ export function VerifierForm() {
     if (md === 'under' || md === 'over') setDiceMode(md);
     const mn = q.get('mines');
     if (mn) setMineCount(mn);
+    const br = q.get('beaconRound');
+    if (br) setBeaconRound(br);
+    const rid = q.get('round');
+    if (rid) setJackpotRoundId(rid);
   }, []);
+
+  /**
+   * The drand value for the entered round, fetched from the PUBLIC relays — the
+   * casino's copy is never trusted. If the casino recorded a value (`recorded`),
+   * it is checked against the beacon's.
+   */
+  async function beaconValue(
+    checks: Result['checks'],
+    recorded?: string | null,
+  ): Promise<string | null> {
+    if (!beaconRound.trim()) return null;
+    const round = Number(beaconRound);
+    if (!Number.isInteger(round) || round < 1)
+      throw new Error('Beacon round must be a positive integer');
+    const fetched = await fetchBeaconRandomness(round, FAIR_BEACON.RELAYS, FAIR_BEACON.CHAIN_HASH);
+    if (!fetched) throw new Error('Could not reach a drand relay — try again in a moment');
+    checks.push({
+      label: `drand round ${round} fetched from ${new URL(fetched.relay).host}`,
+      ok: true,
+    });
+    if (recorded) {
+      checks.push({
+        label: 'The value the casino recorded equals the public beacon',
+        ok: recorded.toLowerCase() === fetched.randomness,
+      });
+    }
+    return fetched.randomness;
+  }
 
   async function compute() {
     setError(null);
     setResult(null);
     setLoading(true);
     try {
-      if (!serverSeed || !clientSeed) {
+      const checks: Result['checks'] = [];
+      // A jackpot round id fills everything from the settled round itself.
+      let jp: JackpotRoundDetail | null = null;
+      if (game === 'jackpot' && jackpotRoundId.trim()) {
+        jp = await api<JackpotRoundDetail>(`/jackpot/rounds/${jackpotRoundId.trim()}`);
+      }
+      const sSeed = serverSeed || jp?.serverSeed || '';
+      const cSeed = clientSeed || jp?.clientSeed || '';
+      if (!sSeed || !cSeed) {
         throw new Error('Both serverSeed and clientSeed are required');
       }
-      const nonceNum = parseInt(nonce, 10);
+      const nonceNum = jp && nonce === '0' ? jp.nonce : parseInt(nonce, 10);
       if (!Number.isFinite(nonceNum) || nonceNum < 0) {
         throw new Error('Nonce must be a non-negative integer');
       }
 
       let output = '';
       if (game === 'crash') {
-        const p = await crashPoint(serverSeed, clientSeed, nonceNum);
+        const entropy = await beaconValue(checks, slotHash.trim() || null);
+        const p = entropy
+          ? await crashPointFromEntropy(sSeed, cSeed, entropy, nonceNum)
+          : await crashPoint(sSeed, cSeed, nonceNum);
         output = `${p.toFixed(2)}×`;
       } else if (game === 'coinflip') {
-        const r = await coinflipResult(serverSeed, clientSeed, nonceNum);
+        const r = await coinflipResult(sSeed, cSeed, nonceNum);
         output = r;
       } else if (game === 'lottery') {
-        if (!slotHash.trim()) {
+        // A beacon draw is checked against the beacon itself; an older draw
+        // needs the slot hash it published.
+        const entropy = (await beaconValue(checks, slotHash.trim() || null)) ?? slotHash.trim();
+        if (!entropy) {
           throw new Error(
-            'Lottery needs the draw’s slot hash (64 hex chars) — shown on the lottery page after each draw',
+            'Lottery needs the draw’s beacon round (or, for older draws, its slot hash) — both are on the draw’s results',
           );
         }
-        const { digits } = await lotteryDraw(serverSeed, clientSeed, slotHash.trim(), nonceNum);
+        const { digits } = await lotteryDraw(sSeed, cSeed, entropy, nonceNum);
         output = digits.join('  ');
       } else if (game === 'jackpot') {
-        const roll = await jackpotRoll(serverSeed, clientSeed, nonceNum);
-        output = `roll ${roll}  (winner = roll mod pot)`;
+        const entropy = await beaconValue(checks, jp?.entropy ?? null);
+        if (jp) {
+          // Everything needed to check the WINNER, not just the roll: the ticket
+          // from the seeds (and beacon), then whose range holds it.
+          const total = BigInt(jp.totalLamports);
+          const ticket = entropy
+            ? await jackpotTicketFromEntropy(sSeed, cSeed, entropy, nonceNum, total)
+            : (await jackpotRoll(sSeed, cSeed, nonceNum)) % total;
+          const idx = jackpotWinnerIndex(
+            jp.ranges.map((r) => BigInt(r.amountLamports)),
+            ticket,
+          );
+          const holder = jp.ranges[idx];
+          checks.push({
+            label: `Winning ticket ${ticket} matches the round's record`,
+            ok: jp.winningTicket === ticket.toString(),
+          });
+          checks.push({
+            label: `Ticket ${ticket} lies in ${holder?.player ?? '—'}'s range, and they were paid`,
+            ok: !!holder && holder.playerId === jp.winnerPlayerId,
+          });
+          output =
+            `ticket ${ticket} of ${total}\nwinner ${holder?.player ?? '—'}` +
+            (holder ? `  [${holder.start}, ${holder.end})` : '');
+        } else {
+          const roll = await jackpotRoll(sSeed, cSeed, nonceNum);
+          output = `roll ${roll}  (winner = roll mod pot — enter the round id to check the winner)`;
+        }
       } else if (game === 'dice') {
-        const roll = await diceRoll(serverSeed, clientSeed, nonceNum);
+        const roll = await diceRoll(sSeed, cSeed, nonceNum);
         const t = target.trim() ? Number(target) : null;
         const over = diceMode === 'over';
         const won = t !== null && (over ? roll >= t : roll < t);
@@ -163,14 +269,14 @@ export function VerifierForm() {
             ? `roll ${roll.toFixed(2)}  ·  target ${over ? '≥' : '<'}${t}  →  ${won ? `WIN ${diceMultiplier(t, diceMode).toFixed(2)}×` : 'LOSS'}`
             : `roll ${roll.toFixed(2)}  (${over ? 'roll-over: win when roll ≥ target' : 'roll-under: win when roll < target'})`;
       } else if (game === 'limbo') {
-        const result = await limboResult(serverSeed, clientSeed, nonceNum, LIMBO.HOUSE_EDGE);
+        const result = await limboResult(sSeed, cSeed, nonceNum, LIMBO.HOUSE_EDGE);
         const t = target.trim() ? Math.floor(Number(target) * 100) / 100 : null;
         output =
           t !== null && Number.isFinite(t)
             ? `result ${result.toFixed(2)}×  ·  target ${t.toFixed(2)}×  →  ${result >= t ? `WIN ${t.toFixed(2)}×` : 'LOSS'}`
             : `result ${result.toFixed(2)}×  (win when result ≥ target)`;
       } else if (game === 'wheel') {
-        const index = await wheelSpin(serverSeed, clientSeed, nonceNum, WHEEL_SEGMENTS);
+        const index = await wheelSpin(sSeed, cSeed, nonceNum, WHEEL_SEGMENTS);
         const mult = wheelMultiplier(index);
         output = `segment ${index} / ${WHEEL_SEGMENTS}  →  ${mult}×`;
       } else if (game === 'plinko') {
@@ -179,7 +285,7 @@ export function VerifierForm() {
         if (!payouts) {
           throw new Error(`Plinko rows must be one of ${PLINKO.ROWS.join(', ')}`);
         }
-        const { path, bin } = await plinkoDrop(serverSeed, clientSeed, nonceNum, r);
+        const { path, bin } = await plinkoDrop(sSeed, cSeed, nonceNum, r);
         const mult = payouts[bin] ?? 0;
         const dirs = path.map((d) => (d ? 'R' : 'L')).join('');
         output = `bin ${bin} / ${r}  →  ${mult}×\npath ${dirs}`;
@@ -188,16 +294,16 @@ export function VerifierForm() {
         if (!Number.isInteger(m) || m < MINES.MIN_MINES || m > MINES.MAX_MINES) {
           throw new Error(`Mine count must be in [${MINES.MIN_MINES}, ${MINES.MAX_MINES}]`);
         }
-        const field = await mineField(serverSeed, clientSeed, nonceNum, MINES.CELLS, m);
+        const field = await mineField(sSeed, cSeed, nonceNum, MINES.CELLS, m);
         output = `mines at cells ${field.join(', ')}  (5×5 board, cells 0–24 left-to-right, top-to-bottom)`;
       } else if (game === 'hilo') {
-        const seq = await hiloSequence(serverSeed, clientSeed, nonceNum, HILO.MAX_STEPS + 1);
+        const seq = await hiloSequence(sSeed, cSeed, nonceNum, HILO.MAX_STEPS + 1);
         const cards = seq.map((c) => `${HILO_RANKS[c % 13]}${HILO_SUITS[Math.floor(c / 13)]}`);
         output = `committed sequence (base card first):\n${cards.join('  ')}`;
       } else if (game === 'tower') {
         const traps = await towerTraps(
-          serverSeed,
-          clientSeed,
+          sSeed,
+          cSeed,
           nonceNum,
           TOWER.ROWS,
           TOWER.COLUMNS,
@@ -207,12 +313,13 @@ export function VerifierForm() {
           .map((cols, r2) => `row ${r2 + 1}: trap at column ${cols.map((c) => c + 1).join(', ')}`)
           .join('\n');
       } else {
-        output = await verifyBlackjack(serverSeed, clientSeed, nonceNum, dealLog);
+        output = await verifyBlackjack(sSeed, cSeed, nonceNum, dealLog);
       }
 
-      const commitOk = commitHash.trim() ? await verifyCommit(serverSeed, commitHash.trim()) : null;
+      const commit = commitHash.trim() || jp?.serverSeedHash || '';
+      const commitOk = commit ? await verifyCommit(sSeed, commit) : null;
 
-      setResult({ game, output, commitOk });
+      setResult({ game, output, commitOk, checks });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to compute');
     } finally {
@@ -261,21 +368,53 @@ export function VerifierForm() {
         mono
       />
       <TextField label="Nonce" value={nonce} onChange={setNonce} placeholder="0" mono />
-      {game === 'lottery' && (
+      {game === 'jackpot' && (
         <TextField
-          label="Slot hash — pinned at commit (the target slot's hash, from the reveal tx)"
+          label="Round id (optional — checks the winning ticket AND who owned it)"
+          value={jackpotRoundId}
+          onChange={setJackpotRoundId}
+          placeholder="from the round's Verify link"
+          mono
+        />
+      )}
+      {BEACON_GAMES.includes(game) && (
+        <TextField
+          label="drand beacon round (from the round's details)"
+          value={beaconRound}
+          onChange={setBeaconRound}
+          placeholder="e.g. 32459457"
+          mono
+        />
+      )}
+      {(game === 'lottery' || game === 'crash') && (
+        <TextField
+          label={
+            game === 'lottery'
+              ? 'Draw entropy / slot hash (older draws; a beacon draw is fetched from drand)'
+              : 'Recorded entropy (optional — checked against the beacon)'
+          }
           value={slotHash}
           onChange={setSlotHash}
           placeholder="64-char hex"
           mono
         />
       )}
-      {game === 'lottery' && (
+      {BEACON_GAMES.includes(game) && (
         <p className="-mt-2 text-[11px] text-foreground-muted">
-          The draw entropy is the hash of a slot <strong>pinned at commit time</strong>, so the
-          operator can&apos;t grind the reveal. Draws marked{' '}
-          <span className="text-danger">synthetic-not-fair</span> used an off-chain fallback (chain
-          disabled) and are <strong>not</strong> provably fair.
+          The result folds in the{' '}
+          <strong>first drand beacon value published after betting closed</strong> — fetched here
+          straight from the public relays (
+          <a
+            className="underline"
+            href={beaconRoundUrl(Number(beaconRound) || 1)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {FAIR_BEACON.NAME}
+          </a>
+          ), so nobody, the casino included, could know it while bets were open. Older draws marked{' '}
+          <span className="text-danger">synthetic-not-fair</span> predate the beacon and are{' '}
+          <strong>not</strong> provably fair.
         </p>
       )}
       {game === 'blackjack' && (
@@ -418,6 +557,18 @@ export function VerifierForm() {
               {result.output}
             </div>
           </div>
+          {result.checks.map((c) => (
+            <div
+              key={c.label}
+              className={cn(
+                'flex items-center gap-2 text-sm border-t border-border pt-3',
+                c.ok ? 'text-success' : 'text-danger',
+              )}
+            >
+              {c.ok ? <Check className="h-4 w-4 shrink-0" /> : <X className="h-4 w-4 shrink-0" />}
+              {c.label}
+            </div>
+          ))}
           {result.commitOk !== null && (
             <div
               className={cn(

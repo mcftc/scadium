@@ -84,17 +84,13 @@ export function PhotoSection() {
 
   return (
     <div>
-      <label className="text-xs uppercase tracking-wider text-foreground-muted">Profile photo</label>
+      <label className="text-xs uppercase tracking-wider text-foreground-muted">
+        Profile photo
+      </label>
       <div className="mt-3 flex items-center gap-4">
         <Avatar src={me.avatarUrl} name={name} className="h-16 w-16 shrink-0 rounded-2xl text-xl" />
         <div className="flex flex-wrap gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onFile}
-          />
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
           <Button
             variant="secondary"
             size="sm"

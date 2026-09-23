@@ -158,8 +158,21 @@ export function LotteryPageHeader({ snap }: { snap: ReturnType<typeof useLottery
             split per bracket, shared among that bracket&apos;s winners.
           </li>
           <li>
-            Every draw is committed before tickets open and revealed on-chain with Solana slot-hash
-            entropy — verify any result yourself on the Provably Fair page.
+            {snap?.beaconRound ? (
+              <>
+                The server seed is committed before tickets open, and the number is drawn with the{' '}
+                <span className="text-foreground font-semibold">public drand beacon</span> value
+                published just after sales close (round {snap.beaconRound}) — nobody, us included,
+                can know it while tickets are on sale. Verify any result on the Provably Fair page.
+              </>
+            ) : snap?.chain.enabled ? (
+              <>
+                Every draw is committed before tickets open and revealed on-chain with Solana
+                slot-hash entropy — verify any result yourself on the Provably Fair page.
+              </>
+            ) : (
+              <>The draw is committed before tickets open; see each draw&apos;s fairness badge.</>
+            )}
           </li>
         </ol>
       </Dialog>

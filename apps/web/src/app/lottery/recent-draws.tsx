@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { useRecentDraws } from '@/hooks/use-lottery';
 import { LotteryBalls } from './lottery-balls';
+import { fairnessHref } from '@/lib/fairness-link';
 
 export function RecentDraws() {
   const { data, isLoading } = useRecentDraws();
@@ -20,11 +21,14 @@ export function RecentDraws() {
   return (
     <div className="space-y-2">
       {data.map((d) => {
-        const verifyHref =
-          `/fairness?game=lottery&clientSeed=${encodeURIComponent(d.clientSeed)}` +
-          `&nonce=${d.nonce}&commit=${d.serverSeedHash}` +
-          (d.serverSeed ? `&serverSeed=${d.serverSeed}` : '') +
-          (d.slotHash ? `&slotHash=${d.slotHash}` : '');
+        const verifyHref = fairnessHref('lottery', {
+          clientSeed: d.clientSeed,
+          nonce: d.nonce,
+          serverSeedHash: d.serverSeedHash,
+          serverSeed: d.serverSeed,
+          slotHash: d.slotHash,
+          beaconRound: d.beaconRound,
+        });
         return (
           <div
             key={d.id}

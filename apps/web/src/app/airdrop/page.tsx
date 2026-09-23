@@ -12,8 +12,8 @@ export default function AirdropPage() {
             <span className="text-gradient">Airdrop</span>
           </h1>
           <p className="mt-4 text-foreground-muted max-w-xl mx-auto">
-            Play and chat to qualify for hourly rewards. Open the daily case for a chance
-            at bigger drops.
+            Play and chat to qualify for hourly rewards. Open the daily case for a chance at bigger
+            drops.
           </p>
         </div>
         <AirdropDashboard />

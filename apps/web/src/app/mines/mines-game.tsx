@@ -17,7 +17,12 @@ import { SoundToggle } from '@/components/instant/sound-toggle';
 import { useBustShake } from '@/hooks/use-bust-shake';
 import { cn } from '@/lib/cn';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
-import { useMines, isMinesSettled, type MinesRoundView, type MinesSettleResult } from '@/hooks/use-mines';
+import {
+  useMines,
+  isMinesSettled,
+  type MinesRoundView,
+  type MinesSettleResult,
+} from '@/hooks/use-mines';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { ApiError } from '@/lib/api-client';
@@ -321,7 +326,9 @@ export function MinesGame() {
           </div>
           {autoMode && (
             <div className="mt-2 flex items-center justify-between text-xs">
-              <span className="uppercase tracking-wider text-foreground-muted">Tiles per round</span>
+              <span className="uppercase tracking-wider text-foreground-muted">
+                Tiles per round
+              </span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"

@@ -59,7 +59,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${chakra.variable} dark`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${inter.variable} ${chakra.variable} dark`}
+      suppressHydrationWarning
+    >
       <body className="min-h-screen font-sans">
         <Providers>
           <AppShell>{children}</AppShell>

@@ -17,7 +17,12 @@ import { SoundToggle } from '@/components/instant/sound-toggle';
 import { useBustShake } from '@/hooks/use-bust-shake';
 import { cn } from '@/lib/cn';
 import type { InstantSettleResult } from '@/hooks/use-instant-game';
-import { useHilo, isHiloSettled, type HiloRoundView, type HiloSettleResult } from '@/hooks/use-hilo';
+import {
+  useHilo,
+  isHiloSettled,
+  type HiloRoundView,
+  type HiloSettleResult,
+} from '@/hooks/use-hilo';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { ApiError } from '@/lib/api-client';
@@ -199,7 +204,13 @@ export function HiloGame() {
             disabled={busy || (isAuthenticated && !validBet)}
             className="flex h-12 w-full items-center justify-center rounded-xl bg-gradient-primary font-semibold text-white shadow-glow-sm disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : isAuthenticated ? 'Start round' : 'Connect wallet'}
+            {busy ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : isAuthenticated ? (
+              'Start round'
+            ) : (
+              'Connect wallet'
+            )}
           </button>
         ) : (
           <>
@@ -227,13 +238,19 @@ export function HiloGame() {
               disabled={busy || steps < 1}
               className="flex h-11 w-full items-center justify-center rounded-xl bg-success font-semibold text-white shadow-glow-sm disabled:opacity-50"
             >
-              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : `Cash out ${cumMult.toFixed(2)}×`}
+              {busy ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                `Cash out ${cumMult.toFixed(2)}×`
+              )}
             </button>
           </>
         )}
 
         <p className="text-center text-xs text-foreground-muted">
-          {active ? `streak ${steps} · guess higher-or-same / lower-or-same` : 'guess the next card after starting'}
+          {active
+            ? `streak ${steps} · guess higher-or-same / lower-or-same`
+            : 'guess the next card after starting'}
         </p>
 
         {error ? <p className="text-center text-xs text-danger">{error}</p> : null}
