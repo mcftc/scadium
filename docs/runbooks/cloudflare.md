@@ -201,8 +201,16 @@ Notes:
 - The check **fails open**: it is a cost guard, not a security control, so a
   transient Durable Object error logs loudly and lets the request through rather
   than taking the site down.
-- Accounting is conservative (a wake is charged a full 40s cold start), so the
-  real spend is at or below the cap, never above.
+- **What is charged is container *running* time**, sampled by a Durable Object
+  heartbeat every `BUDGET_HEARTBEAT_SECONDS` (default 60) while the container is
+  up. (Until 2026-09-23 it charged the gaps between HTTP requests — and an open
+  WebSocket keeps the container awake with no requests, so one idle tab ran it
+  nearly all day while the cap saw ~80 s an hour.) Once the cap is spent the
+  heartbeat `stop()`s the container — SIGTERM, so crash drains its round first
+  — and the edge returns 503. Overrun is bounded by one heartbeat interval.
+- `BUDGET_EXEMPT_PATHS` (default `/health,/api/v1/crash/cashout`) stay reachable
+  past the cap, so a player riding a crash round when it trips can still cash out
+  while the container drains.
 - The hourly cron **records** its own runtime against the same budget but is never
   **blocked** by it. The economy jobs are period-keyed, so a skipped hour is a
   permanent gap in airdrops/dividends/block-mining rather than something that
@@ -248,6 +256,27 @@ pnpm --filter @scadium/api test:integration
 
 Last full local run: typecheck 10/10, lint clean, **360 unit tests**,
 **263 integration tests** (99 files) against real Postgres, 53/53 migrations.
+
+## Game-loop settings (all optional; defaults in code)
+
+Operator knobs for the round loops — change them without a rebuild by adding a
+Worker var and redeploying (`worker/container.ts` forwards exactly this list,
+`CONTAINER_TUNABLES`, to the container env).
+
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `SETTLE_TX_TIMEOUT_MS` / `SETTLE_TX_MAX_WAIT_MS` | 30000 / 10000 | Budget for a round's settle transaction (Prisma's own default is 5 s — too short for a busy round on Neon). |
+| `SETTLE_RETRY_ATTEMPTS`, `SETTLE_RETRY_BASE_MS`, `SETTLE_RETRY_MAX_MS` | 4, 2000, 60000 | Settle retries with exponential backoff before the fallback (crash → refund via recovery; jackpot → refund; lottery keeps retrying). |
+| `ROUND_WATCHDOG_INTERVAL_MS` / `ROUND_STALL_MS` | 10000 / 90000 | How often each loop is checked, and how long it may show no progress before it is resumed. |
+| `CRASH_DRAIN_TIMEOUT_MS` | 120000 | On SIGTERM, how long crash may keep running to let the round in flight bust and settle (0 disables). |
+| `FAIR_BEACON_ENABLED` | on | drand beacon for crash/jackpot/lottery (ADR 0004). Off = the older seed-only derivation. |
+| `FAIR_BEACON_RELAYS` | api.drand.sh, drand.cloudflare.com, api2/api3.drand.sh | Relays tried in order. |
+| `FAIR_BEACON_WAIT_MS` / `FAIR_BEACON_RELAY_TIMEOUT_MS` | 15000 / 2500 | How long past a round's publish time to keep trying; per-request timeout. |
+
+The container needs outbound HTTPS to the beacon relays. If none answers in
+time, crash **voids** the round and refunds it (log: `beacon round … no relay
+answered`), the jackpot retries then refunds, and the lottery draw retries — none
+falls back to a seed-only result.
 
 ## Restart safety
 

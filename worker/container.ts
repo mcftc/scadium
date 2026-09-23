@@ -250,8 +250,32 @@ function unwrap(result: Response | Error): Response {
  * Undefined entries are dropped so the image's own defaults still apply, and no
  * value is hardcoded here.
  */
+/**
+ * Game-loop and fairness-beacon tunables the API reads from its environment
+ * (defaults live in the API; see docs/runbooks/cloudflare.md). Forwarded only
+ * when set as a Worker var, so an operator can change one with a var + deploy.
+ */
+const CONTAINER_TUNABLES = [
+  'SETTLE_TX_TIMEOUT_MS',
+  'SETTLE_TX_MAX_WAIT_MS',
+  'SETTLE_RETRY_ATTEMPTS',
+  'SETTLE_RETRY_BASE_MS',
+  'SETTLE_RETRY_MAX_MS',
+  'ROUND_WATCHDOG_INTERVAL_MS',
+  'ROUND_STALL_MS',
+  'CRASH_DRAIN_TIMEOUT_MS',
+  'FAIR_BEACON_ENABLED',
+  'FAIR_BEACON_RELAYS',
+  'FAIR_BEACON_WAIT_MS',
+  'FAIR_BEACON_RELAY_TIMEOUT_MS',
+] as const;
+
 function buildContainerEnv(env: Env): Record<string, string> {
+  const tunables = Object.fromEntries(
+    CONTAINER_TUNABLES.map((k) => [k, (env as unknown as Record<string, string | undefined>)[k]]),
+  );
   const candidates: Record<string, string | undefined> = {
+    ...tunables,
     NODE_ENV: 'production',
     PROCESS_MODE: env.PROCESS_MODE ?? 'both',
     API_PORT: String(CONTAINER_PORT),

@@ -36,6 +36,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 - [ ] **Reward reserve/restore writes no ledger row** → false solvency drift once chain is on. Route through the ledger (or add a reserved-aware drift rule).
 - [ ] **Legal ·** KYC/geo/age/licence enforcement exercised end-to-end in the money path (plumbing exists); completed third-party program audit + pentest before real funds.
 
+## Four-games hardening (2026-09-23) — plan `docs/superpowers/plans/2026-09-23-four-games-hardening.md`
+
+All of tiers A–D shipped; see CHANGELOG. Left out of scope, still open:
+- [ ] **H6 · `/lottery/faucet` drains the cosigner** (dormant while the chain is off) — gate on a devnet-only flag + a per-user daily claim, or remove.
+- [ ] **H7 · On-chain lottery draw can never reveal** (dormant) — needs a program `seal_draw` step.
+- [ ] **scadium_rng ordering** (dormant): crash anchoring reveals the seed on-chain before betting opens; coinflip's on-chain path makes the result public before the flip is claimed. Fix before enabling the rng program.
+- [ ] **Coinflip DB-read snipe**: anyone with DB read access can compute an open PvP flip's result for a chosen client seed. Needs post-join entropy (the beacon could serve: fold the round published after the join).
+- [ ] **RG pending stakes** cover coinflip + lottery (the unbounded cases); crash/jackpot hold one stake per round and are not counted until settled.
+- [ ] **Deploy overlap**: during a Cloudflare rollout the new container's recovery can void a round the old container is still draining (money-safe via the claim gate; the round is refunded rather than completed).
+
 ## Tier 3 — Product copy / compliance (cheap; before any public launch)
 
 - [x] **H17 · False capability/audit/RTP claims.** ✅ Fixed: "Audited: Yes"→"Pending"; six RTP figures corrected to 95% (Limbo/Mines/Tower/HiLo/Wheel/Plinko; Dice 99%/Blackjack 99.5% are correct and kept); dropped "on-chain VRF", the "On-Chain Games" tagline, "every fill is a real transaction", "on-chain AMM"; `metadataBase` + affiliate URL → scadium.com.
