@@ -16,6 +16,7 @@
  * the harness gets the override regardless of import order.
  */
 import { PrismaClient } from '@prisma/client';
+import { ALL_GAME_IDS } from '@scadium/shared';
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
@@ -25,6 +26,14 @@ export const TEST_DATABASE_URL =
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 // ≥32 bytes — the API fails closed below that (#33).
 process.env.JWT_SECRET ??= 'test-secret-at-least-32-bytes-long!!';
+// Exercise the WHOLE catalogue, not the production roster. Which games ship is
+// a deployment concern (ENABLED_GAMES, default four — see
+// games/enabled-games.ts); the suite's job is to keep every game that still
+// exists under test. Several specs also use a currently-disabled game as the
+// VEHICLE for a shared money path — affiliate-settle proves a referrer is
+// credited via a dice bet, seed-rotation exercises the #C3 fix through
+// mines/tower/hilo — so narrowing this would silently delete that coverage.
+process.env.ENABLED_GAMES ??= ALL_GAME_IDS.join(',');
 
 // Lazily-imported Nest types/values so the env override above runs first.
 import type { INestApplication } from '@nestjs/common';
