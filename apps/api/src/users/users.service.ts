@@ -10,6 +10,7 @@ import { LEGAL_VERSION } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SiwsService } from '../auth/siws.service';
 import type { StatsWindow } from './dto/stats-query.dto';
+import { publicPlayerId } from '../common/public-player';
 
 /**
  * Read/write operations on the authenticated user's profile.
@@ -195,10 +196,7 @@ export class UsersService {
    * as new bets stream in. The cursor is the `createdAt` of the last row;
    * `id` is used as a tiebreaker within the same millisecond.
    */
-  async listBets(
-    userId: string,
-    params: { limit?: number; cursor?: string; gameType?: GameType },
-  ) {
+  async listBets(userId: string, params: { limit?: number; cursor?: string; gameType?: GameType }) {
     const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
     const bets = await this.prisma.bet.findMany({
       where: { userId, ...(params.gameType ? { gameType: params.gameType } : {}) },
@@ -322,6 +320,9 @@ export class UsersService {
   }) {
     return {
       id: user.id,
+      // The opaque id live games broadcast in place of the userId — the client
+      // compares against this to find itself in a round.
+      publicId: publicPlayerId(user.id),
       walletAddress: user.walletAddress,
       username: user.username,
       avatarUrl: user.avatarUrl,

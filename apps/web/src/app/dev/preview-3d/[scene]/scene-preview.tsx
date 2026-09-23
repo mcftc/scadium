@@ -56,7 +56,9 @@ export function ScenePreview({ scene }: { scene: string }) {
               key={key}
               href={`/dev/preview-3d/${key}`}
               className={
-                key === scene ? 'text-primary-400 underline' : 'text-foreground-muted hover:text-foreground'
+                key === scene
+                  ? 'text-primary-400 underline'
+                  : 'text-foreground-muted hover:text-foreground'
               }
             >
               {key}

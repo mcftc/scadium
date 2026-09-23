@@ -16,7 +16,7 @@ import {
   useMyJackpot,
   useJackpotRecent,
   type JackpotSnapshot,
-  type JackpotPlayer,
+  type JackpotResultEvent,
 } from '@/hooks/use-jackpot';
 import { JackpotReel, type JackpotReveal } from './jackpot-reel';
 import { useGameSound } from '@/components/instant/use-game-sound';
@@ -36,36 +36,29 @@ export function JackpotGame() {
   const [amount, setAmount] = useState('0.25');
   const [error, setError] = useState<string | null>(null);
 
-  // Winner reveal: capture the pot's players the instant before the draw,
-  // then run the reel when the result event lands (the snapshot refetch wipes
-  // the players list for the next round, so we freeze it here).
-  const playersRef = useRef<JackpotPlayer[]>([]);
-  const meIdRef = useRef<string | undefined>(undefined);
+  // Winner reveal, driven entirely by the result event: it carries every
+  // entry's ticket range from the settle, so the reel never depends on a
+  // client-side player list that can be stale or missing the last entrant.
+  const myPlayerIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    meIdRef.current = me?.id;
-  }, [me?.id]);
-  useEffect(() => {
-    if (snap && snap.players.length) playersRef.current = snap.players;
-  }, [snap]);
+    myPlayerIdRef.current = me?.publicId;
+  }, [me?.publicId]);
 
   const [reveal, setReveal] = useState<JackpotReveal | null>(null);
   useEffect(() => {
     if (!socket) return;
-    const onResult = (p: {
-      status: string;
-      winnerId: string | null;
-      winnerName: string | null;
-      payoutLamports: string;
-    }) => {
-      if (p.status !== 'drawn' || !p.winnerId) return;
-      const players = playersRef.current;
-      if (!players.length) return;
+    const onResult = (p: JackpotResultEvent) => {
+      if (p.status !== 'drawn' || !p.winnerPlayerId || !p.winningTicket || !p.ranges.length) {
+        return;
+      }
       setReveal({
-        players,
-        winnerId: p.winnerId,
+        ranges: p.ranges,
+        winnerPlayerId: p.winnerPlayerId,
         winnerName: p.winnerName,
         payoutLamports: p.payoutLamports,
-        meId: meIdRef.current,
+        winningTicket: p.winningTicket,
+        totalLamports: p.totalLamports,
+        myPlayerId: myPlayerIdRef.current,
       });
     };
     socket.on('jackpot:result', onResult);
@@ -91,7 +84,7 @@ export function JackpotGame() {
   }
 
   const mine = useMemo(
-    () => (snap && me ? (snap.players.find((p) => p.userId === me.id) ?? null) : null),
+    () => (snap && me ? (snap.players.find((p) => p.playerId === me.publicId) ?? null) : null),
     [snap, me],
   );
   const myChance = mine?.chance ?? 0;
@@ -206,7 +199,7 @@ export function JackpotGame() {
             </h3>
             <span className="text-xs text-foreground-muted">{snap?.playerCount ?? 0} players</span>
           </div>
-          <PlayersList snap={snap} meId={me?.id} />
+          <PlayersList snap={snap} myPlayerId={me?.publicId} />
         </Card>
       </div>
 
@@ -302,7 +295,7 @@ function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
   );
 }
 
-function PlayersList({ snap, meId }: { snap: JackpotSnapshot | null; meId?: string }) {
+function PlayersList({ snap, myPlayerId }: { snap: JackpotSnapshot | null; myPlayerId?: string }) {
   if (!snap || snap.players.length === 0) {
     return (
       <div className="py-6 text-center text-xs text-foreground-muted">
@@ -313,11 +306,11 @@ function PlayersList({ snap, meId }: { snap: JackpotSnapshot | null; meId?: stri
   return (
     <div className="space-y-2">
       {snap.players.map((p, i) => {
-        const isMe = p.userId === meId;
-        const name = p.username ?? shortAddress(p.walletAddress);
+        const isMe = p.playerId === myPlayerId;
+        const name = p.player;
         const color = BAR_COLORS[i % BAR_COLORS.length];
         return (
-          <div key={p.userId} className="space-y-1">
+          <div key={p.playerId} className="space-y-1">
             <div className="flex items-center justify-between text-xs">
               <span className={cn('font-semibold truncate', isMe && 'text-primary-400')}>
                 {name} {isMe && '(you)'}
@@ -399,9 +392,7 @@ function RecentWinners() {
             <div className="min-w-0">
               {r.status === 'drawn' ? (
                 <>
-                  <div className="font-semibold truncate">
-                    {r.winnerName ?? (r.winnerWallet ? shortAddress(r.winnerWallet) : 'anon')}
-                  </div>
+                  <div className="font-semibold truncate">{r.winnerName ?? 'anon'}</div>
                   <div className="text-success font-mono">+{formatSol(r.payoutLamports, 3)}</div>
                 </>
               ) : (

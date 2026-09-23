@@ -59,7 +59,9 @@ export function useAirdropPool() {
   const qc = useQueryClient();
 
   useEffect(() => {
-    api<AirdropPool>('/airdrop/pool').then(setPool).catch(() => {});
+    api<AirdropPool>('/airdrop/pool')
+      .then(setPool)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

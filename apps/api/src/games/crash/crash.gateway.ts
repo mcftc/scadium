@@ -44,18 +44,20 @@ export class CrashGateway {
     this.server.emit('crash:bust', payload);
   }
 
-  emitBetPlaced(roundId: string, bet: {
-    userId: string;
-    username: string | null;
-    walletAddress: string;
-    amountLamports: bigint;
-    autoCashout: number | null;
-  }) {
+  /** Public identity only — a display handle and an opaque id, never userId/wallet. */
+  emitBetPlaced(
+    roundId: string,
+    bet: {
+      playerId: string;
+      player: string;
+      amountLamports: bigint;
+      autoCashout: number | null;
+    },
+  ) {
     this.server.emit('crash:bet-placed', {
       roundId,
-      userId: bet.userId,
-      username: bet.username,
-      walletAddress: bet.walletAddress,
+      playerId: bet.playerId,
+      player: bet.player,
       amountLamports: bet.amountLamports.toString(),
       autoCashout: bet.autoCashout,
       // A fresh bet is never cashed out. The web CrashBet type expects
@@ -65,16 +67,18 @@ export class CrashGateway {
     });
   }
 
-  emitCashedOut(roundId: string, payload: {
-    userId: string;
-    /** Name fields so the curve can label the cashout marker. */
-    username: string | null;
-    walletAddress: string;
-    multiplier: number;
-    payoutLamports: string;
-    /** Stake still riding after this (possibly partial) cashout. */
-    remainingLamports: string;
-  }) {
+  emitCashedOut(
+    roundId: string,
+    payload: {
+      playerId: string;
+      /** Display handle so the curve can label the cashout marker. */
+      player: string;
+      multiplier: number;
+      payoutLamports: string;
+      /** Stake still riding after this (possibly partial) cashout. */
+      remainingLamports: string;
+    },
+  ) {
     this.server.emit('crash:cashed-out', { roundId, ...payload });
   }
 }

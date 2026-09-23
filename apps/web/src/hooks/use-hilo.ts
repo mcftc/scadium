@@ -19,7 +19,14 @@ export interface HiloRoundView {
   status: 'active' | 'won' | 'lost';
   stakeLamports: string;
   multiplier: number;
-  state: { index: number; card: number; rank: number; steps: number; cumMult: number; maxSteps: number };
+  state: {
+    index: number;
+    card: number;
+    rank: number;
+    steps: number;
+    cumMult: number;
+    maxSteps: number;
+  };
   fairness: RoundFairness;
 }
 

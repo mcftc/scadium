@@ -7,10 +7,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { JACKPOT } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
-import { JackpotEngine } from './jackpot.engine';
+import { JackpotEngine, type JackpotRangeRow } from './jackpot.engine';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
+import { displayHandle, publicPlayerId } from '../../common/public-player';
 
 /**
  * HTTP facade for the jackpot. Validates entries, debits the play-money
@@ -32,26 +33,19 @@ export class JackpotService {
       include: { user: { select: { id: true, username: true, walletAddress: true } } },
     });
 
-    // Aggregate contributions per player + win odds (share of pot).
+    // Aggregate contributions per player + win odds (share of pot). Public, so
+    // each player is a display handle + opaque id — never userId or full wallet.
     const total = entries.reduce((s, e) => s + e.amountLamports, BigInt(0));
-    const byUser = new Map<
-      string,
-      { username: string | null; walletAddress: string; amount: bigint }
-    >();
+    const byUser = new Map<string, { player: string; amount: bigint }>();
     for (const e of entries) {
-      const cur = byUser.get(e.userId) ?? {
-        username: e.user.username,
-        walletAddress: e.user.walletAddress,
-        amount: BigInt(0),
-      };
+      const cur = byUser.get(e.userId) ?? { player: displayHandle(e.user), amount: BigInt(0) };
       cur.amount += e.amountLamports;
       byUser.set(e.userId, cur);
     }
     const players = [...byUser.entries()]
       .map(([userId, p]) => ({
-        userId,
-        username: p.username,
-        walletAddress: p.walletAddress,
+        playerId: publicPlayerId(userId),
+        player: p.player,
         amountLamports: p.amount.toString(),
         chance: total > BigInt(0) ? Number((Number(p.amount) / Number(total)).toFixed(4)) : 0,
       }))
@@ -176,19 +170,56 @@ export class JackpotService {
         winner: { select: { username: true, walletAddress: true } },
       },
     });
-    return rounds.map((r) => ({
+    return rounds.map((r) => this.serializeRound(r));
+  }
+
+  /**
+   * One round, with everything needed to verify it: the revealed seeds, the
+   * winning ticket, and every entry's ticket range — so the winner can be
+   * checked, not just the roll. 404 until the round has been settled.
+   */
+  async round(id: string) {
+    const r = await this.prisma.jackpotRound.findUnique({
+      where: { id },
+      include: { seed: true, winner: { select: { username: true, walletAddress: true } } },
+    });
+    if (!r || r.status === 'open') throw new NotFoundException('Round not found or not drawn yet');
+    return this.serializeRound(r);
+  }
+
+  private serializeRound(r: {
+    id: string;
+    status: string;
+    totalLamports: bigint;
+    payoutLamports: bigint;
+    winningTicket: bigint | null;
+    winnerId: string | null;
+    winner: { username: string | null; walletAddress: string } | null;
+    drawnAt: Date | null;
+    rangesJson: unknown;
+    nonce: number;
+    seed: {
+      serverSeed: string | null;
+      serverSeedHash: string;
+      clientSeed: string;
+      revealedAt: Date | null;
+    };
+  }) {
+    return {
       id: r.id,
       status: r.status,
       totalLamports: r.totalLamports.toString(),
       payoutLamports: r.payoutLamports.toString(),
       winningTicket: r.winningTicket?.toString() ?? null,
-      winnerName: r.winner?.username ?? null,
-      winnerWallet: r.winner?.walletAddress ?? null,
+      winnerName: r.winner ? displayHandle(r.winner) : null,
+      winnerPlayerId: r.winnerId ? publicPlayerId(r.winnerId) : null,
       drawnAt: r.drawnAt?.toISOString() ?? null,
-      serverSeed: r.seed.serverSeed,
+      // The seed is public only once revealed at settlement.
+      serverSeed: r.seed.revealedAt ? r.seed.serverSeed : null,
       serverSeedHash: r.seed.serverSeedHash,
       clientSeed: r.seed.clientSeed,
       nonce: r.nonce,
-    }));
+      ranges: (r.rangesJson as JackpotRangeRow[] | null) ?? [],
+    };
   }
 }

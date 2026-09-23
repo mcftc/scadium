@@ -223,6 +223,21 @@ export async function jackpotRoll(
   return BigInt(`0x${hash}`);
 }
 
+/** Matches @scadium/fair `jackpotRanges`: entry i owns [start_i, end_i) in entry order. */
+export function jackpotRanges(amounts: readonly bigint[]): { start: bigint; end: bigint }[] {
+  let cursor = 0n;
+  return amounts.map((amount) => {
+    const range = { start: cursor, end: cursor + amount };
+    cursor += amount;
+    return range;
+  });
+}
+
+/** Matches @scadium/fair `jackpotWinnerIndex`: whose range holds the ticket (-1 if none). */
+export function jackpotWinnerIndex(amounts: readonly bigint[], ticket: bigint): number {
+  return jackpotRanges(amounts).findIndex((r) => ticket >= r.start && ticket < r.end);
+}
+
 /** HMAC-SHA256(key, message) → raw bytes (the float stream reads 4-byte words). */
 async function hmacSha256Bytes(key: string, message: string): Promise<Uint8Array> {
   const enc = new TextEncoder();

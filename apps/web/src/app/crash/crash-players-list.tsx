@@ -1,7 +1,7 @@
 'use client';
 
 import type { CrashBet } from '@/hooks/use-crash';
-import { shortAddress, formatSol } from '@/lib/format';
+import { formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
 /**
@@ -24,11 +24,11 @@ export function CrashPlayersList({ bets }: { bets: CrashBet[] }) {
         // != null also covers undefined — the socket payload may omit the field
         const cashed = bet.cashedOutAt != null;
         const partial = !cashed && BigInt(bet.payoutLamports ?? '0') > BigInt(0);
-        const name = bet.username ?? shortAddress(bet.walletAddress);
+        const name = bet.player;
         const stake = bet.originalAmountLamports ?? bet.amountLamports;
         return (
           <div
-            key={bet.userId}
+            key={bet.playerId}
             className={cn(
               'flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs',
               cashed || partial

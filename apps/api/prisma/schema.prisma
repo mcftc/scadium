@@ -704,6 +704,9 @@ model JackpotRound {
   // countdown by the MIN_PLAYERS-th distinct player.
   closeAt        DateTime?
   drawnAt        DateTime?
+  // Drawn rounds: every entry's ticket range [start, end) in entry order, with
+  // the owner's public handle — the winner is checkable from this + the ticket.
+  rangesJson     Json?
   createdAt      DateTime           @default(now())
 
   entries JackpotEntry[]

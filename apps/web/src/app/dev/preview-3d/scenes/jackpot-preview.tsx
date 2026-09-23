@@ -2,16 +2,32 @@
 
 import { useState } from 'react';
 import { JackpotReel, type JackpotReveal } from '@/app/jackpot/jackpot-reel';
-import type { JackpotPlayer } from '@/hooks/use-jackpot';
+import type { JackpotRange } from '@/hooks/use-jackpot';
 
-const FAKE_PLAYERS: JackpotPlayer[] = [
-  { userId: 'u1', username: 'degenking', walletAddress: 'Aaaa1111', amountLamports: '2400000000', chance: 0.34 },
-  { userId: 'u2', username: 'moonshot', walletAddress: 'Bbbb2222', amountLamports: '1700000000', chance: 0.24 },
-  { userId: 'u3', username: null, walletAddress: '7kJyXw99PqRs7USS', amountLamports: '1100000000', chance: 0.16 },
-  { userId: 'u4', username: 'cryptomommy', walletAddress: 'Dddd4444', amountLamports: '800000000', chance: 0.11 },
-  { userId: 'u5', username: 'bonkbonk', walletAddress: 'Eeee5555', amountLamports: '600000000', chance: 0.09 },
-  { userId: 'u6', username: 'lucky_luc', walletAddress: 'Ffff6666', amountLamports: '400000000', chance: 0.06 },
+const STAKES: [string, string][] = [
+  ['degenking', '2400000000'],
+  ['moonshot', '1700000000'],
+  ['7kJy…7USS', '1100000000'],
+  ['cryptomommy', '800000000'],
+  ['bonkbonk', '600000000'],
+  ['lucky_luc', '400000000'],
 ];
+// Entry-ordered ticket ranges, as the settle produces them.
+const FAKE_RANGES: JackpotRange[] = (() => {
+  let cursor = 0n;
+  return STAKES.map(([player, amount], i) => {
+    const start = cursor;
+    cursor += BigInt(amount);
+    return {
+      playerId: `p${i}`,
+      player,
+      amountLamports: amount,
+      start: `${start}`,
+      end: `${cursor}`,
+    };
+  });
+})();
+const TOTAL = FAKE_RANGES[FAKE_RANGES.length - 1]!.end;
 
 export function JackpotPreview() {
   const [run, setRun] = useState(0);
@@ -19,13 +35,17 @@ export function JackpotPreview() {
   const [meWins, setMeWins] = useState(false);
   const [done, setDone] = useState(false);
 
-  const winner = FAKE_PLAYERS[winnerIdx]!;
+  const winner = FAKE_RANGES[winnerIdx]!;
+  // A ticket a third of the way into the winner's range.
+  const ticket = BigInt(winner.start) + (BigInt(winner.end) - BigInt(winner.start)) / 3n;
   const reveal: JackpotReveal = {
-    players: FAKE_PLAYERS,
-    winnerId: winner.userId,
-    winnerName: winner.username,
+    ranges: FAKE_RANGES,
+    winnerPlayerId: winner.playerId,
+    winnerName: winner.player,
     payoutLamports: '6650000000',
-    meId: meWins ? winner.userId : 'someone-else',
+    winningTicket: ticket.toString(),
+    totalLamports: TOTAL,
+    myPlayerId: meWins ? winner.playerId : 'someone-else',
   };
 
   return (
@@ -36,7 +56,7 @@ export function JackpotPreview() {
         <button
           type="button"
           onClick={() => {
-            setWinnerIdx(Math.floor(Math.random() * FAKE_PLAYERS.length));
+            setWinnerIdx(Math.floor(Math.random() * FAKE_RANGES.length));
             setDone(false);
             setRun((n) => n + 1);
           }}
@@ -45,11 +65,12 @@ export function JackpotPreview() {
           Spin again (random winner)
         </button>
         <label className="flex items-center gap-2 text-sm text-foreground-muted">
-          <input type="checkbox" checked={meWins} onChange={(e) => setMeWins(e.target.checked)} />
-          I am the winner
+          <input type="checkbox" checked={meWins} onChange={(e) => setMeWins(e.target.checked)} />I
+          am the winner
         </label>
         <span className="text-sm text-foreground-muted">
-          winner: {winner.username ?? 'anon'} ({(winner.chance * 100).toFixed(0)}%)
+          winner: {winner.player} (
+          {((Number(winner.amountLamports) / Number(TOTAL)) * 100).toFixed(0)}%)
           {done ? ' · onDone fired ✓' : ''}
         </span>
       </div>

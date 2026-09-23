@@ -1,12 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { displayHandle } from '../common/public-player';
 import { LiveFeedGateway } from './live-feed.gateway';
 import type { LiveBetEvent, LiveFeedPublisher, SettledBetInput } from './live-feed.types';
-
-/** first4…last4 — enough to recognise a wallet without exposing it. */
-function shortWallet(addr: string): string {
-  return addr.length <= 10 ? addr : `${addr.slice(0, 4)}…${addr.slice(-4)}`;
-}
 
 interface CachedDisplay {
   player: string;
@@ -66,7 +62,7 @@ export class LiveFeedService implements LiveFeedPublisher {
       where: { id: userId },
       select: { username: true, walletAddress: true },
     });
-    const player = user?.username || (user ? shortWallet(user.walletAddress) : 'anon');
+    const player = user ? displayHandle(user) : 'anon';
     // Simple bound: clear the cache when it grows too large (cheap, rare).
     if (this.display.size >= LiveFeedService.DISPLAY_CAP) this.display.clear();
     this.display.set(userId, { player, at: now });
@@ -96,7 +92,7 @@ export class LiveFeedService implements LiveFeedPublisher {
     return rows.map((r) => ({
       id: r.id,
       gameType: r.gameType,
-      player: r.user.username || shortWallet(r.user.walletAddress),
+      player: displayHandle(r.user),
       amountLamports: r.amountLamports.toString(),
       payoutLamports: r.payoutLamports.toString(),
       multiplier: r.multiplier ?? null,

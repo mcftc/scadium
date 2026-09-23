@@ -30,7 +30,10 @@ export function useWalletAuth() {
       const token = useAuthStore.getState().accessToken;
       if (token) {
         try {
-          await api(scope === 'all' ? '/auth/logout-all' : '/auth/logout', { method: 'POST', token });
+          await api(scope === 'all' ? '/auth/logout-all' : '/auth/logout', {
+            method: 'POST',
+            token,
+          });
         } catch {
           /* best-effort: clear locally even if the revoke call fails */
         }

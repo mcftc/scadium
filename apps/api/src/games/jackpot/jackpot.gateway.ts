@@ -25,11 +25,11 @@ export class JackpotGateway {
     this.server.emit('jackpot:round-open', payload);
   }
 
+  /** Public identity only — a display handle and an opaque id, never userId/wallet. */
   emitEntry(payload: {
     roundId: string;
-    userId: string;
-    username: string | null;
-    walletAddress: string;
+    playerId: string;
+    player: string;
     amountLamports: string;
     totalLamports: string;
     playerCount: number;
@@ -42,12 +42,20 @@ export class JackpotGateway {
   emitDrawResult(payload: {
     roundId: string;
     status: 'drawn' | 'refunded';
-    winnerId: string | null;
+    winnerPlayerId: string | null;
     winnerName: string | null;
     payoutLamports: string;
     totalLamports: string;
     winningTicket: string | null;
     serverSeed: string;
+    /** Every entry's ticket range, in entry order (empty for a refund). */
+    ranges: {
+      playerId: string;
+      player: string;
+      amountLamports: string;
+      start: string;
+      end: string;
+    }[];
   }) {
     this.server.emit('jackpot:result', payload);
   }

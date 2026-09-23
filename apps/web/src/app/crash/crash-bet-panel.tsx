@@ -72,7 +72,7 @@ export function CrashBetPanel({
     writeLocalStorageValue(CASHOUT_PCT_KEY, String(p));
   }
 
-  const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
+  const myBet = state?.bets.find((b) => b.playerId === me?.publicId) ?? null;
   const validBet = isValidBetSol(sol, CRASH.MIN_BET_LAMPORTS);
   const phase = state?.phase ?? 'waiting';
   const canBet = connected && phase === 'waiting' && !myBet;

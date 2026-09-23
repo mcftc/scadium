@@ -25,6 +25,7 @@ import { ProofOfWagerService } from '../../proof-of-wager/proof-of-wager.service
 import { LiveFeedService } from '../../live/live-feed.service';
 import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
+import { displayHandle, publicPlayerId } from '../../common/public-player';
 import {
   RoundTimers,
   errMessage,
@@ -73,6 +74,9 @@ interface LiveBet {
   userId: string;
   username: string | null;
   walletAddress: string;
+  /** Public identity — what broadcasts and the snapshot carry instead of the two above. */
+  playerId: string;
+  player: string;
   /** REMAINING stake still riding (shrinks on partial cashouts). */
   amountLamports: bigint;
   /** Original stake — the wager for ledger/aggregates. */
@@ -413,10 +417,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       serverSeed: this.current.phase === 'busted' ? this.current.serverSeed : null,
       bustPoint: this.current.phase === 'busted' ? this.current.bustPoint : null,
       multiplier: this.currentMultiplier(),
+      // Public, so each bet is a handle + opaque id — never userId or wallet.
       bets: Array.from(this.current.bets.values()).map((b) => ({
-        userId: b.userId,
-        username: b.username,
-        walletAddress: b.walletAddress,
+        playerId: b.playerId,
+        player: b.player,
         amountLamports: b.amountLamports.toString(),
         originalAmountLamports: b.originalAmountLamports.toString(),
         payoutLamports: b.payoutLamports.toString(),
@@ -462,17 +466,20 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         throw new Error('Round exposure limit reached — try a smaller bet or the next round');
       }
     }
-    this.current.bets.set(params.userId, {
+    const bet = {
       userId: params.userId,
       username: params.username,
       walletAddress: params.walletAddress,
+      playerId: publicPlayerId(params.userId),
+      player: displayHandle(params),
       amountLamports: params.amountLamports,
       originalAmountLamports: params.amountLamports,
       payoutLamports: BigInt(0),
       autoCashout: params.autoCashout,
       cashedOutAt: null,
-    });
-    this.gateway.emitBetPlaced(this.current.id, params);
+    };
+    this.current.bets.set(params.userId, bet);
+    this.gateway.emitBetPlaced(this.current.id, bet);
     return { ok: true, roundId: this.current.id };
   }
 
@@ -562,10 +569,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     });
 
     this.gateway.emitCashedOut(this.current.id, {
-      userId,
-      // Name fields ride along so the curve can label the cashout marker.
-      username: bet.username,
-      walletAddress: bet.walletAddress,
+      // Public identity so the curve can label the cashout marker.
+      playerId: bet.playerId,
+      player: bet.player,
       multiplier: m,
       payoutLamports: payout.toString(),
       remainingLamports: bet.amountLamports.toString(),

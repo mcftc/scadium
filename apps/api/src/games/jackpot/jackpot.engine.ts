@@ -4,6 +4,7 @@ import {
   deriveSeedContext,
   generateClientSeed,
   generateServerSeed,
+  jackpotRanges,
   jackpotWinningTicket,
 } from '@scadium/fair';
 import { JACKPOT } from '@scadium/shared';
@@ -29,6 +30,20 @@ import {
   settleTxOptions,
 } from '../round-loop';
 import { DEMO_BOTS, DEMO_BOT_BALANCE, demoBotsEnabled } from '../bots/demo-bots.const';
+import { displayHandle, publicPlayerId } from '../../common/public-player';
+
+/**
+ * One entry's slice of the pot, as persisted with the drawn round and sent with
+ * the result: the ticket range [start, end) plus the PUBLIC identity of its
+ * owner. With the winning ticket, this is everything needed to check the winner.
+ */
+export type JackpotRangeRow = {
+  playerId: string;
+  player: string;
+  amountLamports: string;
+  start: string;
+  end: string;
+};
 
 // Single-writer election (#13/#86): only the lock holder opens/draws rounds, so
 // N replicas never produce duplicate JackpotRound rows. No Redis → always leader.
@@ -435,9 +450,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
 
     this.gateway.emitEntry({
       roundId: this.current.id,
-      userId: params.userId,
-      username: params.username,
-      walletAddress: params.walletAddress,
+      playerId: publicPlayerId(params.userId),
+      player: displayHandle(params),
       amountLamports: params.amountLamports.toString(),
       totalLamports: this.current.totalLamports.toString(),
       playerCount: after,
@@ -585,6 +599,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     let didRefund = false;
     let winnerUserId: string | null = null;
     let winnerName: string | null = null;
+    let ranges: JackpotRangeRow[] = [];
     let ticket: bigint | null = null as bigint | null;
     let payout = BigInt(0);
     // Pre-generate bet ids + collect on-chain settle jobs as DATA ONLY; the
@@ -617,9 +632,12 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           // before crediting/refunding).
           assertStillLeader(() => this.isLeader(), 'jackpot');
 
+          // (createdAt, id): the entry order the ranges are laid out in must be
+          // total — two entries in the same millisecond need a tiebreak, or the
+          // published ranges could not be reproduced.
           const entries = await tx.jackpotEntry.findMany({
             where: { roundId },
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             include: { user: { select: { id: true, username: true, walletAddress: true } } },
           });
           const distinctPlayers = new Set(entries.map((e) => e.userId));
@@ -654,18 +672,19 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
           // number here would lose precision and bias the winner toward low tickets.
           const drawnTicket = jackpotWinningTicket(drawSeed, clientSeed, nonce, total);
-          let cumulative = 0n;
-          let winner = entries[0]!;
-          for (const e of entries) {
-            cumulative += e.amountLamports;
-            if (drawnTicket < cumulative) {
-              winner = e;
-              break;
-            }
-          }
+          const walk = jackpotRanges(entries.map((e) => e.amountLamports));
+          const winnerIdx = walk.findIndex((r) => drawnTicket >= r.start && drawnTicket < r.end);
+          const winner = entries[winnerIdx] ?? entries[0]!;
+          ranges = entries.map((e, i) => ({
+            playerId: publicPlayerId(e.userId),
+            player: displayHandle(e.user),
+            amountLamports: e.amountLamports.toString(),
+            start: walk[i]!.start.toString(),
+            end: walk[i]!.end.toString(),
+          }));
           ticket = drawnTicket;
           winnerUserId = winner.userId;
-          winnerName = winner.user.username;
+          winnerName = displayHandle(winner.user);
           payout = (total * BigInt(Math.round((1 - JACKPOT.HOUSE_EDGE) * 1000))) / BigInt(1000);
 
           // Per-user contribution totals for ledger aggregates + Bet rows.
@@ -698,6 +717,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               winningTicket: drawnTicket,
               payoutLamports: payout,
               drawnAt: new Date(),
+              // Persisted with the claim: the public, reproducible ticket map.
+              rangesJson: ranges,
             },
           });
           assertRoundClaimed(count, 'jackpot', roundId);
@@ -767,6 +788,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
                   totalLamports: total.toString(),
                   winningTicket: drawnTicket.toString(),
                   won,
+                  // This player's own slice — check the ticket against it.
+                  range: ranges.find((r) => r.playerId === publicPlayerId(userId)) ?? null,
                   // Self-contained verification context (ADR 0001 / #93). When the
                   // draw was on-chain anchored, `onchainEntropy` is the program's
                   // RoundSettled.entropy — fold it into serverSeed to reproduce.
@@ -834,12 +857,13 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       this.gateway.emitDrawResult({
         roundId,
         status: 'refunded',
-        winnerId: null,
+        winnerPlayerId: null,
         winnerName: null,
         payoutLamports: '0',
         totalLamports: total.toString(),
         winningTicket: null,
         serverSeed,
+        ranges: [],
       });
       this.logger.log(`Jackpot ${roundId} refunded (${distinctCount} players)`);
       if (!this.recovering) await this.openNewRound();
@@ -892,12 +916,16 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     this.gateway.emitDrawResult({
       roundId,
       status: 'drawn',
-      winnerId: winnerUserId,
+      winnerPlayerId: winnerUserId ? publicPlayerId(winnerUserId) : null,
       winnerName,
       payoutLamports: payout.toString(),
       totalLamports: total.toString(),
       winningTicket: ticket === null ? null : String(ticket),
       serverSeed,
+      // The reveal lands on the real ticket in the real entry order — the old
+      // reel used a client-side list that could miss a last-second entrant and
+      // tell the biggest staker "You won".
+      ranges,
     });
     this.logger.log(
       `Jackpot ${roundId} → winner ${winnerName ?? winnerUserId} takes ${payout} of ${total}`,

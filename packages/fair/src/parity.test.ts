@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { crashPoint } from './crash';
 import { coinflipResult } from './coinflip';
 import { blackjackDeal } from './blackjack';
-import { jackpotRoll, jackpotWinningTicket } from './jackpot';
+import { jackpotRoll, jackpotWinnerIndex, jackpotWinningTicket } from './jackpot';
 import { lotteryDraw, lotteryFinalEntropy, padClientSeed32 } from './lottery';
 import { mineField } from './mines';
 import { hiloSequence } from './hilo';
@@ -92,4 +92,25 @@ describe('cross-implementation parity (golden vectors)', () => {
       });
     });
   }
+});
+
+describe('jackpot ticket → winner walk (Node ⇄ browser)', () => {
+  // Ranges: [0,5) [5,6) [6,16) [16,19) — boundaries are where an off-by-one hides.
+  const amounts = [5n, 1n, 10n, 3n];
+  const cases: [bigint, number][] = [
+    [0n, 0],
+    [4n, 0],
+    [5n, 1],
+    [6n, 2],
+    [15n, 2],
+    [16n, 3],
+    [18n, 3],
+    [19n, -1],
+  ];
+  it('both engines give the winning ticket to the entry whose range holds it', () => {
+    for (const [ticket, idx] of cases) {
+      expect(jackpotWinnerIndex(amounts, ticket)).toBe(idx);
+      expect(browser.jackpotWinnerIndex(amounts, ticket)).toBe(idx);
+    }
+  });
 });

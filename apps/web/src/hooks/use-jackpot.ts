@@ -8,11 +8,34 @@ import { useSocket } from '@/providers/socket-provider';
 import { useLiveSnapshot } from '@/hooks/use-live-snapshot';
 
 export interface JackpotPlayer {
-  userId: string;
-  username: string | null;
-  walletAddress: string;
+  /** Opaque public id (compare with `me.publicId`) — never the userId. */
+  playerId: string;
+  /** Display handle: username, or a shortened wallet. */
+  player: string;
   amountLamports: string;
   chance: number; // 0..1 share of the pot
+}
+
+/** One entry's ticket range [start, end) in a settled round, in entry order. */
+export interface JackpotRange {
+  playerId: string;
+  player: string;
+  amountLamports: string;
+  start: string;
+  end: string;
+}
+
+/** The `jackpot:result` broadcast. */
+export interface JackpotResultEvent {
+  roundId: string;
+  status: 'drawn' | 'refunded';
+  winnerPlayerId: string | null;
+  winnerName: string | null;
+  payoutLamports: string;
+  totalLamports: string;
+  winningTicket: string | null;
+  serverSeed: string;
+  ranges: JackpotRange[];
 }
 
 export interface JackpotResult {
@@ -72,8 +95,9 @@ export interface JackpotRoundRow {
   payoutLamports: string;
   winningTicket: string | null;
   winnerName: string | null;
-  winnerWallet: string | null;
+  winnerPlayerId: string | null;
   drawnAt: string | null;
+  ranges: JackpotRange[];
   serverSeed: string | null;
   serverSeedHash: string;
   clientSeed: string;
@@ -83,9 +107,8 @@ export interface JackpotRoundRow {
 /** Entry broadcast — enough to update the pot without asking the server again. */
 interface JackpotEntryEvent {
   roundId: string;
-  userId: string;
-  username: string | null;
-  walletAddress: string;
+  playerId: string;
+  player: string;
   amountLamports: string;
   totalLamports: string;
   playerCount: number;
@@ -94,9 +117,9 @@ interface JackpotEntryEvent {
 
 /** Merge one entry into the snapshot and recompute every player's chance locally. */
 function applyEntry(s: JackpotSnapshot, p: JackpotEntryEvent): JackpotSnapshot {
-  const players = s.players.some((pl) => pl.userId === p.userId)
+  const players = s.players.some((pl) => pl.playerId === p.playerId)
     ? s.players.map((pl) =>
-        pl.userId === p.userId
+        pl.playerId === p.playerId
           ? {
               ...pl,
               amountLamports: (BigInt(pl.amountLamports) + BigInt(p.amountLamports)).toString(),
@@ -106,9 +129,8 @@ function applyEntry(s: JackpotSnapshot, p: JackpotEntryEvent): JackpotSnapshot {
     : [
         ...s.players,
         {
-          userId: p.userId,
-          username: p.username,
-          walletAddress: p.walletAddress,
+          playerId: p.playerId,
+          player: p.player,
           amountLamports: p.amountLamports,
           chance: 0,
         },

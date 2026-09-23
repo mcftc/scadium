@@ -32,7 +32,7 @@ export function CrashPreview() {
     const payoutLamports = String(Math.round(stake * atMult * 1e9));
     setCashouts((cur) => [
       ...cur.slice(-23),
-      { userId: `u${cid++}`, name, multiplier: atMult, payoutLamports },
+      { playerId: `p${cid++}`, name, multiplier: atMult, payoutLamports },
     ]);
   }, []);
 

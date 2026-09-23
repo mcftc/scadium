@@ -32,3 +32,24 @@ export function jackpotWinningTicket(
   if (totalLamports <= 0n) return 0n;
   return jackpotRoll(serverSeed, clientSeed, nonce) % totalLamports;
 }
+
+/**
+ * Each entry's ticket range, in entry order: entry i owns [start_i, end_i),
+ * where start_0 = 0 and each range is as wide as that entry's lamports. The
+ * settle persists these ranges, so anyone can check that the winning ticket
+ * falls in the winner's range — the half of "provably fair" that was missing.
+ * Mirrored exactly by `apps/web/src/lib/fair-browser.ts`.
+ */
+export function jackpotRanges(amounts: readonly bigint[]): { start: bigint; end: bigint }[] {
+  let cursor = 0n;
+  return amounts.map((amount) => {
+    const range = { start: cursor, end: cursor + amount };
+    cursor += amount;
+    return range;
+  });
+}
+
+/** Index of the entry whose range holds `ticket` (-1 if it is past the pot). */
+export function jackpotWinnerIndex(amounts: readonly bigint[], ticket: bigint): number {
+  return jackpotRanges(amounts).findIndex((r) => ticket >= r.start && ticket < r.end);
+}

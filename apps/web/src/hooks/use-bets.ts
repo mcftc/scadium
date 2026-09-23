@@ -15,7 +15,6 @@ export function useBets(game: BetGameType, limit = 8) {
   return useQuery({
     queryKey: ['bets', game, limit],
     enabled: !!token,
-    queryFn: () =>
-      api<BetListResponse>(`/users/bets?gameType=${game}&limit=${limit}`, { token }),
+    queryFn: () => api<BetListResponse>(`/users/bets?gameType=${game}&limit=${limit}`, { token }),
   });
 }

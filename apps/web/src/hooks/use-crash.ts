@@ -10,9 +10,10 @@ import { useAuthStore } from '@/store/auth-store';
 export type CrashPhase = 'waiting' | 'running' | 'busted';
 
 export interface CrashBet {
-  userId: string;
-  username: string | null;
-  walletAddress: string;
+  /** Opaque public id (compare with `me.publicId`) — broadcasts never carry userId. */
+  playerId: string;
+  /** Display handle: username, or a shortened wallet. */
+  player: string;
   amountLamports: string;
   /** The full wager (amountLamports shrinks on partial cashouts). */
   originalAmountLamports?: string;
@@ -24,7 +25,7 @@ export interface CrashBet {
 
 /** One cashout event, rendered as a marker pinned to the curve. */
 export interface CrashCashoutMarker {
-  userId: string;
+  playerId: string;
   name: string;
   multiplier: number;
   payoutLamports: string;
@@ -214,7 +215,7 @@ export function useCrash() {
           ? {
               ...s,
               bets: [
-                ...s.bets.filter((b) => b.userId !== bet.userId),
+                ...s.bets.filter((b) => b.playerId !== bet.playerId),
                 // A fresh bet's remaining stake IS its original wager.
                 { ...bet, originalAmountLamports: bet.amountLamports, payoutLamports: '0' },
               ],
@@ -227,17 +228,15 @@ export function useCrash() {
       'crash:cashed-out',
       ({
         roundId,
-        userId,
-        username,
-        walletAddress,
+        playerId,
+        player,
         multiplier,
         payoutLamports,
         remainingLamports,
       }: {
         roundId?: string;
-        userId: string;
-        username?: string | null;
-        walletAddress?: string;
+        playerId: string;
+        player: string;
         multiplier: number;
         payoutLamports?: string;
         remainingLamports?: string;
@@ -251,7 +250,7 @@ export function useCrash() {
             ? {
                 ...s,
                 bets: s.bets.map((b) =>
-                  b.userId === userId
+                  b.playerId === playerId
                     ? {
                         ...b,
                         amountLamports: remaining,
@@ -266,9 +265,8 @@ export function useCrash() {
             : s,
         );
         // Pin a marker to the curve at the exit multiplier (cleared on round-start).
-        const name = username ?? (walletAddress ? `${walletAddress.slice(0, 4)}…` : 'player');
         setCashouts((cur) =>
-          [...cur, { userId, name, multiplier, payoutLamports: payout }].slice(-24),
+          [...cur, { playerId, name: player, multiplier, payoutLamports: payout }].slice(-24),
         );
       },
     );

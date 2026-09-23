@@ -20,7 +20,7 @@ export function CrashGame() {
   const { state, cashouts, connected, interrupted, dismissInterruption } = useCrash();
   const { data: me } = useMe();
   const sound = useGameSound();
-  const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
+  const myBet = state?.bets.find((b) => b.playerId === me?.publicId) ?? null;
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">

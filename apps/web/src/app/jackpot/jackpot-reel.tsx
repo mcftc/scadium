@@ -3,8 +3,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Crown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { formatSol, shortAddress } from '@/lib/format';
-import type { JackpotPlayer } from '@/hooks/use-jackpot';
+import { formatSol } from '@/lib/format';
+import type { JackpotRange } from '@/hooks/use-jackpot';
 import { cn } from '@/lib/cn';
 
 const PALETTE = [
@@ -24,48 +24,64 @@ const SPIN_MS = 5200;
 const HOLD_MS = 3500; // winner banner dwell before dismiss
 
 export interface JackpotReveal {
-  players: JackpotPlayer[];
-  winnerId: string;
+  /** Every entry's ticket range, in entry order — straight from the settle. */
+  ranges: JackpotRange[];
+  winnerPlayerId: string;
   winnerName: string | null;
   payoutLamports: string;
-  meId?: string;
+  winningTicket: string;
+  totalLamports: string;
+  /** The viewer's public id, if signed in. */
+  myPlayerId?: string;
 }
 
 /**
  * CSGO/solpump-style winner reveal: a horizontal reel of player segments
- * (width ∝ pot share) spins and decelerates so the winner lands under the
- * center pointer. The landing is on the winner's own segment — the actual
- * draw fairness is proven separately via the seed/verify panel.
+ * (width ∝ pot share, in entry order) spins and decelerates so the pointer
+ * stops on the WINNING TICKET's position inside the winner's segment. Built
+ * from the settle's own ranges, so a last-second entrant is on the reel and
+ * "You won" is decided by id, never by a position in a client-side list.
  */
 export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone: () => void }) {
-  const { players, winnerId, payoutLamports, meId } = reveal;
+  const { ranges, winnerPlayerId, payoutLamports, myPlayerId } = reveal;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [cw, setCw] = useState(0);
   const [tx, setTx] = useState(0);
   const [phase, setPhase] = useState<'spin' | 'won'>('spin');
 
+  const total = Number(reveal.totalLamports) || 1;
   const segs = useMemo(
     () =>
-      players.map((p, i) => ({
-        p,
-        color: PALETTE[i % PALETTE.length]!,
-        w: Math.max(MIN_W, Math.round(p.chance * POT_W)),
-      })),
-    [players],
+      ranges.map((p, i) => {
+        const chance = Number(p.amountLamports) / total;
+        return {
+          p,
+          chance,
+          color: PALETTE[i % PALETTE.length]!,
+          w: Math.max(MIN_W, Math.round(chance * POT_W)),
+        };
+      }),
+    [ranges, total],
   );
   const potW = useMemo(() => segs.reduce((s, x) => s + x.w, 0), [segs]);
   const winnerIdx = Math.max(
     0,
-    players.findIndex((p) => p.userId === winnerId),
+    ranges.findIndex((p) => p.playerId === winnerPlayerId),
   );
+  // Land where the ticket actually is inside the winner's range, not at the
+  // middle of their card (kept a few px off the edges so it reads as theirs).
   const winnerOffset = useMemo(() => {
     let o = 0;
     for (let i = 0; i < winnerIdx; i++) o += segs[i]!.w;
-    return o + (segs[winnerIdx]?.w ?? 0) / 2;
-  }, [segs, winnerIdx]);
-  const winner = players[winnerIdx];
-  const winnerName = reveal.winnerName ?? (winner ? shortAddress(winner.walletAddress) : 'anon');
-  const iWon = !!meId && winner?.userId === meId;
+    const seg = segs[winnerIdx];
+    if (!seg) return o;
+    const span = Number(BigInt(seg.p.end) - BigInt(seg.p.start)) || 1;
+    const into = Number(BigInt(reveal.winningTicket) - BigInt(seg.p.start)) / span;
+    return o + Math.min(seg.w - 6, Math.max(6, into * seg.w));
+  }, [segs, winnerIdx, reveal.winningTicket]);
+  const winner = ranges[winnerIdx];
+  const winnerName = reveal.winnerName ?? winner?.player ?? 'anon';
+  const iWon = !!myPlayerId && winnerPlayerId === myPlayerId;
 
   useLayoutEffect(() => {
     if (wrapRef.current) setCw(wrapRef.current.offsetWidth);
@@ -125,14 +141,10 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
           }}
         >
           {strip.map((s, i) => {
-            const name = s.p.username ?? shortAddress(s.p.walletAddress);
-            const isWinnerTile = phase === 'won' && s.p.userId === winnerId;
+            const name = s.p.player;
+            const isWinnerTile = phase === 'won' && s.p.playerId === winnerPlayerId;
             return (
-              <div
-                key={i}
-                className="flex h-full shrink-0 items-center p-2"
-                style={{ width: s.w }}
-              >
+              <div key={i} className="flex h-full shrink-0 items-center p-2" style={{ width: s.w }}>
                 {/* solpump-style player card */}
                 <div
                   className={cn(
@@ -165,7 +177,7 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
                     className="rounded-full px-2.5 py-0.5 text-xs font-black"
                     style={{ background: `${s.color}33`, color: s.color }}
                   >
-                    {(s.p.chance * 100).toFixed(0)}%
+                    {(s.chance * 100).toFixed(0)}%
                   </div>
                 </div>
               </div>
@@ -180,9 +192,7 @@ export function JackpotReel({ reveal, onDone }: { reveal: JackpotReveal; onDone:
           <span className={cn('font-bold', iWon && 'text-success')}>
             {iWon ? 'You won' : `${winnerName} won`}
           </span>
-          <span className="font-mono font-bold text-success">
-            +{formatSol(payoutLamports, 3)}
-          </span>
+          <span className="font-mono font-bold text-success">+{formatSol(payoutLamports, 3)}</span>
         </div>
       )}
     </Card>

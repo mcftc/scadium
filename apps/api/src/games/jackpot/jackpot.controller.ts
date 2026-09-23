@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { parseLimit } from '../../common/parse-limit';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -23,6 +33,12 @@ export class JackpotController {
   @ApiOperation({ summary: 'Recent resolved rounds with revealed seeds' })
   recent(@Query('limit') limit?: string) {
     return this.jackpot.recent(parseLimit(limit, 10, 50));
+  }
+
+  @Get('rounds/:id')
+  @ApiOperation({ summary: 'One settled round: seeds, winning ticket and every ticket range' })
+  round(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.jackpot.round(id);
   }
 
   @Get('my-entries')

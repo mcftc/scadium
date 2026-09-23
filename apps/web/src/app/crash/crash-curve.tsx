@@ -88,9 +88,9 @@ export function CrashCurve({
     if (cashouts.length > seenCashouts.current) {
       const fresh = cashouts.slice(seenCashouts.current);
       seenCashouts.current = cashouts.length;
-      if (fresh.some((c) => c.userId !== myBet?.userId)) cashout();
+      if (fresh.some((c) => c.playerId !== myBet?.playerId)) cashout();
     }
-  }, [cashouts, myBet?.userId, cashout]);
+  }, [cashouts, myBet?.playerId, cashout]);
 
   if (!state) {
     return (
@@ -500,10 +500,10 @@ function CrashTrail({
       {cashouts.map((c, i) => {
         const p = toXY(c.multiplier);
         const payoutSol = Number(BigInt(c.payoutLamports)) / 1e9;
-        const hue = PARACHUTE_HUES[(c.userId.charCodeAt(0) + i) % PARACHUTE_HUES.length]!;
+        const hue = PARACHUTE_HUES[(c.playerId.charCodeAt(0) + i) % PARACHUTE_HUES.length]!;
         return (
           <div
-            key={`${c.userId}-${i}`}
+            key={`${c.playerId}-${i}`}
             className="absolute z-[9] pointer-events-none"
             style={{ left: `${p.x}%`, top: `${p.y}%`, transform: 'translate(-50%, -100%)' }}
           >

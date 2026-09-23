@@ -1,16 +1,13 @@
 'use client';
 
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 
 export interface MeResponse {
   id: string;
+  /** Opaque id the live games broadcast in place of userId — find yourself by it. */
+  publicId: string;
   walletAddress: string;
   username: string | null;
   avatarUrl: string | null;
