@@ -1248,6 +1248,50 @@ export const BLOCKED_COUNTRIES = ['US', 'GB', 'FR', 'DE', 'ES', 'NL'] as const;
 // re-trigger the blocking legal-acceptance gate for everyone (#48).
 export const LEGAL_VERSION = '2026-06-15';
 
+// ---------- Public randomness beacon (ADR 0004) ----------
+/**
+ * drand "quicknet": a public, threshold-BLS randomness beacon run by the League
+ * of Entropy (Cloudflare among the operators). A new 32-byte value every 3 s,
+ * unpredictable until published, the same for everyone, and retrievable forever.
+ *
+ * Crash, jackpot and lottery fold in the FIRST beacon round published after
+ * bets / entries / sales close. That round is a pure function of the close time,
+ * so the operator cannot pick it, and nobody — the operator included — can know
+ * its value while bets can still be placed. That is what removes operator
+ * foreknowledge of every result (four-games hardening B4).
+ *
+ * These are the chain's fixed public parameters (from its /info endpoint);
+ * relays are overridable at runtime (FAIR_BEACON_RELAYS).
+ */
+export const FAIR_BEACON = {
+  NAME: 'drand quicknet',
+  CHAIN_HASH: '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971',
+  GENESIS_TIME_SEC: 1_692_803_367,
+  PERIOD_SEC: 3,
+  RELAYS: [
+    'https://api.drand.sh',
+    'https://drand.cloudflare.com',
+    'https://api2.drand.sh',
+    'https://api3.drand.sh',
+  ] as readonly string[],
+} as const;
+
+/** When beacon round `round` is published (ms epoch). Round 1 is at genesis. */
+export function beaconRoundTimeMs(round: number): number {
+  return (FAIR_BEACON.GENESIS_TIME_SEC + (round - 1) * FAIR_BEACON.PERIOD_SEC) * 1000;
+}
+
+/** The first beacon round published STRICTLY after `ms` — unknowable at `ms`. */
+export function beaconRoundAfter(ms: number): number {
+  const elapsed = (ms - FAIR_BEACON.GENESIS_TIME_SEC * 1000) / (FAIR_BEACON.PERIOD_SEC * 1000);
+  return Math.floor(elapsed) + 2;
+}
+
+/** Public URL of one beacon round on a relay — what a verifier fetches. */
+export function beaconRoundUrl(round: number, relay: string = FAIR_BEACON.RELAYS[0]!): string {
+  return `${relay.replace(/\/$/, '')}/${FAIR_BEACON.CHAIN_HASH}/public/${round}`;
+}
+
 // ---------- Published per-game RTP (UI transparency, #roadmap-2) ----------
 // Up to two decimals, trailing zeros dropped: 0.05 → '95%', crash → '94.05%'.
 const rtpPct = (edge: number): string => `${+((1 - edge) * 100).toFixed(2)}%`;

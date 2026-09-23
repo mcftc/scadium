@@ -37,6 +37,9 @@ export default defineConfig({
     env: {
       SETTLE_RETRY_BASE_MS: '10',
       CRASH_DRAIN_TIMEOUT_MS: '0',
+      // The suite must not depend on the internet: the drand beacon (ADR 0004)
+      // is off for the booted app; fair-beacon.e2e-spec drives it with a stub.
+      FAIR_BEACON_ENABLED: 'false',
     },
   },
 });

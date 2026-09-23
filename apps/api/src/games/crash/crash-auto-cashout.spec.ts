@@ -101,7 +101,12 @@ describe('crash net-win cap (B2)', () => {
   });
 
   it('exits a riding position at the multiplier where it reaches the cap', async () => {
-    const engine = new CrashEngine({} as never, {} as never, {} as never, {} as never) as unknown as {
+    const engine = new CrashEngine(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    ) as unknown as {
       current: unknown;
       cashOut: (userId: string, pct: number, at?: number) => Promise<unknown>;
       runAutoCashouts: (m: number) => Promise<void>;
@@ -127,11 +132,7 @@ describe('crash net-win cap (B2)', () => {
       {} as never,
     ) as unknown as {
       current: unknown;
-      cashOut: (
-        userId: string,
-        pct: number,
-        at?: number,
-      ) => Promise<{ payoutLamports: bigint }>;
+      cashOut: (userId: string, pct: number, at?: number) => Promise<{ payoutLamports: bigint }>;
     };
     const stake = 10n * SOL;
     engine.current = running(new Map([['u', riding('u', stake, 1_000)]]));

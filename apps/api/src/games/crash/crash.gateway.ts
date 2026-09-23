@@ -26,6 +26,8 @@ export class CrashGateway {
     clientSeed: string;
     nonce: number;
     bettingWindowMs: number;
+    /** drand round the bust will fold in — announced before any bet (ADR 0004). */
+    beaconRound: number | null;
   }) {
     this.server.emit('crash:round-start', payload);
   }
@@ -40,7 +42,14 @@ export class CrashGateway {
     this.server.emit('crash:tick', { roundId, multiplier });
   }
 
-  emitBust(payload: { roundId: string; bustPoint: number; serverSeed: string }) {
+  emitBust(payload: {
+    roundId: string;
+    bustPoint: number;
+    serverSeed: string;
+    /** drand round the bust folded in, and its value (ADR 0004); null when off. */
+    beaconRound: number | null;
+    slotHash: string | null;
+  }) {
     this.server.emit('crash:bust', payload);
   }
 

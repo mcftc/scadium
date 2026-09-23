@@ -532,7 +532,12 @@ model CrashRound {
   // play-money default path.
   entropyStatus  String?
   targetSlot     BigInt?
+  // The 32 bytes of external entropy the bust folds in: the drand beacon value
+  // when `beaconRound` is set (ADR 0004 — the default), else a Solana slot hash.
   slotHash       String?
+  // drand quicknet round pinned at round open — the first one published after
+  // betting closes, so nobody can know the bust while bets are open.
+  beaconRound    BigInt?
 
   bets CrashBet[]
 
@@ -629,6 +634,9 @@ model LotteryDraw {
   // not the newest, so the cosigner can't grind the reveal. Null for off-chain /
   // synthetic draws. Surfaced in the snapshot so the verifier can show it.
   targetSlot              BigInt?
+  // drand quicknet round the draw folded in (ADR 0004): the first one published
+  // after sales closed at drawAt. Its value is stored in `slotHash`.
+  beaconRound             BigInt?
   // Entropy provenance (#19a): 'onchain' = derived from a real on-chain
   // SlotHashes reveal (provably fair); 'synthetic-not-fair' = settled via the
   // operator-deterministic synthetic fallback (NOT provably fair — surfaced as
@@ -707,6 +715,10 @@ model JackpotRound {
   // Drawn rounds: every entry's ticket range [start, end) in entry order, with
   // the owner's public handle — the winner is checkable from this + the ticket.
   rangesJson     Json?
+  // drand quicknet round (ADR 0004): the first one published after entries
+  // closed; its 32-byte value, folded into the ticket, is `slotHash`.
+  beaconRound    BigInt?
+  slotHash       String?
   createdAt      DateTime           @default(now())
 
   entries JackpotEntry[]

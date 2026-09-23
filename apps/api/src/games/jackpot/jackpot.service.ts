@@ -197,6 +197,8 @@ export class JackpotService {
     winner: { username: string | null; walletAddress: string } | null;
     drawnAt: Date | null;
     rangesJson: unknown;
+    beaconRound: bigint | null;
+    slotHash: string | null;
     nonce: number;
     seed: {
       serverSeed: string | null;
@@ -220,6 +222,9 @@ export class JackpotService {
       clientSeed: r.seed.clientSeed,
       nonce: r.nonce,
       ranges: (r.rangesJson as JackpotRangeRow[] | null) ?? [],
+      // ADR 0004: the drand round the ticket folded in, and its value.
+      beaconRound: r.beaconRound?.toString() ?? null,
+      entropy: r.slotHash,
     };
   }
 }

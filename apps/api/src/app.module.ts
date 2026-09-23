@@ -45,6 +45,7 @@ import { TokenModule } from './token/token.module';
 import { SwapModule } from './swap/swap.module';
 import { PlatformModule } from './platform/platform.module';
 import { LiveModule } from './live/live.module';
+import { BeaconModule } from './beacon/beacon.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { QueueModule } from './queue/queue.module';
 import { ComplianceModule } from './compliance/compliance.module';
@@ -118,6 +119,7 @@ import { JobsModule } from './jobs/jobs.module';
     AdminModule,
     PlatformModule,
     LiveModule,
+    BeaconModule,
     ReconciliationModule,
     ComplianceModule,
     ResponsibleGamblingModule,

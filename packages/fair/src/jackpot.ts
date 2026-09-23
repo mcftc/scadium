@@ -1,4 +1,5 @@
 import { buildMessage, hmacSha256 } from './hash';
+import { lotteryFinalEntropy, padClientSeed32 } from './lottery';
 
 /**
  * Provably-fair jackpot (pot-style raffle). Every entry contributes lamports to
@@ -52,4 +53,23 @@ export function jackpotRanges(amounts: readonly bigint[]): { start: bigint; end:
 /** Index of the entry whose range holds `ticket` (-1 if it is past the pot). */
 export function jackpotWinnerIndex(amounts: readonly bigint[], ticket: bigint): number {
   return jackpotRanges(amounts).findIndex((r) => ticket >= r.start && ticket < r.end);
+}
+
+/**
+ * Winning ticket when the round folds in external entropy (a drand beacon value
+ * published after entries closed — ADR 0004). Uses the SAME canonical fold as
+ * crash and lottery, `sha256(serverSeed ‖ entropy ‖ clientSeed32 ‖ u32le(nonce))`,
+ * read as a 256-bit BigInt and reduced modulo the pot, so the reduction is as
+ * uniform as `jackpotWinningTicket`. Mirrored by the browser verifier.
+ */
+export function jackpotTicketFromEntropy(
+  serverSeed: string,
+  clientSeed: string,
+  entropy32: Uint8Array,
+  nonce: number,
+  totalLamports: bigint,
+): bigint {
+  if (totalLamports <= 0n) return 0n;
+  const folded = lotteryFinalEntropy(serverSeed, padClientSeed32(clientSeed), entropy32, nonce);
+  return BigInt(`0x${folded.toString('hex')}`) % totalLamports;
 }

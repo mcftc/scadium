@@ -29,6 +29,7 @@ import { LeaderElection } from '../../redis/leader-election';
 import { LotteryGateway } from './lottery.gateway';
 import { LiveFeedService } from '../../live/live-feed.service';
 import { splitBracketPrizes } from './lottery.settlement';
+import { BeaconService } from '../../beacon/beacon.service';
 import { settlementsTotal } from '../../observability/metrics.registry';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 import {
@@ -80,7 +81,8 @@ interface LastResult {
   clientSeed: string;
   nonce: number;
   slotHash: string; // hex — third entropy input, needed by the verifier
-  fairness: string; // 'onchain' | 'synthetic-not-fair' (#19a)
+  fairness: string; // 'onchain' | 'drand-quicknet' | 'synthetic-not-fair' (#19a)
+  beaconRound: number | null; // drand round `slotHash` came from (ADR 0004)
   winnersCount: number;
   bracketWinnerCounts: number[];
   totalPoolScad: number;
@@ -129,6 +131,9 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     private readonly redis?: RedisService,
     // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
     @Optional() private readonly liveFeed?: LiveFeedService,
+    // Public randomness beacon (ADR 0004, the @Global BeaconModule). Absent in
+    // direct-engine tests, which keep the older derivation.
+    @Optional() private readonly beacon?: BeaconService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, LOTTERY_LOCK_KEY, LOTTERY_LOCK_TTL_MS);
@@ -401,6 +406,46 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     this.timers.schedule(() => this.guard(this.drawAndSettle(), 'draw'), drawAt - Date.now());
   }
 
+  /**
+   * A settle that could not complete: dead-letter its first failure, then retry
+   * with capped backoff. The draw stays open (closed to sales — getOpenDraw() is
+   * past drawAt). It used to be dead-lettered and left for a restart, which for
+   * a draw too big to settle never came right.
+   */
+  private async retrySettle(
+    draw: CurrentDraw,
+    reason: string,
+    payload: Record<string, unknown> = { drawId: draw.id },
+  ): Promise<false> {
+    this.settleFailures += 1;
+    const retryIn = retryDelayMs(this.settleFailures);
+    this.logger.error(
+      `Lottery settle failed for ${draw.id} (attempt ${this.settleFailures}): ${reason} — ` +
+        `retrying in ${retryIn}ms`,
+    );
+    settlementsTotal.inc({ game: 'lottery', outcome: 'failed' });
+    // One dead-letter per draw (its first failure) — the retries that follow
+    // would otherwise write one row per attempt for as long as it keeps failing.
+    if (this.settleFailures === 1) {
+      try {
+        await this.prisma.settlementFailure.create({
+          data: {
+            gameType: 'lottery',
+            roundId: draw.id,
+            payloadJson: payload as object,
+            error: reason,
+          },
+        });
+      } catch (deadLetterErr) {
+        this.logger.error(
+          `Failed to write SettlementFailure for lottery ${draw.id}: ${errMessage(deadLetterErr)}`,
+        );
+      }
+    }
+    this.timers.schedule(() => this.guard(this.drawAndSettle(), 'settle retry'), retryIn);
+    return false;
+  }
+
   // ---------- Public API consumed by LotteryService ----------
 
   /** The currently open draw, or null if it has closed for drawing. */
@@ -466,6 +511,13 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       commitTxSignature: this.current.commitTxSignature,
       // Slot pinned at commit (#19b) so the verifier can show it; null off-chain.
       targetSlot: this.current.targetSlot?.toString() ?? null,
+      // The drand round this draw WILL fold in (ADR 0004), public from the
+      // moment sales open: the first one published after drawAt. Null when the
+      // beacon is off or the on-chain reveal is in use.
+      beaconRound:
+        this.beacon?.enabled && !this.chain.lotteryEnabled && this.current.drawAt
+          ? this.beacon.roundAfter(this.current.drawAt)
+          : null,
       // Provenance of the LAST settled draw's entropy (#19a) so the UI can warn
       // when a draw was settled with the non-fair synthetic fallback.
       lastDrawFairness: this.lastResult?.fairness ?? null,
@@ -624,7 +676,8 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
     let revealTxSignature: string | null = null;
     let slotHashHex: string;
     let digits: number[];
-    let fairness: string; // 'onchain' | 'synthetic-not-fair' (#19a)
+    let fairness: string; // 'onchain' | 'drand-quicknet' | 'synthetic-not-fair' (#19a)
+    let beaconRound: number | null = null;
 
     const reveal = this.chain.lotteryEnabled
       ? await this.chain.lotteryRevealDraw({ drawIndex, serverSeedHex: serverSeed })
@@ -648,10 +701,26 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
             `derivation [${local.digits.join(',')}] — check the golden vector!`,
         );
       }
+    } else if (this.beacon?.enabled) {
+      // ADR 0004: fold in the first drand round published after sales closed
+      // at drawAt. Nobody — the operator included — could know it while tickets
+      // were on sale, so nobody could buy the winning number. Unavailable →
+      // this settle fails and is retried; never a fallback the operator knows.
+      beaconRound = this.beacon.roundAfter(draw.drawAt);
+      const randomness = await this.beacon.randomness(beaconRound);
+      if (!randomness) return this.retrySettle(draw, `beacon round ${beaconRound} unavailable`);
+      slotHashHex = randomness;
+      fairness = 'drand-quicknet';
+      digits = lotteryDraw(
+        serverSeed,
+        padClientSeed32(clientSeed),
+        Buffer.from(randomness, 'hex'),
+        nonce,
+      ).digits;
     } else {
-      // No on-chain reveal → the synthetic slot hash is operator-DETERMINISTIC.
-      // The draw still settles (no stranded tickets) but is flagged NOT fair so
-      // nothing presents it as provably fair (#19a). True on-chain pinning is #19b.
+      // No on-chain reveal and no beacon → the synthetic slot hash is
+      // operator-DETERMINISTIC. The draw still settles (no stranded tickets) but
+      // is flagged NOT fair so nothing presents it as provably fair (#19a).
       this.logger.warn(
         `Draw #${drawIndex}: settling with the SYNTHETIC slot hash — NOT provably fair ` +
           `(flagged synthetic-not-fair).`,
@@ -782,6 +851,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               drawnAt: new Date(),
               revealTxSignature,
               fairness,
+              beaconRound: beaconRound === null ? null : BigInt(beaconRound),
               totalPoolScadBase: totalPool,
               burnScadBase,
               bracketWinnerCounts,
@@ -874,6 +944,9 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
                   clientSeed: draw.clientSeed,
                   nonce: draw.nonce,
                   slotHash: slotHashHex,
+                  // Where the entropy came from: check `slotHash` against it.
+                  entropySource: fairness,
+                  beaconRound,
                 },
               },
             });
@@ -961,48 +1034,18 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`lottery settle skipped: ${errMessage(e)}`);
         return true;
       }
-      const message = errMessage(e);
-      this.settleFailures += 1;
-      const retryIn = retryDelayMs(this.settleFailures);
-      this.logger.error(
-        `Lottery settle failed for ${draw.id} (attempt ${this.settleFailures}): ${message} — ` +
-          `retrying in ${retryIn}ms`,
-      );
-      settlementsTotal.inc({ game: 'lottery', outcome: 'failed' });
-      // One dead-letter per draw (its first failure) — the retries that follow
-      // would otherwise write one row per attempt for as long as it keeps failing.
-      if (this.settleFailures === 1) {
-        try {
-          await this.prisma.settlementFailure.create({
-            data: {
-              gameType: 'lottery',
-              roundId: draw.id,
-              payloadJson: {
-                drawId: draw.id,
-                drawIndex: drawIndex.toString(),
-                digits,
-                slotHash: slotHashHex,
-                totalPoolScadBase: totalPool.toString(),
-                // #215 — per-ticket detail now lives inside the settle tx; the
-                // recovery sweep re-derives the full breakdown from the draw's
-                // persisted tickets, so the dead-letter only carries the summary.
-                ticketCount: ticketsLen,
-                winnersCount,
-              },
-              error: message,
-            },
-          });
-        } catch (deadLetterErr) {
-          this.logger.error(
-            `Failed to write SettlementFailure for lottery ${draw.id}: ${errMessage(deadLetterErr)}`,
-          );
-        }
-      }
-      // The draw stays open (no sales: getOpenDraw() is closed past drawAt) and
-      // is retried with capped backoff. It used to be dead-lettered and left for
-      // a restart — which, for a draw too big to settle, never came right.
-      this.timers.schedule(() => this.guard(this.drawAndSettle(), 'settle retry'), retryIn);
-      return false;
+      return this.retrySettle(draw, errMessage(e), {
+        drawId: draw.id,
+        drawIndex: drawIndex.toString(),
+        digits,
+        slotHash: slotHashHex,
+        totalPoolScadBase: totalPool.toString(),
+        // #215 — per-ticket detail now lives inside the settle tx; the
+        // recovery sweep re-derives the full breakdown from the draw's
+        // persisted tickets, so the dead-letter only carries the summary.
+        ticketCount: ticketsLen,
+        winnersCount,
+      });
     }
 
     this.settleFailures = 0;
@@ -1076,6 +1119,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
       nonce: draw.nonce,
       slotHash: slotHashHex,
       fairness,
+      beaconRound,
       winnersCount,
       bracketWinnerCounts,
       totalPoolScad: Number(totalPool) / SCAD_BASE_NUM,

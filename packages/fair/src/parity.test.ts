@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { crashPoint } from './crash';
 import { coinflipResult } from './coinflip';
 import { blackjackDeal } from './blackjack';
-import { jackpotRoll, jackpotWinnerIndex, jackpotWinningTicket } from './jackpot';
+import {
+  jackpotRoll,
+  jackpotTicketFromEntropy,
+  jackpotWinnerIndex,
+  jackpotWinningTicket,
+} from './jackpot';
+import { crashPointFromSlot } from './crash';
 import { lotteryDraw, lotteryFinalEntropy, padClientSeed32 } from './lottery';
 import { mineField } from './mines';
 import { hiloSequence } from './hilo';
@@ -111,6 +117,32 @@ describe('jackpot ticket → winner walk (Node ⇄ browser)', () => {
     for (const [ticket, idx] of cases) {
       expect(jackpotWinnerIndex(amounts, ticket)).toBe(idx);
       expect(browser.jackpotWinnerIndex(amounts, ticket)).toBe(idx);
+    }
+  });
+});
+
+describe('beacon-entropy derivations (Node ⇄ browser, ADR 0004)', () => {
+  // A real drand quicknet value (round 32459457) as the 32-byte entropy.
+  const entropyHex = '542fb4b05b26aa2a127d481500422d502c620e6ed7b11a8c58ff4f22e7633ca2';
+  const entropy = hexToBytes(entropyHex);
+  const seeds = [
+    ['server-a', 'client-a', 0],
+    ['4f1c0d6e…any-server-seed', 'player-picked', 7],
+    ['x'.repeat(64), '', 123],
+  ] as const;
+  it('crash bust from entropy is identical in both engines', async () => {
+    for (const [s, c, n] of seeds) {
+      expect(await browser.crashPointFromEntropy(s, c, entropyHex, n)).toBe(
+        crashPointFromSlot(s, c, entropy, n),
+      );
+    }
+  });
+  it('jackpot ticket from entropy is identical in both engines', async () => {
+    const pot = (1n << 60n) + 12_345n;
+    for (const [s, c, n] of seeds) {
+      expect(await browser.jackpotTicketFromEntropy(s, c, entropyHex, n, pot)).toBe(
+        jackpotTicketFromEntropy(s, c, entropy, n, pot),
+      );
     }
   });
 });

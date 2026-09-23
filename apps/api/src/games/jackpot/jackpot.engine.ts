@@ -5,6 +5,7 @@ import {
   generateClientSeed,
   generateServerSeed,
   jackpotRanges,
+  jackpotTicketFromEntropy,
   jackpotWinningTicket,
 } from '@scadium/fair';
 import { JACKPOT } from '@scadium/shared';
@@ -31,6 +32,7 @@ import {
 } from '../round-loop';
 import { DEMO_BOTS, DEMO_BOT_BALANCE, demoBotsEnabled } from '../bots/demo-bots.const';
 import { displayHandle, publicPlayerId } from '../../common/public-player';
+import { BeaconService } from '../../beacon/beacon.service';
 
 /**
  * One entry's slice of the pot, as persisted with the drawn round and sent with
@@ -126,6 +128,9 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly onchainRng?: OnchainRngService,
     // Optional sitewide live-bet feed (the @Global LiveModule supplies it).
     @Optional() private readonly liveFeed?: LiveFeedService,
+    // Public randomness beacon (ADR 0004, the @Global BeaconModule). Absent in
+    // direct-engine tests, which keep the seed-only derivation.
+    @Optional() private readonly beacon?: BeaconService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, JACKPOT_LOCK_KEY, JACKPOT_LOCK_TTL_MS);
@@ -467,6 +472,13 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       clientSeed: this.current.clientSeed,
       nonce: this.current.nonce,
       closeAt: this.current.closeAt,
+      // The drand round the draw WILL fold in, public once the countdown runs.
+      beaconRound:
+        this.beacon?.enabled &&
+        this.current.closeAt !== null &&
+        this.current.players.size >= JACKPOT.MIN_PLAYERS
+          ? this.beacon.roundAfter(this.current.closeAt)
+          : null,
       totalLamports: this.current.totalLamports.toString(),
       playerCount: this.current.players.size,
       config: {
@@ -569,7 +581,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     // revealed for commit verification; `onchainEntropyHex` lets the verifier fold.
     let drawSeed = serverSeed;
     let onchainEntropyHex: string | null = null;
-    if (this.onchainRng?.live && !forceRefund) {
+    if (this.onchainRng?.live && !forceRefund && !this.beacon?.enabled) {
       const entropy = await this.onchainRng.roundEntropy({
         gameType: 'jackpot',
         roundId: this.onchainRng.nextRoundId(),
@@ -600,6 +612,9 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     let winnerUserId: string | null = null;
     let winnerName: string | null = null;
     let ranges: JackpotRangeRow[] = [];
+    // ADR 0004: the drand round published after entries closed, and its value.
+    let beaconRound: number | null = null;
+    let entropyHex: string | null = null;
     let ticket: bigint | null = null as bigint | null;
     let payout = BigInt(0);
     // Pre-generate bet ids + collect on-chain settle jobs as DATA ONLY; the
@@ -625,6 +640,20 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     // already terminal and rolls the late entry (debit included) back. Either
     // way no entry is ever left orphaned (debited, never settled/refunded).
     try {
+      // A draw (never a refund) folds in the first beacon round published after
+      // entries closed: the server knew its seeds all along, but not this — so
+      // an insider could no longer pick a last-second entry amount that wins.
+      // Unavailable → this attempt fails and is retried (then refunded).
+      if (
+        this.beacon?.enabled &&
+        !forceRefund &&
+        round.closeAt !== null &&
+        round.players.size >= JACKPOT.MIN_PLAYERS
+      ) {
+        beaconRound = this.beacon.roundAfter(round.closeAt);
+        entropyHex = await this.beacon.randomness(beaconRound);
+        if (!entropyHex) throw new Error(`beacon round ${beaconRound} unavailable`);
+      }
       await withSerializable(
         this.prisma,
         async (tx) => {
@@ -671,7 +700,15 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
           // Draw the winning ticket and walk cumulative ranges to find the winner.
           // BigInt end-to-end: the pot can exceed 2^53 lamports, so casting to a JS
           // number here would lose precision and bias the winner toward low tickets.
-          const drawnTicket = jackpotWinningTicket(drawSeed, clientSeed, nonce, total);
+          const drawnTicket = entropyHex
+            ? jackpotTicketFromEntropy(
+                serverSeed,
+                clientSeed,
+                Buffer.from(entropyHex, 'hex'),
+                nonce,
+                total,
+              )
+            : jackpotWinningTicket(drawSeed, clientSeed, nonce, total);
           const walk = jackpotRanges(entries.map((e) => e.amountLamports));
           const winnerIdx = walk.findIndex((r) => drawnTicket >= r.start && drawnTicket < r.end);
           const winner = entries[winnerIdx] ?? entries[0]!;
@@ -719,6 +756,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               drawnAt: new Date(),
               // Persisted with the claim: the public, reproducible ticket map.
               rangesJson: ranges,
+              beaconRound: beaconRound === null ? null : BigInt(beaconRound),
+              slotHash: entropyHex,
             },
           });
           assertRoundClaimed(count, 'jackpot', roundId);
@@ -799,6 +838,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
                     clientSeed: round.clientSeed,
                     nonce: round.nonce,
                     ...(onchainEntropyHex ? { onchainEntropy: onchainEntropyHex } : {}),
+                    // ADR 0004: the ticket is sha256(seed ‖ this ‖ client ‖ nonce) mod pot.
+                    ...(entropyHex ? { beaconRound, slotHash: entropyHex } : {}),
                   },
                 },
               },
@@ -863,6 +904,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
         totalLamports: total.toString(),
         winningTicket: null,
         serverSeed,
+        beaconRound: null,
+        slotHash: null,
         ranges: [],
       });
       this.logger.log(`Jackpot ${roundId} refunded (${distinctCount} players)`);
@@ -922,6 +965,8 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
       totalLamports: total.toString(),
       winningTicket: ticket === null ? null : String(ticket),
       serverSeed,
+      beaconRound,
+      slotHash: entropyHex,
       // The reveal lands on the real ticket in the real entry order — the old
       // reel used a client-side list that could miss a last-second entrant and
       // tell the biggest staker "You won".

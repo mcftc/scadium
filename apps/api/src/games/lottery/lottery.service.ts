@@ -467,6 +467,10 @@ export class LotteryService {
       clientSeed: draw.seed.clientSeed,
       nonce: draw.nonce,
       slotHash: draw.slotHash,
+      // Provenance of `slotHash` — the page badges each draw by it, and a
+      // drand draw names the beacon round anyone can fetch to check the value.
+      fairness: draw.fairness,
+      beaconRound: draw.beaconRound?.toString() ?? null,
       winnersCount,
       winners: winners.map((t) => ({
         player: {
@@ -531,6 +535,8 @@ export class LotteryService {
       clientSeed: d.seed.clientSeed,
       nonce: d.nonce,
       slotHash: d.slotHash,
+      fairness: d.fairness,
+      beaconRound: d.beaconRound?.toString() ?? null,
     }));
   }
 }

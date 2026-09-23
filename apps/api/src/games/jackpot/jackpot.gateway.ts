@@ -48,6 +48,9 @@ export class JackpotGateway {
     totalLamports: string;
     winningTicket: string | null;
     serverSeed: string;
+    /** drand round folded into the ticket, and its 32-byte value (ADR 0004). */
+    beaconRound: number | null;
+    slotHash: string | null;
     /** Every entry's ticket range, in entry order (empty for a refund). */
     ranges: {
       playerId: string;

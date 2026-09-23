@@ -223,6 +223,84 @@ export async function jackpotRoll(
   return BigInt(`0x${hash}`);
 }
 
+/**
+ * The canonical external-entropy fold shared by crash, jackpot and lottery:
+ * sha256(utf8(serverSeed) ‖ entropy32 ‖ clientSeed32 ‖ u32le(nonce)). Matches
+ * @scadium/fair `lotteryFinalEntropy` byte for byte.
+ */
+async function finalEntropy(
+  serverSeed: string,
+  clientSeed: string,
+  entropyHex: string,
+  nonce: number,
+): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const clientSeed32 = new Uint8Array(32);
+  clientSeed32.set(enc.encode(clientSeed).slice(0, 32));
+  const entropy = hexToBytes(entropyHex);
+  if (entropy.length !== 32) throw new Error('entropy must be 32 bytes (64 hex chars)');
+  const nonceLe = new Uint8Array(4);
+  new DataView(nonceLe.buffer).setUint32(0, nonce >>> 0, true);
+  return sha256Bytes(concatBytes(enc.encode(serverSeed), entropy, clientSeed32, nonceLe));
+}
+
+const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/**
+ * Matches @scadium/fair `crashPointFromSlot`: the bust for a round that folded
+ * in external entropy (a drand beacon value, or a Solana slot hash).
+ */
+export async function crashPointFromEntropy(
+  serverSeed: string,
+  clientSeed: string,
+  entropyHex: string,
+  nonce: number,
+): Promise<number> {
+  const folded = await finalEntropy(serverSeed, clientSeed, entropyHex, nonce);
+  const h = parseInt(toHex(folded).slice(0, 13), 16);
+  if (h % 20 === 0) return 1.0;
+  const e = 2 ** 52;
+  return Math.floor((100 * e - h) / (e - h)) / 100;
+}
+
+/** Matches @scadium/fair `jackpotTicketFromEntropy`. */
+export async function jackpotTicketFromEntropy(
+  serverSeed: string,
+  clientSeed: string,
+  entropyHex: string,
+  nonce: number,
+  totalLamports: bigint,
+): Promise<bigint> {
+  if (totalLamports <= 0n) return 0n;
+  const folded = await finalEntropy(serverSeed, clientSeed, entropyHex, nonce);
+  return BigInt(`0x${toHex(folded)}`) % totalLamports;
+}
+
+/**
+ * Fetch one drand round's randomness from the public relays (first that
+ * answers). The verifier checks the value a round used against the beacon
+ * itself — nothing the casino served has to be trusted.
+ */
+export async function fetchBeaconRandomness(
+  round: number,
+  relays: readonly string[],
+  chainHash: string,
+): Promise<{ randomness: string; relay: string } | null> {
+  for (const relay of relays) {
+    try {
+      const res = await fetch(`${relay.replace(/\/$/, '')}/${chainHash}/public/${round}`);
+      if (!res.ok) continue;
+      const body = (await res.json()) as { round?: number; randomness?: string };
+      if (body.round === round && /^[0-9a-f]{64}$/.test(body.randomness ?? '')) {
+        return { randomness: body.randomness!, relay };
+      }
+    } catch {
+      /* next relay */
+    }
+  }
+  return null;
+}
+
 /** Matches @scadium/fair `jackpotRanges`: entry i owns [start_i, end_i) in entry order. */
 export function jackpotRanges(amounts: readonly bigint[]): { start: bigint; end: bigint }[] {
   let cursor = 0n;

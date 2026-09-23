@@ -26,6 +26,7 @@ import { LiveFeedService } from '../../live/live-feed.service';
 import { AffiliatesService } from '../../affiliates/affiliates.service';
 import { assertRoundClaimed, assertStillLeader, isSettleClaimLost } from '../settle-claim';
 import { displayHandle, publicPlayerId } from '../../common/public-player';
+import { BeaconService } from '../../beacon/beacon.service';
 import {
   RoundTimers,
   errMessage,
@@ -123,6 +124,13 @@ interface Round {
   bets: Map<string, LiveBet>;
   /** Pinned slot whose hash seeds the bust (#101); null on the play-money path. */
   targetSlot: number | null;
+  /**
+   * drand round whose value seeds the bust (ADR 0004): the first one published
+   * after betting closes, pinned and announced at round open. Null when off.
+   */
+  beaconRound: number | null;
+  /** Set when the betting window ends — no bet may land while the bust is derived. */
+  betsClosed: boolean;
   /** Per-round house exposure guard (#30) — null in play-money mode. */
   exposure: ExposureGuard | null;
 }
@@ -167,6 +175,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private settling = false;
   /** Shutdown in progress: no new bets or rounds; the in-flight round busts and settles. */
   private draining = false;
+  /** The current round's beacon value once fetched — revealed with the bust. */
+  private currentEntropy: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -183,6 +193,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     // Scheduled bets credit their referrer here at DRAIN time, not schedule time
     // (see crash.service.scheduleBet) — the drain is the irrevocable commit.
     @Optional() private readonly affiliates?: AffiliatesService,
+    // Public randomness beacon (ADR 0004, the @Global BeaconModule). Absent in
+    // direct-engine tests, which keep the seed-only derivation.
+    @Optional() private readonly beacon?: BeaconService,
   ) {
     if (this.redis) {
       this.election = new LeaderElection(this.redis.client, CRASH_LOCK_KEY, CRASH_LOCK_TTL_MS);
@@ -282,6 +295,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       waitingStartedAt: null,
       bets: new Map(),
       targetSlot: null,
+      beaconRound: null,
+      betsClosed: false,
       exposure: null,
     };
   }
@@ -438,6 +453,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       // is sha256(serverSeed), published up-front via serverSeedHash).
       serverSeed: this.current.phase === 'busted' ? this.current.serverSeed : null,
       bustPoint: this.current.phase === 'busted' ? this.current.bustPoint : null,
+      // The drand round this bust folds in — public from round open (ADR 0004);
+      // its value is revealed with the bust.
+      beaconRound: this.current.beaconRound,
+      slotHash: this.current.phase === 'busted' ? this.currentEntropy : null,
       multiplier: this.currentMultiplier(),
       // Public, so each bet is a handle + opaque id — never userId or wallet.
       bets: Array.from(this.current.bets.values()).map((b) => ({
@@ -463,7 +482,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     autoCashout: number | null;
   }): { ok: true; roundId: string } {
     if (this.draining) throw new Error(DRAINING_MESSAGE);
-    if (this.current.phase !== 'waiting') {
+    if (this.current.phase !== 'waiting' || this.current.betsClosed) {
       throw new Error('Betting window closed');
     }
     // A slow debit tx can outlive its round: the bet would then ride round R+1
@@ -649,14 +668,24 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // Legacy #101 slot-hash path runs ONLY when scadium_rng did not anchor: defer
-    // the bust to beginRun (derived from a pinned slot hash that can't exist at
-    // commit). Otherwise the bust is committed up front from `bustSeed`.
-    const entropyOn = !rngAnchored && onchainEntropyOn();
+    // ADR 0004 (the default): pin the first drand round published after the
+    // betting window closes and derive the bust from it in beginRun. The seeds
+    // alone used to fix every bust at commit — known to the operator (and to
+    // anyone who could read the DB) for the whole betting window.
+    const openedAt = Date.now();
+    const beaconRound =
+      !rngAnchored && this.beacon?.enabled
+        ? this.beacon.roundAfter(openedAt + CRASH.BET_WINDOW_MS)
+        : null;
+    // Legacy #101 slot-hash path runs ONLY when neither scadium_rng nor the
+    // beacon anchors: defer the bust to beginRun (derived from a pinned slot hash
+    // that can't exist at commit). Otherwise the bust is committed up front.
+    const entropyOn = !rngAnchored && beaconRound === null && onchainEntropyOn();
     const targetSlot = entropyOn
       ? ((await this.chain.currentSlot()) ?? 0) + CRASH_ENTROPY_SLOT_DELTA
       : null;
-    const bustPoint = entropyOn ? 0 : crashPoint(bustSeed, clientSeed, nonce);
+    const deferred = entropyOn || beaconRound !== null;
+    const bustPoint = deferred ? 0 : crashPoint(bustSeed, clientSeed, nonce);
 
     const seed = await this.prisma.seed.create({
       data: {
@@ -674,6 +703,9 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         status: 'waiting',
         ...(entropyOn
           ? { entropyStatus: 'entropy_requested', targetSlot: BigInt(targetSlot ?? 0) }
+          : {}),
+        ...(beaconRound !== null
+          ? { entropyStatus: 'entropy_requested', beaconRound: BigInt(beaconRound) }
           : {}),
       },
     });
@@ -696,6 +728,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     // has no bets and is closed out by recovery; do not install it.
     if (gen !== this.timers.generation) return;
 
+    this.currentEntropy = null;
     this.current = {
       id: round.id,
       seedId: seed.id,
@@ -706,9 +739,11 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       bustPoint,
       phase: 'waiting',
       startedAt: null,
-      waitingStartedAt: Date.now(),
+      waitingStartedAt: openedAt,
       bets: new Map(),
       targetSlot,
+      beaconRound,
+      betsClosed: false,
       exposure,
     };
 
@@ -719,6 +754,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       clientSeed: seed.clientSeed,
       nonce: seed.nonce,
       bettingWindowMs: CRASH.BET_WINDOW_MS,
+      beaconRound,
     });
 
     // Drain scheduled bets into the fresh round. Balances were debited at
@@ -809,6 +845,30 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Derive the deferred bust from the pinned drand round (ADR 0004). The round
+   * is published ~0-3s after betting closed, so this waits at most that long
+   * plus relay latency. Returns false when no relay produced it in time.
+   */
+  private async fulfillBeacon(): Promise<boolean> {
+    const { serverSeed, clientSeed, nonce, beaconRound } = this.current;
+    if (beaconRound == null || !this.beacon) return false;
+    const randomness = await this.beacon.randomness(beaconRound);
+    if (!randomness) return false;
+    this.current.bustPoint = crashPointFromSlot(
+      serverSeed,
+      clientSeed,
+      Buffer.from(randomness, 'hex'),
+      nonce,
+    );
+    this.currentEntropy = randomness;
+    await this.prisma.crashRound.update({
+      where: { id: this.current.id },
+      data: { slotHash: randomness, entropyStatus: 'entropy_fulfilled' },
+    });
+    return true;
+  }
+
+  /**
    * Full-exit every still-riding bet whose auto-cashout multiplier has been
    * reached at `m`. Extracted from the tick loop so the failure path is testable.
    * A failed cashOut is logged, NOT swallowed (#218): the in-RAM bet is mutated
@@ -847,7 +907,19 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private async beginRun(): Promise<void> {
     if (!this.isLeader()) return; // leadership lost during the betting window
     const gen = this.timers.generation;
-    if (onchainEntropyOn()) await this.fulfillEntropy(); // derive the deferred bust
+    this.current.betsClosed = true;
+    if (this.current.beaconRound != null) {
+      this.lastProgressAt = Date.now();
+      if (!(await this.fulfillBeacon())) {
+        // No beacon value in time: nobody may know this round's bust, not even
+        // us, so it cannot run. Void it — recovery refunds every stake — and
+        // open the next round. Never fall back to a seed-only bust.
+        if (gen === this.timers.generation) await this.resume('beacon unavailable');
+        return;
+      }
+    } else if (onchainEntropyOn()) {
+      await this.fulfillEntropy(); // derive the deferred bust (#101)
+    }
     if (gen !== this.timers.generation) return;
     this.current.phase = 'running';
     this.current.startedAt = Date.now();
@@ -911,6 +983,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       roundId: this.current.id,
       bustPoint: bustM,
       serverSeed: this.current.serverSeed,
+      beaconRound: this.current.beaconRound,
+      slotHash: this.currentEntropy,
     });
     void this.mirror(); // publish busted state (seed/bustPoint now revealed)
 
@@ -1154,6 +1228,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
                   serverSeedHash: this.current.serverSeedHash,
                   clientSeed: this.current.clientSeed,
                   nonce: this.current.nonce,
+                  // ADR 0004: the bust is crashPointFromSlot(seed, client, this, nonce).
+                  ...(this.current.beaconRound != null
+                    ? { beaconRound: this.current.beaconRound, slotHash: this.currentEntropy }
+                    : {}),
                 },
               },
             },
