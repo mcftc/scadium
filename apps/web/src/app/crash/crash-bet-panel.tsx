@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, ChevronDown, Loader2, Repeat, WifiOff, X } from 'lucide-react';
-import { CRASH } from '@scadium/shared';
+import { CRASH, GAME_RTP, HOUSE } from '@scadium/shared';
 import { isValidBetSol, solToLamportsClamped } from '@/components/instant/bet-amount-input';
 import { useCrashActions, type CrashInterruption, type CrashSnapshot } from '@/hooks/use-crash';
 import { useBets } from '@/hooks/use-bets';
@@ -339,14 +339,7 @@ export function CrashBetPanel({
           >
             {busy ? <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> : null}
             Cash out {cashoutPct < 100 ? `${cashoutPct}% ` : ''}at {state?.multiplier.toFixed(2)}× ·{' '}
-            {formatSol(
-              (
-                (((BigInt(myBet!.amountLamports) * BigInt(cashoutPct)) / BigInt(100)) *
-                  BigInt(Math.floor((state?.multiplier ?? 1) * 100))) /
-                BigInt(100)
-              ).toString(),
-              3,
-            )}
+            {formatSol(cashoutPreview(myBet!, cashoutPct, state?.multiplier ?? 1).toString(), 3)}
           </button>
         </div>
       ) : scheduled ? (
@@ -460,7 +453,8 @@ export function CrashBetPanel({
       {error && <p className="text-xs text-danger">{error}</p>}
 
       <p className="text-[11px] text-foreground-muted text-center">
-        Server-authoritative · RTP 95% · Provably fair
+        Server-authoritative · RTP {GAME_RTP.crash?.rtp} · max profit{' '}
+        {formatSol(String(HOUSE.MAX_WIN_PER_BET_LAMPORTS), 0)} SOL per bet · Provably fair
       </p>
     </div>
   );
@@ -498,4 +492,23 @@ function MissedBetOutcome({
   ) : (
     <>The round busted at {r.bustPoint?.toFixed(2)}× before a cash-out.</>
   );
+}
+
+/**
+ * What a cash-out pays right now, computed the way the server does: rounded to
+ * the hundredth (the old floor showed 2.02× for a 2.03× exit) and clamped so the
+ * bet never takes back more than its stake plus the net-win cap.
+ */
+function cashoutPreview(
+  bet: { amountLamports: string; originalAmountLamports?: string; payoutLamports?: string },
+  pct: number,
+  multiplier: number,
+): bigint {
+  const portion = (BigInt(bet.amountLamports) * BigInt(pct)) / BigInt(100);
+  const payout = (portion * BigInt(Math.round(multiplier * 100))) / BigInt(100);
+  const room =
+    BigInt(bet.originalAmountLamports ?? bet.amountLamports) +
+    BigInt(HOUSE.MAX_WIN_PER_BET_LAMPORTS) -
+    BigInt(bet.payoutLamports ?? '0');
+  return payout < room ? payout : room;
 }

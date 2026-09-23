@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { crashPoint } from './crash';
 import {
   GAME_RTP,
   HOUSE_EDGE,
@@ -92,7 +93,7 @@ describe('GAME_RTP published figures (single source, #roadmap-2)', () => {
   });
 
   it('edge-based games publish exactly (1 - HOUSE_EDGE) — never overstated', () => {
-    expect(GAME_RTP.crash!.rtp).toBe('95%');
+    expect(GAME_RTP.crash!.rtp).toBe('94.05%'); // the formula's real return (B2), not the old claim
     expect(GAME_RTP.coinflip!.rtp).toBe('95%');
     expect(GAME_RTP.limbo!.rtp).toBe('95%');
     expect(GAME_RTP.mines!.rtp).toBe('95%');
@@ -101,5 +102,36 @@ describe('GAME_RTP published figures (single source, #roadmap-2)', () => {
     expect(GAME_RTP.wheel!.rtp).toBe('95%');
     expect(GAME_RTP.plinko!.rtp).toBe('95%');
     expect(GAME_RTP.dice!.rtp).toBe('99%'); // deliberate 1% edge
+  });
+});
+
+describe('crash RTP is what the formula pays (B2)', () => {
+  it('the closed form: P(win at M) = 0.95 × 99/(100M) at every target → RTP 94.05%', () => {
+    for (const M of [1.01, 1.5, 2, 3.33, 10, 100]) {
+      const pWin = (1 - CRASH.INSTANT_BUST_CHANCE) * (99 / (100 * M));
+      expect(M * pWin).toBeCloseTo(CRASH.RTP, 12);
+    }
+    expect(CRASH.RTP).toBeCloseTo(0.9405, 12);
+    expect(GAME_RTP.crash!.rtp).toBe('94.05%');
+  });
+
+  it('the real bust function returns ~94.05% (Monte Carlo, deterministic seeds)', () => {
+    // The advertised 95% was never measured against crashPoint(); this is.
+    const N = 200_000;
+    const targets = [1.5, 2, 5];
+    const paid = targets.map(() => 0);
+    for (let i = 0; i < N; i += 1) {
+      const bust = crashPoint(`mc-server-${i}`, 'mc-client', i);
+      targets.forEach((M, k) => {
+        if (M < bust) paid[k]! += M; // a target equal to the bust loses
+      });
+    }
+    targets.forEach((M, k) => {
+      const rtp = paid[k]! / N;
+      // ±3 standard errors of the per-round payout at this target.
+      const p = 0.9405 / M;
+      const tol = (3 * M * Math.sqrt(p * (1 - p))) / Math.sqrt(N);
+      expect(Math.abs(rtp - CRASH.RTP), `M=${M} rtp=${rtp}`).toBeLessThan(tol);
+    });
   });
 });

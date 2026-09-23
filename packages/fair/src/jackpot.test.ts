@@ -42,8 +42,11 @@ describe('jackpot provably-fair roll', () => {
   // tickets. With a 256-bit roll reduced in BigInt, every ticket must stay in
   // range AND the distribution must be uniform across the pot.
   it('is precise and unbiased for a pot above 2^53 lamports', () => {
-    const serverSeed = generateServerSeed();
-    const clientSeed = generateClientSeed();
+    // Fixed seeds: with random ones a p=0.01 threshold fails ~1 run in 100 by
+    // design, which made this a flaky gate. Uniformity is still tested — over
+    // 20,000 nonces of an arbitrary (not hand-picked) seed pair.
+    const serverSeed = 'jackpot-uniformity-server-seed-v1';
+    const clientSeed = 'jackpot-uniformity-client-seed-v1';
     const pot = (1n << 53n) + 1n; // 9_007_199_254_740_993 — not representable as an exact JS number
     const BUCKETS = 16;
     const bucketSize = pot / BigInt(BUCKETS);

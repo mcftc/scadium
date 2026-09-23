@@ -149,10 +149,17 @@ export const CRASH = {
   TICK_RATE_HZ: 20,
   GROWTH_RATE: 1.0024, // m(t_ms) = GROWTH_RATE ^ (t_ms / 10)
   INSTANT_BUST_CHANCE: 1 / 20, // matches solpump formula (h % 20 === 0) = 5% hold
-  // Nominal edge. The h%20 instant-bust is exactly 5%; the survival law makes
-  // the effective edge target-dependent (5.0% at 1.01× → ~5.95% asymptote) —
-  // see packages/fair/src/crash.ts.
+  // Nominal edge — used where an edge must never be overstated (affiliate
+  // commission). The true edge is RTP below.
   HOUSE_EDGE,
+  /**
+   * The ACTUAL return at every cash-out target, derived from the bust formula:
+   * outside the 1-in-20 instant bust, P(bust > M) = 99 / (100·M), and a target
+   * equal to the bust loses, so RTP = (1 − 1/20) × 0.99 = 94.05% — for any M.
+   * The site used to advertise 95%; this is the single source for the number
+   * shown now, locked to the formula by a Monte-Carlo test in @scadium/fair.
+   */
+  RTP: (1 - 1 / 20) * 0.99,
 } as const;
 
 // ---------- Blackjack ----------
@@ -1242,7 +1249,8 @@ export const BLOCKED_COUNTRIES = ['US', 'GB', 'FR', 'DE', 'ES', 'NL'] as const;
 export const LEGAL_VERSION = '2026-06-15';
 
 // ---------- Published per-game RTP (UI transparency, #roadmap-2) ----------
-const rtpPct = (edge: number): string => `${Math.round((1 - edge) * 100)}%`;
+// Up to two decimals, trailing zeros dropped: 0.05 → '95%', crash → '94.05%'.
+const rtpPct = (edge: number): string => `${+((1 - edge) * 100).toFixed(2)}%`;
 /**
  * Return-to-player published on each game page + the landing grid — the SINGLE
  * SOURCE so the marketing figure can never drift from the payout math (solpump's
@@ -1279,7 +1287,7 @@ export const GAME_HOUSE_EDGE: Record<GameType, number> = {
 };
 
 export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
-  crash: { rtp: rtpPct(CRASH.HOUSE_EDGE) },
+  crash: { rtp: rtpPct(1 - CRASH.RTP) },
   coinflip: { rtp: rtpPct(COINFLIP.HOUSE_EDGE) },
   dice: { rtp: rtpPct(DICE.HOUSE_EDGE) },
   limbo: { rtp: rtpPct(LIMBO.HOUSE_EDGE) },

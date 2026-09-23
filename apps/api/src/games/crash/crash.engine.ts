@@ -10,7 +10,7 @@ import {
   commitServerSeed,
   syntheticSlotHash,
 } from '@scadium/fair';
-import { CRASH } from '@scadium/shared';
+import { CRASH, HOUSE } from '@scadium/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withSerializable } from '../../prisma/with-serializable';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
@@ -62,6 +62,28 @@ const CRASH_ENTROPY_SLOT_DELTA = 35; // ~14s at 400ms/slot — must stay under B
 const CRASH_LOCK_KEY = 'lock:engine:crash';
 const CRASH_MIRROR_KEY = 'round:crash:current';
 const CRASH_LOCK_TTL_MS = 10_000;
+/**
+ * The most one bet may WIN, net of its stake (docs/bankroll-model.md: "the
+ * maximum the house can lose to a single bet"). Crash is otherwise unbounded —
+ * 100 SOL × 1,000,000× — and payouts used to ignore the cap entirely.
+ */
+const MAX_NET_WIN = BigInt(HOUSE.MAX_WIN_PER_BET_LAMPORTS);
+
+/**
+ * The multiplier at which this bet's winnings reach MAX_NET_WIN — where it is
+ * cashed out automatically. Floored to the 2 dp the engine pays at, so the
+ * payout at it can never exceed the cap.
+ */
+function capMultiplier(bet: {
+  amountLamports: bigint;
+  originalAmountLamports: bigint;
+  payoutLamports: bigint;
+}): number {
+  if (bet.amountLamports <= BigInt(0)) return Infinity;
+  const payoutRoom = bet.originalAmountLamports + MAX_NET_WIN - bet.payoutLamports;
+  return Math.floor(Number((payoutRoom * BigInt(100)) / bet.amountLamports)) / 100;
+}
+
 /** Shown to a player who bets while the server is finishing its last round. */
 const DRAINING_MESSAGE = 'The server is restarting — betting resumes in a moment';
 
@@ -550,7 +572,10 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     // Round, not floor: `m` is a 2-decimal value (Number(x.toFixed(2))), so
     // `m * 100` is an integer up to float error — flooring 202.9999… paid 2.02×
     // for a 2.03× cashout. Round recovers the intended hundredths.
-    const payout = (portion * BigInt(Math.round(m * 100))) / BigInt(100);
+    let payout = (portion * BigInt(Math.round(m * 100))) / BigInt(100);
+    // Net-win cap: the bet's total payout may not exceed its stake + MAX_NET_WIN.
+    const payoutRoom = bet.originalAmountLamports + MAX_NET_WIN - bet.payoutLamports;
+    if (payout > payoutRoom) payout = payoutRoom > BigInt(0) ? payoutRoom : BigInt(0);
     bet.amountLamports -= portion;
     bet.payoutLamports += payout;
     if (bet.amountLamports === BigInt(0)) bet.cashedOutAt = m; // fully out
@@ -793,20 +818,21 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private async runAutoCashouts(m: number): Promise<void> {
     if (!this.current) return;
     for (const bet of this.current.bets.values()) {
+      if (bet.cashedOutAt !== null || bet.amountLamports <= BigInt(0)) continue;
+      // Exit at the player's target, or where the position hits the net-win
+      // cap — whichever comes first. Riding past the cap could only lose.
+      const target = Math.min(bet.autoCashout ?? Infinity, capMultiplier(bet));
       if (
-        bet.cashedOutAt === null &&
-        bet.amountLamports > BigInt(0) &&
-        bet.autoCashout !== null &&
-        m >= bet.autoCashout &&
+        m >= target &&
         // Only a target strictly below the committed bust is a win; at/above it
         // the round busts first (bust wins ties). This tick runs BEFORE the
         // bust check, so even a tick that jumped straight past bust still pays
         // every winning target here first.
-        bet.autoCashout < this.current.bustPoint
+        target < this.current.bustPoint
       ) {
         try {
           // Settle at the committed target, not the sampled/overshot `m`.
-          await this.cashOut(bet.userId, 100, bet.autoCashout);
+          await this.cashOut(bet.userId, 100, target);
         } catch (e) {
           this.logger.error(
             `crash auto-cashout failed for user ${bet.userId} @ ${m}x (round ${this.current.id}): ${

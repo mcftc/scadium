@@ -13,7 +13,13 @@ import {
   ArrowUpDown,
   type LucideIcon,
 } from 'lucide-react';
-import { GAME_CATALOG, parseEnabledGames, type GameCategory, type GameId } from '@scadium/shared';
+import {
+  GAME_CATALOG,
+  GAME_RTP,
+  parseEnabledGames,
+  type GameCategory,
+  type GameId,
+} from '@scadium/shared';
 
 /**
  * THE game registry for the web app.
@@ -40,82 +46,71 @@ export interface GameMeta {
   readonly description: string;
   /** Tailwind gradient stops for the landing card's accent. */
   readonly accent: string;
+  /** Published return-to-player — from `GAME_RTP`, the single source (never typed here). */
   readonly rtp: string;
 }
 
 /** Presentation only — ids, labels and routes come from the shared catalogue. */
-const PRESENTATION: Record<GameId, Omit<GameMeta, 'id' | 'label' | 'href' | 'category'>> = {
+const PRESENTATION: Record<GameId, Omit<GameMeta, 'id' | 'label' | 'href' | 'category' | 'rtp'>> = {
   crash: {
     icon: TrendingUp,
     description: 'Ride the multiplier. Cash out before it busts.',
     accent: 'from-[#FFCE5E] to-[#FF7A45]',
-    rtp: '95%',
   },
   coinflip: {
     icon: Coins,
     description: 'Heads or tails. 50/50 odds, 1.9× payout.',
     accent: 'from-[#2DD4BF] to-[#14B8A6]',
-    rtp: '95%',
   },
   jackpot: {
     icon: Trophy,
     description: 'Everyone buys in. One winner takes the whole pot.',
     accent: 'from-[#FFBE3D] to-[#F59E0B]',
-    rtp: '95%',
   },
   lottery: {
     icon: Ticket,
     description: 'Pick your digits. Daily draw, rolling prize pool.',
     accent: 'from-[#A78BFA] to-[#7C3AED]',
-    rtp: '95%',
   },
   blackjack: {
     icon: Spade,
     description: 'Beat the dealer. Up to 5 seats per table.',
     accent: 'from-[#60A5FA] to-[#2563EB]',
-    rtp: '95%',
   },
   dice: {
     icon: Dices,
     description: 'Roll over or under. Pick your own odds.',
     accent: 'from-[#34D399] to-[#059669]',
-    rtp: '95%',
   },
   limbo: {
     icon: Rocket,
     description: 'Name a multiplier. See if the roll clears it.',
     accent: 'from-[#F472B6] to-[#DB2777]',
-    rtp: '95%',
   },
   wheel: {
     icon: Bomb,
     description: 'Spin the wheel. Risk tiers change the spread.',
     accent: 'from-[#FB923C] to-[#EA580C]',
-    rtp: '95%',
   },
   plinko: {
     icon: Circle,
     description: 'Drop the ball. Bounce into a multiplier.',
     accent: 'from-[#38BDF8] to-[#0284C7]',
-    rtp: '95%',
   },
   mines: {
     icon: Gem,
     description: 'Uncover gems, dodge mines. Cash out any time.',
     accent: 'from-[#4ADE80] to-[#16A34A]',
-    rtp: '95%',
   },
   hilo: {
     icon: ArrowUpDown,
     description: 'Call the next card higher or lower.',
     accent: 'from-[#C084FC] to-[#9333EA]',
-    rtp: '95%',
   },
   tower: {
     icon: Layers,
     description: 'Climb floor by floor. One wrong tile ends it.',
     accent: 'from-[#FBBF24] to-[#D97706]',
-    rtp: '95%',
   },
 };
 
@@ -123,6 +118,9 @@ const PRESENTATION: Record<GameId, Omit<GameMeta, 'id' | 'label' | 'href' | 'cat
 export const ALL_GAMES: readonly GameMeta[] = GAME_CATALOG.map((g) => ({
   ...g,
   ...PRESENTATION[g.id],
+  // A hand-typed '95%' for every game here had drifted from the payout maths
+  // (crash pays 94.05%, dice 99%, blackjack 99.5%, lottery is pari-mutuel).
+  rtp: GAME_RTP[g.id]?.rtp ?? '—',
 }));
 
 /**

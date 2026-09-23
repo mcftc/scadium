@@ -36,7 +36,7 @@ const features: { icon: typeof Lock; title: string; description: ReactNode }[] =
     icon: Users,
     title: 'Live multiplayer',
     description:
-      'General chat, shared crash rounds, head-to-head coinflip duels, and jackpot pots you split with everyone in the round.',
+      'General chat, shared crash rounds, head-to-head coinflip duels, and jackpot pots where one player takes the pot.',
   },
   {
     icon: BarChart3,

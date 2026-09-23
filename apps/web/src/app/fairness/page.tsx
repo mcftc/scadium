@@ -1,3 +1,4 @@
+import { GAME_RTP } from '@scadium/shared';
 import { Container } from '@/components/ui/container';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerifierForm } from '@/components/fairness/verifier-form';
@@ -69,7 +70,9 @@ e = 2^52
 return floor((100 * e - h) / (e - h)) / 100`}
             </pre>
             <p className="mt-4 text-sm text-foreground-muted">
-              RTP 95%, platform edge 5%. Identical formula used by the backend round engine and the
+              Outside the 1-in-20 instant bust, a cash-out at M× survives with probability
+              99/(100·M), and a target equal to the bust loses — so every target returns{' '}
+              {GAME_RTP.crash?.rtp}. Identical formula used by the backend round engine and the
               in-browser verifier — both import from <code>@scadium/fair</code>.
             </p>
           </CardContent>

@@ -1,3 +1,4 @@
+import { JACKPOT } from '@scadium/shared';
 import { notFound } from 'next/navigation';
 import { isGameVisible } from '@/config/games';
 import { Container } from '@/components/ui/container';
@@ -21,8 +22,9 @@ export default function JackpotPage() {
             </span>
           </h1>
           <p className="text-sm text-foreground-muted mt-1">
-            Enter the pot with SOL — your win chance equals your share. Provably-fair draw every 45
-            seconds.
+            Enter the pot with SOL — your win chance equals your share. The{' '}
+            {Math.round(JACKPOT.ROUND_WINDOW_MS / 1000)}-second countdown to a provably-fair draw
+            starts when a second player joins.
           </p>
         </div>
         <JackpotGame />
