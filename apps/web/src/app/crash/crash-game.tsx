@@ -1,6 +1,6 @@
 'use client';
 
-import { Users } from 'lucide-react';
+import { Users, WifiOff } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { CrashCurve } from './crash-curve';
 import { CrashBetPanel } from './crash-bet-panel';
@@ -17,7 +17,7 @@ import { SoundToggle } from '@/components/instant/sound-toggle';
  * Chat lives in the global left rail (AppShell), not in this component.
  */
 export function CrashGame() {
-  const { state, cashouts } = useCrash();
+  const { state, cashouts, connected, interrupted, dismissInterruption } = useCrash();
   const { data: me } = useMe();
   const sound = useGameSound();
   const myBet = state?.bets.find((b) => b.userId === me?.id) ?? null;
@@ -37,6 +37,13 @@ export function CrashGame() {
             </span>
             <span className="text-[10px] text-white/50">Playing</span>
           </div>
+          {/* The round on screen is frozen while the socket is down — say so. */}
+          {state && !connected && (
+            <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-sm border border-amber-400/40 text-[11px] font-semibold text-amber-200">
+              <WifiOff className="h-3 w-3" />
+              Reconnecting…
+            </div>
+          )}
           {/* Mute toggle (top-right) — sound is on by default; bust plays an explosion. */}
           <SoundToggle sound={sound} className="absolute top-3 right-3 z-20" />
         </div>
@@ -45,7 +52,12 @@ export function CrashGame() {
       {/* RIGHT (desktop) / BELOW (mobile): Bet panel + players */}
       <div className="w-full lg:w-[320px] shrink-0 space-y-4">
         <Card className="p-5">
-          <CrashBetPanel state={state} />
+          <CrashBetPanel
+            state={state}
+            connected={connected}
+            interrupted={interrupted}
+            onDismissInterruption={dismissInterruption}
+          />
         </Card>
         <Card className="p-4 max-h-[380px] overflow-y-auto">
           <div className="flex items-center justify-between mb-3">

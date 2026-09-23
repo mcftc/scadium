@@ -1110,6 +1110,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
               seedId: this.current.seedId,
               nonce: this.current.nonce,
               resultJson: {
+                roundId: this.current.id,
                 bustPoint: bustM,
                 cashedOutAt: bet.cashedOutAt,
                 partialPayouts: payout.toString(),
@@ -1276,6 +1277,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
                   seedId: round.seedId,
                   nonce: 0,
                   resultJson: {
+                    roundId: round.id,
                     recovered: true,
                     payoutLamports: payout.toString(),
                     refundedLamports: refund.toString(),

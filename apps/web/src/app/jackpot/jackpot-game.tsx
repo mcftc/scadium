@@ -90,11 +90,11 @@ export function JackpotGame() {
     }
   }
 
-  const myChance = useMemo(() => {
-    if (!snap || !me) return 0;
-    const mine = snap.players.find((p) => p.userId === me.id);
-    return mine ? mine.chance : 0;
-  }, [snap, me]);
+  const mine = useMemo(
+    () => (snap && me ? (snap.players.find((p) => p.userId === me.id) ?? null) : null),
+    [snap, me],
+  );
+  const myChance = mine?.chance ?? 0;
 
   return (
     <div className="grid lg:grid-cols-[1fr_340px] gap-4">
@@ -172,7 +172,14 @@ export function JackpotGame() {
             )}
           </div>
 
-          {token ? (
+          {token && mine ? (
+            // One entry per player per round (the API enforces it) — say so
+            // rather than offering a button that can only fail.
+            <div className="rounded-xl border border-success/40 bg-success/10 py-3 text-center text-sm font-semibold text-success">
+              You&apos;re in with {formatSol(mine.amountLamports, 3)} SOL ·{' '}
+              {(mine.chance * 100).toFixed(1)}% to win
+            </div>
+          ) : token ? (
             <Button onClick={submit} size="lg" className="w-full" disabled={enter.isPending}>
               <Trophy className="h-5 w-5" />
               {enter.isPending ? 'Entering…' : `Enter with ${amount || '0'} SOL`}
@@ -184,8 +191,10 @@ export function JackpotGame() {
           )}
           <p className="text-[11px] text-foreground-muted text-center">
             Win chance = your stake ÷ total pot. Provably fair ·{' '}
-            {snap ? Math.round(snap.config.houseEdge * 100) : 5}% platform edge · needs{' '}
-            {snap?.config.minPlayers ?? 2}+ players or all entries refund.
+            {snap ? Math.round(snap.config.houseEdge * 100) : 5}% platform edge · the{' '}
+            {snap ? Math.round(snap.config.roundWindowMs / 1000) : 45}s countdown starts when{' '}
+            {snap?.config.minPlayers ?? 2} players are in; a lone entry is refunded after{' '}
+            {snap ? Math.round(snap.config.soloWaitMs / 60_000) : 5} min.
           </p>
         </Card>
 
@@ -222,15 +231,18 @@ export function JackpotGame() {
 
 function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
   const [remaining, setRemaining] = useState(0);
+  const closeAt = snap?.closeAt ?? null;
   useEffect(() => {
-    if (!snap) return;
-    const update = () => setRemaining(Math.max(0, snap.closeAt - Date.now()));
+    if (closeAt === null) return;
+    const update = () => setRemaining(Math.max(0, closeAt - Date.now()));
     update();
     const id = setInterval(update, 250);
     return () => clearInterval(id);
-  }, [snap?.closeAt, snap]);
+  }, [closeAt]);
 
   const secs = Math.ceil(remaining / 1000);
+  const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  const counting = !!snap && snap.playerCount >= snap.config.minPlayers;
   const potSol = snap ? lamportsToSol(snap.totalLamports) : 0;
   const last = snap?.lastResult;
 
@@ -249,13 +261,23 @@ function PotBanner({ snap }: { snap: JackpotSnapshot | null }) {
           <span className="text-2xl md:text-4xl text-foreground-muted">SOL</span>
         </div>
         <div className="mt-3 text-sm text-foreground-muted">
-          {snap ? (
+          {!snap ? (
+            'Connecting…'
+          ) : snap.closeAt === null ? (
+            // The clock starts with the players — nothing to count down yet.
+            <>Waiting for players — the draw starts when {snap.config.minPlayers} are in</>
+          ) : !counting ? (
+            <>
+              Waiting for a {snap.config.minPlayers === 2 ? 'second' : 'another'} player · refund in{' '}
+              <span className="font-mono font-bold text-foreground">{clock}</span>
+            </>
+          ) : remaining > 0 ? (
             <>
               Drawing in <span className="font-mono font-bold text-foreground">{secs}s</span> ·{' '}
-              {snap.playerCount} player{snap.playerCount === 1 ? '' : 's'}
+              {snap.playerCount} players
             </>
           ) : (
-            'Connecting…'
+            <>Drawing…</>
           )}
         </div>
       </div>

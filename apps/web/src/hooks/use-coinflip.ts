@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
+import type { MeResponse } from '@/hooks/use-me';
 
 /**
  * Per-game resolved listeners (spectate modal). Module-level registry so the
@@ -91,8 +92,12 @@ export function useOpenCoinflips() {
         if (!prev) return [game];
         return [game, ...prev].slice(0, 20);
       });
-      // Bet history + balance both changed for the winning/losing users
-      qc.invalidateQueries({ queryKey: ['me'] });
+      // Balance + bet history changed only for the two players in it — every
+      // other viewer refetching /me on every flip was N requests per flip.
+      const myId = qc.getQueryData<MeResponse>(['me'])?.id;
+      if (myId && (game.creatorId === myId || game.joinerId === myId)) {
+        qc.invalidateQueries({ queryKey: ['me'] });
+      }
       // Notify any open spectate modal watching this game.
       resolvedListeners.get(game.id)?.forEach((cb) => cb(game));
     };
@@ -104,10 +109,19 @@ export function useOpenCoinflips() {
       cancelledListeners.get(id)?.forEach((cb) => cb());
     };
 
+    // Events missed while disconnected (every server restart) left the lobby
+    // listing flips that were gone and missing new ones — re-read it on reconnect.
+    const onConnect = () => {
+      qc.invalidateQueries({ queryKey: ['coinflip'] });
+      qc.invalidateQueries({ queryKey: ['me'] });
+    };
+
+    socket.on('connect', onConnect);
     socket.on('flip:created', onCreated);
     socket.on('flip:resolved', onResolved);
     socket.on('flip:cancelled', onCancelled);
     return () => {
+      socket.off('connect', onConnect);
       socket.off('flip:created', onCreated);
       socket.off('flip:resolved', onResolved);
       socket.off('flip:cancelled', onCancelled);

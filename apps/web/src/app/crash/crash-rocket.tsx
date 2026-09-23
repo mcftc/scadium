@@ -68,8 +68,20 @@ export function CrashRocket({ size = 56 }: { size?: number }) {
       {/* Swept fins with a cyan edge */}
       <path d="M23 33 C16 38 14 45 15 51 C20 47 23 45 26 42 Z" fill="url(#rkt-fin)" />
       <path d="M41 33 C48 38 50 45 49 51 C44 47 41 45 38 42 Z" fill="url(#rkt-fin)" />
-      <path d="M23 33 C16 38 14 45 15 51" stroke="#5eead4" strokeWidth="0.8" opacity="0.7" fill="none" />
-      <path d="M41 33 C48 38 50 45 49 51" stroke="#5eead4" strokeWidth="0.8" opacity="0.7" fill="none" />
+      <path
+        d="M23 33 C16 38 14 45 15 51"
+        stroke="#5eead4"
+        strokeWidth="0.8"
+        opacity="0.7"
+        fill="none"
+      />
+      <path
+        d="M41 33 C48 38 50 45 49 51"
+        stroke="#5eead4"
+        strokeWidth="0.8"
+        opacity="0.7"
+        fill="none"
+      />
 
       {/* Body — sleek pointed capsule */}
       <path
@@ -79,15 +91,31 @@ export function CrashRocket({ size = 56 }: { size?: number }) {
         strokeWidth="0.9"
       />
       {/* Vertical sheen highlight */}
-      <path d="M30 4 C26 12 24 22 24.5 33 C25 40 27 44 29.5 46 C28.5 40 28 33 28.5 24 C29 16 29.5 9 31 4 Z" fill="url(#rkt-sheen)" opacity="0.5" />
+      <path
+        d="M30 4 C26 12 24 22 24.5 33 C25 40 27 44 29.5 46 C28.5 40 28 33 28.5 24 C29 16 29.5 9 31 4 Z"
+        fill="url(#rkt-sheen)"
+        opacity="0.5"
+      />
       {/* Nose accent */}
       <path d="M32 1 C36 6 39 12 40.6 18 L23.4 18 C25 12 28 6 32 1 Z" fill="url(#rkt-nose)" />
       {/* Cockpit window */}
       <circle cx="32" cy="25" r="5.6" fill="url(#rkt-glass)" stroke="#f2eaff" strokeWidth="1.5" />
       <circle cx="30" cy="23" r="1.6" fill="#ffffff" opacity="0.85" />
       {/* Panel lines */}
-      <path d="M23.5 31 C26 33 38 33 40.5 31" stroke="#B26B0C" strokeWidth="0.7" opacity="0.55" fill="none" />
-      <path d="M25 39 C28 41 36 41 39 39" stroke="#B26B0C" strokeWidth="0.7" opacity="0.5" fill="none" />
+      <path
+        d="M23.5 31 C26 33 38 33 40.5 31"
+        stroke="#B26B0C"
+        strokeWidth="0.7"
+        opacity="0.55"
+        fill="none"
+      />
+      <path
+        d="M25 39 C28 41 36 41 39 39"
+        stroke="#B26B0C"
+        strokeWidth="0.7"
+        opacity="0.5"
+        fill="none"
+      />
       {/* Booster band + nozzle */}
       <path d="M26 44 L38 44 L37 47 L27 47 Z" fill="#5b5286" />
       <path d="M28 47 L36 47 L34.5 50.5 L29.5 50.5 Z" fill="#3a335c" />

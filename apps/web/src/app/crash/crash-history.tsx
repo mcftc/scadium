@@ -2,11 +2,7 @@
 
 import { cn } from '@/lib/cn';
 
-export function CrashHistory({
-  history,
-}: {
-  history: { bustPoint: number; roundId: string }[];
-}) {
+export function CrashHistory({ history }: { history: { bustPoint: number; roundId: string }[] }) {
   if (history.length === 0) {
     return null;
   }

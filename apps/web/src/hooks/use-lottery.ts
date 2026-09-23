@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey, type Transaction } from '@solana/web3.js';
@@ -9,6 +9,7 @@ import { buildBuyTicketTx, buildBuyTicketsTx } from '@/lib/lottery';
 import { ata } from '@/lib/swap';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
+import { useLiveSnapshot } from '@/hooks/use-live-snapshot';
 
 export interface LotteryLastResult {
   drawId: string;
@@ -153,23 +154,40 @@ export interface LotteryDrawRow {
 
 /** Live current-draw state, seeded from REST and patched over Socket.io. */
 export function useLottery() {
-  const [snap, setSnap] = useState<LotterySnapshot | null>(null);
+  const { snap, setSnap, refetch } = useLiveSnapshot<LotterySnapshot>('/lottery/current');
   const socket = useSocket('/lottery');
   const qc = useQueryClient();
-
+  const drawIdRef = useRef<string | null>(null);
   useEffect(() => {
-    // Mount seed only — never clobber state a socket event already set.
-    api<LotterySnapshot>('/lottery/current')
-      .then((s) => setSnap((prev) => prev ?? s))
-      .catch(() => {});
-  }, []);
+    drawIdRef.current = snap?.drawId ?? null;
+  }, [snap?.drawId]);
 
   useEffect(() => {
     if (!socket) return;
-    const refetch = () => api<LotterySnapshot>('/lottery/current').then(setSnap).catch(() => {});
-    const onTicket = (p: { ticketCount: number; potLamports: string; totalPoolScadBase: string }) =>
+    // Everything a missed draw could have changed.
+    const invalidateDrawData = () => {
+      qc.invalidateQueries({ queryKey: ['lottery'] });
+      qc.invalidateQueries({ queryKey: ['me'] });
+    };
+    // A reconnect usually means the server restarted — which is also when a due
+    // draw settles — so re-read the current draw instead of showing the old one.
+    const onConnect = () => {
+      refetch();
+      invalidateDrawData();
+    };
+    const onTicket = (p: {
+      drawId: string;
+      ticketCount: number;
+      potLamports: string;
+      totalPoolScadBase: string;
+    }) => {
+      // A sale for a draw other than the one on screen means ours is stale.
+      if (drawIdRef.current && p.drawId !== drawIdRef.current) {
+        refetch();
+        return;
+      }
       setSnap((s) =>
-        s
+        s && s.drawId === p.drawId
           ? {
               ...s,
               ticketCount: p.ticketCount,
@@ -179,24 +197,22 @@ export function useLottery() {
             }
           : s,
       );
+    };
     const onResult = () => {
       refetch();
-      qc.invalidateQueries({ queryKey: ['lottery', 'my-tickets'] });
-      qc.invalidateQueries({ queryKey: ['lottery', 'recent'] });
-      qc.invalidateQueries({ queryKey: ['lottery', 'results'] });
-      qc.invalidateQueries({ queryKey: ['lottery', 'jackpot-winners'] });
-      qc.invalidateQueries({ queryKey: ['lottery', 'my-stats'] });
-      qc.invalidateQueries({ queryKey: ['me'] });
+      invalidateDrawData();
     };
+    socket.on('connect', onConnect);
     socket.on('lottery:draw-open', refetch);
     socket.on('lottery:ticket-sold', onTicket);
     socket.on('lottery:draw-result', onResult);
     return () => {
+      socket.off('connect', onConnect);
       socket.off('lottery:draw-open', refetch);
       socket.off('lottery:ticket-sold', onTicket);
       socket.off('lottery:draw-result', onResult);
     };
-  }, [socket, qc]);
+  }, [socket, qc, refetch, setSnap]);
 
   return snap;
 }
@@ -407,10 +423,9 @@ export function useMyLotteryTickets(limit = 20, wonOnly = false) {
     queryKey: ['lottery', 'my-tickets', limit, wonOnly],
     enabled: !!token,
     queryFn: () =>
-      api<MyLotteryTicket[]>(
-        `/lottery/my-tickets?limit=${limit}${wonOnly ? '&won=true' : ''}`,
-        { token },
-      ),
+      api<MyLotteryTicket[]>(`/lottery/my-tickets?limit=${limit}${wonOnly ? '&won=true' : ''}`, {
+        token,
+      }),
   });
 }
 
