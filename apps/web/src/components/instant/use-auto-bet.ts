@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AUTOBET } from '@scadium/shared';
-import type { InstantSettleResult } from '@/hooks/use-instant-game';
+/**
+ * What one auto-bet iteration reports back — all the loop needs. The instant
+ * games' `InstantSettleResult` is a superset; crash resolves one of these per
+ * round, at the bust.
+ */
+export interface AutoBetOutcome {
+  amountLamports: string;
+  payoutLamports: string;
+  won: boolean;
+}
 
 export type ProgressionMode = 'reset' | 'increase';
 
@@ -38,7 +47,7 @@ const clampBig = (v: bigint, lo: bigint, hi: bigint) => (v < lo ? lo : v > hi ? 
  * a limit the manual path enforces.
  */
 export function useAutoBet(params: {
-  runBet: (amountLamports: string) => Promise<InstantSettleResult>;
+  runBet: (amountLamports: string) => Promise<AutoBetOutcome>;
   /** Current base stake (lamports) — read fresh at start from the amount field. */
   baseStakeLamports: () => bigint;
   minLamports: number;
@@ -121,7 +130,7 @@ export function useAutoBet(params: {
           setBetsRemaining(Number.isFinite(remaining) ? remaining : null);
 
           while (alive() && remaining > 0) {
-            let res: InstantSettleResult;
+            let res: AutoBetOutcome;
             try {
               res = await runBetRef.current(stake.toString());
             } catch (e) {

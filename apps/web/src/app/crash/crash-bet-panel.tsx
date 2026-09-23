@@ -1,7 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarClock, ChevronDown, Loader2, Repeat, WifiOff, X } from 'lucide-react';
+import { AutoBetControls } from '@/components/instant/auto-bet-controls';
+import {
+  useAutoBet,
+  type AutoBetOutcome,
+  type AutoBetConfig,
+} from '@/components/instant/use-auto-bet';
 import { CRASH, GAME_RTP, HOUSE } from '@scadium/shared';
 import { isValidBetSol, solToLamportsClamped } from '@/components/instant/bet-amount-input';
 import { useCrashActions, type CrashInterruption, type CrashSnapshot } from '@/hooks/use-crash';
@@ -11,7 +17,9 @@ import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { useLocalStorageValue, writeLocalStorageValue } from '@/hooks/use-local-storage-value';
 import { useMe } from '@/hooks/use-me';
 import { useGameSound } from '@/components/instant/use-game-sound';
-import { ApiError } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api-client';
+import { useAuthStore } from '@/store/auth-store';
+import type { BetListResponse } from '@/hooks/use-me';
 import { formatSol } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
@@ -44,19 +52,18 @@ export function CrashBetPanel({
   const [scheduled, setScheduled] = useState(false);
   // Advanced Betting
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [autoBet, setAutoBet] = useState(false);
-  const autoBetRef = useRef(autoBet);
-  autoBetRef.current = autoBet;
-  // The auto-bet timer fires from a stale render — read the live inputs
-  // through refs so an amount edited during the 400ms window is what's placed.
+  const token = useAuthStore((s) => s.accessToken);
+  // The auto-bet loop runs across rounds — read the live inputs and round
+  // through refs so it always sees the current amount, target and state.
   const solRef = useRef(sol);
-  solRef.current = sol;
   const autoCashoutRef = useRef(autoCashout);
-  autoCashoutRef.current = autoCashout;
-  // Guard against re-placing on the same round: the auto-bet effect re-runs when
-  // `busy` clears, but the server-pushed `myBet` can lag (or be lost on a socket
-  // reconnect), so the myBet guard alone can double-fire within one round.
-  const autoPlacedRoundRef = useRef<string | null>(null);
+  const stateRef = useRef(state);
+  const myIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    solRef.current = sol;
+    autoCashoutRef.current = autoCashout;
+    stateRef.current = state;
+  }, [sol, autoCashout, state]);
 
   // Default progressive-cashout % persists across sessions. Read reactively
   // (null on SSR → no hydration mismatch) and apply during render on its edge
@@ -80,11 +87,13 @@ export function CrashBetPanel({
   const canCashout = connected && riding;
 
   // Rounds this player had a stake in — so a round that ended while the socket
-  // was down is only reported to someone who was actually in it.
-  const myRounds = useRef(new Set<string>());
-  if (myBet && state) myRounds.current.add(state.roundId);
-  const missedMyRound =
-    interrupted && myRounds.current.has(interrupted.roundId) ? interrupted : null;
+  // was down is only reported to someone who was actually in it. Recorded on
+  // the edge where a bet of mine appears (render-phase update, guarded).
+  const [myRounds, setMyRounds] = useState<ReadonlySet<string>>(() => new Set());
+  if (myBet && state && !myRounds.has(state.roundId)) {
+    setMyRounds(new Set(myRounds).add(state.roundId));
+  }
+  const missedMyRound = interrupted && myRounds.has(interrupted.roundId) ? interrupted : null;
   const { data: recentBets } = useBets('crash', 5);
   const missedBet = missedMyRound
     ? (recentBets?.items.find(
@@ -100,27 +109,92 @@ export function CrashBetPanel({
   // than via a setState-in-effect.
   if (scheduled && phase === 'waiting' && myBet) setScheduled(false);
 
-  // Auto Bet (Advanced): re-place the same bet whenever a fresh betting
-  // window opens and we don't already have a bet riding or queued. `busy` must
-  // be a dep: if the effect bails while a request is in flight, it has to
-  // re-run when the request clears or that round is silently skipped.
   useEffect(() => {
-    // Skip an empty/invalid amount so an in-flight field edit can't fire a
-    // silent min-stake bet; and never place twice for the same roundId.
-    if (!autoBet || phase !== 'waiting' || myBet || scheduled || busy || !validBet) return;
-    const roundId = state?.roundId ?? null;
-    if (roundId && autoPlacedRoundRef.current === roundId) return;
-    const t = setTimeout(() => {
-      if (!autoBetRef.current) return;
-      autoPlacedRoundRef.current = roundId;
-      void onPlace().catch(() => {
-        autoPlacedRoundRef.current = null; // let the next window retry after a failure
-        setAutoBet(false);
-      });
-    }, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoBet, phase, state?.roundId, myBet, scheduled, busy, validBet]);
+    myIdRef.current = me?.publicId;
+  }, [me?.publicId]);
+
+  /**
+   * One auto-bet iteration = one crash round: wait for a betting window that is
+   * still open, bet, then resolve with this bet's outcome when the round ends.
+   * Crash auto-bet used to be a bare "re-place every round" toggle; running it
+   * on the shared engine gives it the instant games' controls (number of bets,
+   * on-win/on-loss stake progression, stop on profit/loss).
+   */
+  const runRound = useCallback(
+    async (amountLamports: string): Promise<AutoBetOutcome> => {
+      const open = () => {
+        const s = stateRef.current;
+        return (
+          !!s &&
+          s.phase === 'waiting' &&
+          (s.bettingEndsAt ?? 0) - Date.now() > AUTO_BET_MIN_WINDOW_MS &&
+          !s.bets.some((b) => b.playerId === myIdRef.current)
+        );
+      };
+      await waitUntil(open, AUTO_BET_WAIT_ROUND_MS);
+      const target = autoCashoutRef.current ? Number(autoCashoutRef.current) : null;
+      sound.bet();
+      const { roundId } = await placeBet({ amountLamports, autoCashout: target });
+      await waitUntil(() => {
+        const s = stateRef.current;
+        return !!s && (s.roundId !== roundId || s.phase === 'busted');
+      }, AUTO_BET_WAIT_BUST_MS);
+      const s = stateRef.current;
+      let payout: string | null = null;
+      if (s?.roundId === roundId && s.phase === 'busted') {
+        payout = s.bets.find((b) => b.playerId === myIdRef.current)?.payoutLamports ?? '0';
+      } else {
+        // The round ended out of sight (reconnect, or voided by a restart): the
+        // settled Bet row, tagged with its round, is the truth.
+        const res = await api<BetListResponse>('/users/bets?gameType=crash&limit=5', { token });
+        const bet = res.items.find(
+          (b) => (b.resultJson as { roundId?: string } | null)?.roundId === roundId,
+        );
+        payout = bet?.payoutLamports ?? amountLamports;
+      }
+      return {
+        amountLamports,
+        payoutLamports: payout,
+        won: BigInt(payout) > BigInt(amountLamports),
+      };
+    },
+    [placeBet, sound, token],
+  );
+  const auto = useAutoBet({
+    runBet: runRound,
+    baseStakeLamports: () =>
+      BigInt(solToLamportsClamped(solRef.current, CRASH.MIN_BET_LAMPORTS, CRASH.MAX_BET_LAMPORTS)),
+    minLamports: CRASH.MIN_BET_LAMPORTS,
+    maxLamports: CRASH.MAX_BET_LAMPORTS,
+    onError: setError,
+  });
+  function onStartAuto(cfg: AutoBetConfig) {
+    if (!isAuthenticated) return openWallet();
+    setError(null);
+    void auto.start(cfg);
+  }
+
+  // Hotkey: Space places a bet in an open window, or cashes out a riding bet —
+  // never while typing, and never with a modifier held.
+  const hotkeyRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    hotkeyRef.current = () => {
+      if (busy || auto.running) return;
+      if (canCashout) void onCashout();
+      else if (canBet && validBet) void onPlace().catch(() => undefined);
+    };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName))) return;
+      e.preventDefault();
+      hotkeyRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   async function onPlace() {
     if (!isAuthenticated) {
@@ -146,7 +220,6 @@ export function CrashBetPanel({
       await placeBet({ amountLamports: lamports, autoCashout: target });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Bet failed');
-      if (autoBet) setAutoBet(false); // stop the loop on failure (e.g. balance)
       throw e;
     } finally {
       setBusy(false);
@@ -394,36 +467,27 @@ export function CrashBetPanel({
         </button>
         {advancedOpen && (
           <div className="space-y-3 border-t border-border px-3 py-3">
-            <label className="flex items-center justify-between gap-2 cursor-pointer">
-              <span className="flex items-center gap-1.5 text-xs font-semibold">
-                <Repeat className="h-3.5 w-3.5 text-primary-400" />
-                Auto Bet
-                <span className="text-[10px] text-foreground-muted font-normal">
-                  re-places this bet every round
-                </span>
+            <p className="flex items-center gap-1.5 text-xs font-semibold">
+              <Repeat className="h-3.5 w-3.5 text-primary-400" />
+              Auto Bet
+              <span className="text-[10px] text-foreground-muted font-normal">
+                one bet per round, cashing out at your auto cash-out
               </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoBet}
-                onClick={() => setAutoBet((v) => !v)}
-                className={cn(
-                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                  autoBet ? 'bg-emerald-500' : 'bg-surface-elevated border border-border',
-                )}
-              >
-                <span
-                  className={cn(
-                    'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all',
-                    autoBet ? 'left-[18px]' : 'left-0.5',
-                  )}
-                />
-              </button>
-            </label>
+            </p>
+            <AutoBetControls
+              running={auto.running}
+              betsRemaining={auto.betsRemaining}
+              sessionProfitLamports={auto.sessionProfitLamports}
+              currentStakeLamports={auto.currentStakeLamports}
+              canStart={validBet && connected}
+              onStart={onStartAuto}
+              onStop={auto.stop}
+            />
             <p className="text-[10px] text-foreground-muted">
-              Default progressive cashout: <span className="font-mono">{cashoutPct}%</span> — adjust
-              the slider during a round to change it. Auto Bet stops automatically if a bet fails
-              (e.g. insufficient balance).
+              Default progressive cashout: <span className="font-mono">{cashoutPct}%</span>. Auto
+              Bet stops if a bet fails (e.g. insufficient balance). Hotkey:{' '}
+              <kbd className="rounded border border-border px-1 font-mono">Space</kbd> bets or
+              cashes out.
             </p>
           </div>
         )}
@@ -511,4 +575,23 @@ function cashoutPreview(
     BigInt(HOUSE.MAX_WIN_PER_BET_LAMPORTS) -
     BigInt(bet.payoutLamports ?? '0');
   return payout < room ? payout : room;
+}
+
+/** Auto-bet timing (client-side pacing only — the server enforces every rule). */
+const AUTO_BET_MIN_WINDOW_MS = 1_500; // don't start a bet the window will close on
+const AUTO_BET_WAIT_ROUND_MS = 120_000; // a betting window opens every round
+const AUTO_BET_WAIT_BUST_MS = 600_000; // the longest a round could plausibly run
+
+/** Resolve when `check` holds; reject after `ms` so a stuck loop surfaces as an error. */
+function waitUntil(check: () => boolean, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (check()) return resolve();
+      if (Date.now() - started > ms)
+        return reject(new Error('Auto-bet timed out waiting for a round'));
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
 }

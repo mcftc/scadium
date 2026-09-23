@@ -49,10 +49,27 @@ export interface CrashSnapshot {
   bustPoint: number | null;
   multiplier: number;
   bets: CrashBet[];
-  history: { bustPoint: number; roundId: string }[];
+  history: CrashHistoryItem[];
   /** drand round the bust folds in (ADR 0004) — public from round open. */
   beaconRound?: number | null;
   /** That round's value — revealed with the bust. */
+  slotHash?: string | null;
+  /**
+   * Client-clock time the betting window ends (derived when the round arrives)
+   * — lets auto-bet wait for a window it can still make.
+   */
+  bettingEndsAt?: number | null;
+}
+
+/** One busted round in the history bar, with what its Verify link needs. */
+export interface CrashHistoryItem {
+  roundId: string;
+  bustPoint: number;
+  serverSeed?: string | null;
+  serverSeedHash?: string;
+  clientSeed?: string;
+  nonce?: number;
+  beaconRound?: number | null;
   slotHash?: string | null;
 }
 
@@ -91,6 +108,11 @@ export function useCrash() {
       api<CrashSnapshot>('/crash/snapshot')
         .then((snap) => {
           const stale = eventSeq.current !== seqAtRequest;
+          const endsAt =
+            snap.phase === 'waiting' && snap.bettingMsRemaining != null
+              ? Date.now() + snap.bettingMsRemaining
+              : null;
+          snap = { ...snap, bettingEndsAt: endsAt };
           setState((prev) => {
             if (!prev) return snap;
             if (stale) return prev.history?.length ? prev : { ...prev, history: snap.history };
@@ -165,6 +187,7 @@ export function useCrash() {
           history: prev?.history ?? [],
           beaconRound: p.beaconRound ?? null,
           slotHash: null,
+          bettingEndsAt: p.bettingWindowMs != null ? Date.now() + p.bettingWindowMs : null,
         }));
         setCashouts([]); // markers belong to the previous round
       },
@@ -209,7 +232,19 @@ export function useCrash() {
                 multiplier: bustPoint,
                 serverSeed,
                 slotHash: slotHash ?? null,
-                history: [{ bustPoint, roundId: s.roundId }, ...s.history].slice(0, 20),
+                history: [
+                  {
+                    roundId: s.roundId,
+                    bustPoint,
+                    serverSeed,
+                    serverSeedHash: s.serverSeedHash,
+                    clientSeed: s.clientSeed,
+                    nonce: s.nonce,
+                    beaconRound: s.beaconRound ?? null,
+                    slotHash: slotHash ?? null,
+                  },
+                  ...s.history,
+                ].slice(0, 20),
               }
             : s,
         );

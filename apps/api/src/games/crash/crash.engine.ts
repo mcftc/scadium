@@ -135,6 +135,21 @@ interface Round {
   exposure: ExposureGuard | null;
 }
 
+/** One busted round in the history bar — with its revealed fairness inputs. */
+interface CrashHistoryItem {
+  roundId: string;
+  bustPoint: number;
+  serverSeed: string | null;
+  serverSeedHash: string;
+  clientSeed: string;
+  nonce: number;
+  beaconRound: number | null;
+  slotHash: string | null;
+}
+
+/** Rounds kept for the history bar (and loaded from the DB at boot). */
+const HISTORY_SIZE = 50;
+
 /** Bet queued for the NEXT round ("Schedule Bet For Next Round"). */
 interface ScheduledBet {
   userId: string;
@@ -156,7 +171,8 @@ interface ScheduledBet {
 export class CrashEngine implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CrashEngine.name);
   private current!: Round;
-  private history: { bustPoint: number; roundId: string }[] = [];
+  /** Newest first. Each entry carries what a player needs to verify that round. */
+  private history: CrashHistoryItem[] = [];
   /** One queued bet per user, auto-placed when the next round opens. */
   private readonly nextRoundBets = new Map<string, ScheduledBet>();
 
@@ -212,6 +228,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
       // Single-instance: drive the loop directly (unchanged behavior).
       await this.recoverStrandedRounds();
       await this.recoverScheduledBets();
+      await this.loadHistory();
       await this.startNewRound();
       this.startWatchdog();
       return;
@@ -270,6 +287,35 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Seed the history bar from the DB. It lived only in RAM, so every restart
+   * (hourly on Cloudflare) showed a new visitor an empty bar — and history is
+   * how players judge a crash site. Voided rounds (no bust multiplier) are left
+   * out: they never ran to a bust. Best effort — never blocks boot.
+   */
+  private async loadHistory(): Promise<void> {
+    try {
+      const rounds = await this.prisma.crashRound.findMany({
+        where: { status: 'busted', bustMultiplier: { not: null } },
+        orderBy: { endedAt: 'desc' },
+        take: HISTORY_SIZE,
+        include: { seed: true },
+      });
+      this.history = rounds.map((r) => ({
+        roundId: r.id,
+        bustPoint: r.bustMultiplier!,
+        serverSeed: r.seed.revealedAt ? r.seed.serverSeed : null,
+        serverSeedHash: r.seed.serverSeedHash,
+        clientSeed: r.seed.clientSeed,
+        nonce: r.nonce,
+        beaconRound: r.beaconRound === null ? null : Number(r.beaconRound),
+        slotHash: r.slotHash,
+      }));
+    } catch (e) {
+      this.logger.warn(`crash: could not load round history: ${errMessage(e)}`);
+    }
+  }
+
   private startWatchdog(): void {
     if (this.watchdog) return;
     this.watchdog = setInterval(() => {
@@ -308,6 +354,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     this.lastProgressAt = Date.now();
     await this.recoverStrandedRounds();
     await this.recoverScheduledBets();
+    await this.loadHistory();
     await this.startNewRound();
   }
 
@@ -468,7 +515,8 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
         autoCashout: b.autoCashout,
         cashedOutAt: b.cashedOutAt,
       })),
-      history: this.history.slice(-20),
+      // Newest first — slice(-20) of this array served the OLDEST twenty.
+      history: this.history.slice(0, 20),
     };
   }
 
@@ -960,8 +1008,17 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
     this.current.phase = 'busted';
     this.lastProgressAt = Date.now();
     const bustM = this.current.bustPoint;
-    this.history.unshift({ bustPoint: bustM, roundId: this.current.id });
-    this.history = this.history.slice(0, 50);
+    this.history.unshift({
+      roundId: this.current.id,
+      bustPoint: bustM,
+      serverSeed: this.current.serverSeed,
+      serverSeedHash: this.current.serverSeedHash,
+      clientSeed: this.current.clientSeed,
+      nonce: this.current.nonce,
+      beaconRound: this.current.beaconRound ?? null,
+      slotHash: this.currentEntropy,
+    });
+    this.history = this.history.slice(0, HISTORY_SIZE);
 
     // Settle the ledger for all bets. The `busted` round flip + seed reveal now
     // happen INSIDE this transaction (see settleRound) so a round is never
