@@ -17,7 +17,13 @@ async function setupDraw(userId: string) {
   const seed = await makeSeed();
   const drawIndex = BigInt(randomInt(1, 2_000_000_000));
   const draw = await prisma.lotteryDraw.create({
-    data: { seedId: seed.id, nonce: 0, status: 'open', drawIndex, drawAt: new Date(Date.now() - 60_000) },
+    data: {
+      seedId: seed.id,
+      nonce: 0,
+      status: 'open',
+      drawIndex,
+      drawAt: new Date(Date.now() - 60_000),
+    },
   });
   const ticket = await prisma.lotteryTicket.create({
     data: {
@@ -97,8 +103,74 @@ describe('lottery settlement (integration, real Postgres)', () => {
     expect(ticketAfter.matchLen).toBeLessThanOrEqual(LOTTERY.DIGITS);
 
     expect(await prisma.bet.count({ where: { userId: u.id, gameType: 'lottery' } })).toBe(1);
-    expect((await prisma.seed.findUniqueOrThrow({ where: { id: seed.id } })).revealedAt).not.toBeNull();
-    expect(await prisma.settlementFailure.count({ where: { gameType: 'lottery', roundId: d.id } })).toBe(0);
+    expect(
+      (await prisma.seed.findUniqueOrThrow({ where: { id: seed.id } })).revealedAt,
+    ).not.toBeNull();
+    expect(
+      await prisma.settlementFailure.count({ where: { gameType: 'lottery', roundId: d.id } }),
+    ).toBe(0);
+  });
+
+  it('volume (A5): 1,000 tickets across 40 buyers settle in one draw, aggregates exact', async () => {
+    const buyers = [];
+    for (let i = 0; i < 40; i += 1) buyers.push(await makeUser(0n));
+    const { seed, draw: d, ticket: first } = await setupDraw(buyers[0]!.id);
+    const cost = 1_000n;
+    await prisma.lotteryTicket.update({ where: { id: first.id }, data: { costLamports: cost } });
+    // 999 more, spread over the buyers (bulk buyers: 25 each on average).
+    await prisma.lotteryTicket.createMany({
+      data: Array.from({ length: 999 }, (_, i) => ({
+        drawId: d.id,
+        userId: buyers[(i + 1) % buyers.length]!.id,
+        digits: [i % 10, (i >> 1) % 10, (i >> 2) % 10, (i >> 3) % 10, (i >> 4) % 10, i % 7],
+        costLamports: cost,
+        costScadBase: ticketPriceScadBase(),
+      })),
+    });
+
+    const engine = makeLotteryEngine();
+    prime(engine, d, seed);
+    const started = Date.now();
+    await draw(engine);
+    const elapsed = Date.now() - started;
+
+    expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: d.id } })).status).toBe(
+      'drawn',
+    );
+    // One Bet row per ticket (the unified history stays per-ticket)…
+    const bets = await prisma.bet.findMany({
+      where: { userId: { in: buyers.map((b) => b.id) }, gameType: 'lottery' },
+      select: { userId: true, amountLamports: true, payoutLamports: true },
+    });
+    expect(bets).toHaveLength(1_000);
+    // …and each buyer's aggregates equal the per-ticket sums the settle used to
+    // write one ticket at a time (the reconcileAll derivation).
+    for (const b of buyers) {
+      const mine = bets.filter((x) => x.userId === b.id);
+      const u = await prisma.user.findUniqueOrThrow({ where: { id: b.id } });
+      expect(u.gamesPlayed).toBe(mine.length);
+      expect(u.totalWagered).toBe(mine.reduce((s, x) => s + x.amountLamports, 0n));
+      expect(u.totalWon).toBe(
+        mine.reduce(
+          (s, x) =>
+            s + (x.payoutLamports > x.amountLamports ? x.payoutLamports - x.amountLamports : 0n),
+          0n,
+        ),
+      );
+      expect(u.totalLost).toBe(
+        mine.reduce(
+          (s, x) =>
+            s + (x.amountLamports > x.payoutLamports ? x.amountLamports - x.payoutLamports : 0n),
+          0n,
+        ),
+      );
+    }
+    // Every ticket carries its result: the grouped ticket updates wrote the
+    // same win flags the Bet rows record.
+    expect(await prisma.lotteryTicket.count({ where: { drawId: d.id, won: true } })).toBe(
+      bets.filter((x) => x.payoutLamports > 0n).length,
+    );
+    expect(elapsed).toBeLessThan(20_000);
   });
 
   it('induced failure: zero partial effects, draw stays open, dead-letter written', async () => {
@@ -110,7 +182,9 @@ describe('lottery settlement (integration, real Postgres)', () => {
     poisonSeed(engine); // in-tx Bet.create FK throws
     await draw(engine); // swallows the error
 
-    expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: d.id } })).status).toBe('open');
+    expect((await prisma.lotteryDraw.findUniqueOrThrow({ where: { id: d.id } })).status).toBe(
+      'open',
+    );
     expect((await prisma.seed.findUniqueOrThrow({ where: { id: seed.id } })).revealedAt).toBeNull();
 
     // Ticket update rolled back: still the create-time defaults (no win recorded).
