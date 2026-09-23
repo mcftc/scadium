@@ -64,7 +64,13 @@ const ARM_THROW = 2.55;
 const FORE_REST = 0.7;
 const FORE_THROW = 0.05;
 
-function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplete }: CoinStageProps) {
+function CoinRig({
+  result,
+  spinning,
+  celebrate = false,
+  speed = 1,
+  onSpinComplete,
+}: CoinStageProps) {
   const spd = Math.max(speed, 0.05);
   const tossGroup = useRef<Group>(null);
   const spinGroup = useRef<Group>(null);
@@ -133,8 +139,12 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
 
       // Robot throw: wind-up → snap → follow-through back to rest.
       const wind = pulse(t, 0.0, 0.16); // pull back before the throw
-      const upper = ramp(t, 0.12, 0.26, ARM_WIND, ARM_THROW) - wind * 0.5 + ramp(t, 0.32, 1, 0, ARM_REST - ARM_THROW);
-      const fore = ramp(t, 0.12, 0.24, FORE_REST, FORE_THROW) + ramp(t, 0.3, 1, 0, FORE_REST - FORE_THROW);
+      const upper =
+        ramp(t, 0.12, 0.26, ARM_WIND, ARM_THROW) -
+        wind * 0.5 +
+        ramp(t, 0.32, 1, 0, ARM_REST - ARM_THROW);
+      const fore =
+        ramp(t, 0.12, 0.24, FORE_REST, FORE_THROW) + ramp(t, 0.3, 1, 0, FORE_REST - FORE_THROW);
       const lean = pulse(t, 0.1, 0.4) * -0.22 + ramp(t, 0.0, 0.12, 0, 0.1);
       setArm(upper, fore, lean, -Math.min(y, 2) * 0.18);
 
@@ -186,9 +196,25 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
         <group ref={spinGroup} rotation={[Math.PI / 2, 0, 0]}>
           <mesh>
             <cylinderGeometry args={[1, 1, 0.18, 96]} />
-            <meshStandardMaterial attach="material-0" map={edge} metalness={0.92} roughness={0.28} envMapIntensity={1.4} />
-            <meshStandardMaterial attach="material-1" color="#2a2548" metalness={0.7} roughness={0.4} />
-            <meshStandardMaterial attach="material-2" color="#2a2548" metalness={0.7} roughness={0.4} />
+            <meshStandardMaterial
+              attach="material-0"
+              map={edge}
+              metalness={0.92}
+              roughness={0.28}
+              envMapIntensity={1.4}
+            />
+            <meshStandardMaterial
+              attach="material-1"
+              color="#2a2548"
+              metalness={0.7}
+              roughness={0.4}
+            />
+            <meshStandardMaterial
+              attach="material-2"
+              color="#2a2548"
+              metalness={0.7}
+              roughness={0.4}
+            />
           </mesh>
           {/* Heads face (robot bust) — solid satin metal, no self-glow. */}
           <mesh position={[0, 0.0925, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -218,7 +244,12 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
           {[0.082, -0.082].map((y) => (
             <mesh key={y} position={[0, y, 0]} rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[0.97, 0.03, 10, 96]} />
-              <meshStandardMaterial color="#3a3360" metalness={0.92} roughness={0.4} envMapIntensity={0.9} />
+              <meshStandardMaterial
+                color="#3a3360"
+                metalness={0.92}
+                roughness={0.4}
+                envMapIntensity={0.9}
+              />
             </mesh>
           ))}
           {/* Subtle neon edge — kept low so the spinning coin doesn't flare. */}
@@ -247,7 +278,13 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
       </mesh>
       <mesh position={[0, -1.43, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <torusGeometry args={[1.14, 0.018, 8, 72]} />
-        <meshStandardMaterial color={NEON.purpleDeep} emissive={emissive(NEON.purple, 1)} emissiveIntensity={1.8} metalness={0.5} roughness={0.4} />
+        <meshStandardMaterial
+          color={NEON.purpleDeep}
+          emissive={emissive(NEON.purple, 1)}
+          emissiveIntensity={1.8}
+          metalness={0.5}
+          roughness={0.4}
+        />
       </mesh>
 
       {/* Synthwave grid floor receding into the space backdrop. */}
@@ -266,17 +303,32 @@ function CoinRig({ result, spinning, celebrate = false, speed = 1, onSpinComplet
         infiniteGrid
       />
       <BlobShadow meshRef={shadowMesh} position={[0, -1.42, 0]} scale={2.0} opacity={0.5} />
-      <ConfettiBurst burstId={burstId} origin={[0, COIN_HOME, 0.5]} power={3.4} gravity={3.0} duration={3.2} />
+      <ConfettiBurst
+        burstId={burstId}
+        origin={[0, COIN_HOME, 0.5]}
+        power={3.4}
+        gravity={3.0}
+        duration={3.2}
+      />
     </>
   );
 }
 
 export default function CoinStage(props: CoinStageProps) {
   return (
-    <StageCanvas frameloop="demand" camera={{ position: [CAM_WIDE.x, CAM_WIDE.y, CAM_WIDE.z], fov: 38 }}>
+    <StageCanvas
+      frameloop="demand"
+      camera={{ position: [CAM_WIDE.x, CAM_WIDE.y, CAM_WIDE.z], fov: 38 }}
+    >
       <ambientLight intensity={0.5} />
       <directionalLight position={[3, 5, 4]} intensity={0.9} />
-      <spotLight position={[0, 5, 2.5]} angle={0.5} penumbra={0.9} intensity={1.2} color="#ffffff" />
+      <spotLight
+        position={[0, 5, 2.5]}
+        angle={0.5}
+        penumbra={0.9}
+        intensity={1.2}
+        color="#ffffff"
+      />
       <pointLight position={[-4, 1, -2]} color={NEON.cyan} intensity={3.2} />
       <pointLight position={[3, -0.5, 2.5]} color={NEON.purple} intensity={2.2} />
       <Starfield radius={24} depth={12} size={0.07} opacity={0.55} />

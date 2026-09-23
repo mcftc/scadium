@@ -42,7 +42,7 @@ export class PlatformService {
    */
   async live() {
     const [openFlips, jackpotCurrent, totalBets] = await Promise.all([
-      this.coinflip?.listOpen(50) ?? Promise.resolve([]),
+      this.coinflip?.countOpen() ?? Promise.resolve(0),
       this.jackpot?.snapshot() ?? Promise.resolve(null),
       this.totalBets(),
     ]);
@@ -56,7 +56,7 @@ export class PlatformService {
         multiplier: snap.phase === 'running' ? snap.multiplier : null,
       };
     }
-    if (this.coinflip) live.coinflip = { openCount: openFlips.length };
+    if (this.coinflip) live.coinflip = { openCount: openFlips };
     if (this.blackjack) live.blackjack = { active: this.blackjack.activeCount() };
     if (this.jackpot) {
       const jp = jackpotCurrent as { players?: unknown[] } | null;

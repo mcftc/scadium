@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { AFFILIATE } from '@scadium/shared';
+import { AFFILIATE, GAME_HOUSE_EDGE, type GameType } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { withSerializable } from '../prisma/with-serializable';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
@@ -18,6 +18,20 @@ export function tierCommission(referredVolumeLamports: bigint): number {
   return AFFILIATE.TIER_COMMISSION[tier] ?? AFFILIATE.TIER_COMMISSION[0];
 }
 
+/** Parts-per-million, so a fractional edge and rate multiply in exact BigInt maths. */
+const PPM = 1_000_000n;
+
+/** A referrer's cut of one wager: stake × house edge(game) × tier rate, floored. */
+export function referralCommission(
+  stakeLamports: bigint,
+  gameType: GameType,
+  rate: number,
+): bigint {
+  const edgePpm = BigInt(Math.round((GAME_HOUSE_EDGE[gameType] ?? 0) * 1_000_000));
+  const ratePpm = BigInt(Math.round(rate * 1_000_000));
+  return (stakeLamports * edgePpm * ratePpm) / (PPM * PPM);
+}
+
 /**
  * Affiliate stats + the referral write-path (#47). `creditReferral` runs INSIDE
  * each settlement transaction so a referred user's wagered volume and the
@@ -32,11 +46,18 @@ export class AffiliatesService {
   /**
    * Accrue a referred user's stake to their referrer's `Referral` row. No-op if
    * the user has no referrer. MUST be called with the settlement's `tx` client.
+   *
+   * Commission = stake × the game's house edge × the referrer's tier rate — a
+   * share of what the house expects to KEEP, the way bc.game computes it. It
+   * used to be stake × rate: 5-15% of the stake on a 5% game, so a referrer
+   * with two referred accounts flipping against each other out-earned the house
+   * on every flip, with zero risk.
    */
   async creditReferral(
     tx: Prisma.TransactionClient,
     refereeId: string,
     stakeLamports: bigint,
+    gameType: GameType,
   ): Promise<void> {
     if (stakeLamports <= 0n) return;
     const referee = await tx.user.findUnique({
@@ -59,9 +80,7 @@ export class AffiliatesService {
       select: { signupIpHash: true },
     });
     const sameIp = !!referee.signupIpHash && referee.signupIpHash === referrer?.signupIpHash;
-    const commission = sameIp
-      ? 0n
-      : (stakeLamports * BigInt(Math.round(rate * 10_000))) / 10_000n;
+    const commission = sameIp ? 0n : referralCommission(stakeLamports, gameType, rate);
 
     await tx.referral.upsert({
       where: { refereeId },

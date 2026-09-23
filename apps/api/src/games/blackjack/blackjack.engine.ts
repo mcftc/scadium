@@ -1101,7 +1101,7 @@ export class BlackjackEngine implements OnModuleInit, OnModuleDestroy {
             stakeLamports: d.stake,
           });
           // Affiliate commission on this seat's wager, in-tx (#47 coverage).
-          await this.affiliates.creditReferral(tx, s.userId, d.stake);
+          await this.affiliates.creditReferral(tx, s.userId, d.stake, 'blackjack');
           // Credit the play balance through the single mutation point (ledger
           // row in this tx). Skip a pure loss (payout 0) — no balance movement.
           if (d.payout > BigInt(0)) {

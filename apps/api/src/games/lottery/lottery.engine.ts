@@ -911,7 +911,7 @@ export class LotteryEngine implements OnModuleInit, OnModuleDestroy {
               gameType: 'lottery',
               stakeLamports: a.wagered,
             });
-            await this.affiliates.creditReferral(tx, userId, a.wagered);
+            await this.affiliates.creditReferral(tx, userId, a.wagered, 'lottery');
           }
 
           // Play-money mode (#H4): the ticket was debited from the SOL play

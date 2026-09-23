@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MaintenanceService } from '../maintenance/maintenance.service';
 import { ComplianceService } from '../compliance/compliance.service';
+import { cancelOpenFlip } from '../games/coinflip/cancel-open-flip';
 
 export interface RgState {
   selfExcludedUntil: string | null;
@@ -96,11 +97,17 @@ export class RgService {
     if (amount <= 0n) return;
     if (u.dailyWagerLimitLamports == null && u.dailyLossLimitLamports == null) return;
 
-    const agg = await this.prisma.bet.aggregate({
-      where: { userId, createdAt: { gte: startOfUtcDay() } },
-      _sum: { amountLamports: true, payoutLamports: true },
-    });
-    const wagered = agg._sum.amountLamports ?? 0n;
+    const [agg, pending] = await Promise.all([
+      this.prisma.bet.aggregate({
+        where: { userId, createdAt: { gte: startOfUtcDay() } },
+        _sum: { amountLamports: true, payoutLamports: true },
+      }),
+      this.pendingStakes(userId),
+    ]);
+    // Stakes already taken but not yet settled count too: a Bet row is written
+    // only at settlement, so without them a player could stack any number of
+    // open flips or lottery tickets past a limit that only saw settled bets.
+    const wagered = (agg._sum.amountLamports ?? 0n) + pending;
     const paid = agg._sum.payoutLamports ?? 0n;
 
     if (u.dailyWagerLimitLamports != null && wagered + amount > u.dailyWagerLimitLamports) {
@@ -112,6 +119,25 @@ export class RgService {
         throw new ForbiddenException('Daily loss limit reached');
       }
     }
+  }
+
+  /**
+   * Stakes debited but not yet settled, in the games where they can pile up
+   * without bound: open coinflips the user created, and tickets in draws that
+   * have not been drawn yet. (Crash and jackpot hold at most one stake per round.)
+   */
+  private async pendingStakes(userId: string): Promise<bigint> {
+    const [flips, tickets] = await Promise.all([
+      this.prisma.coinflipGame.aggregate({
+        where: { creatorId: userId, status: 'open' },
+        _sum: { amountLamports: true },
+      }),
+      this.prisma.lotteryTicket.aggregate({
+        where: { userId, draw: { status: 'open' } },
+        _sum: { costLamports: true },
+      }),
+    ]);
+    return (flips._sum.amountLamports ?? 0n) + (tickets._sum.costLamports ?? 0n);
   }
 
   /** Deposit guard (#46): today's deposits + amount must not exceed the limit. */
@@ -156,15 +182,33 @@ export class RgService {
   }
 
   async setCoolOff(userId: string, until: Date): Promise<RgState> {
-    return this.extend(userId, 'coolOffUntil', until, 'cooling-off');
+    const result = await this.extend(userId, 'coolOffUntil', until, 'cooling-off');
+    await this.cancelOpenFlips(userId);
+    return result;
   }
 
   async setSelfExclusion(userId: string, until: Date): Promise<RgState> {
     const result = await this.extend(userId, 'selfExcludedUntil', until, 'self-exclusion');
+    await this.cancelOpenFlips(userId);
     // Terminate all live sessions so existing access/refresh tokens stop working
     // immediately — self-exclusion must lock the account, not just future bets.
     await this.prisma.session.deleteMany({ where: { userId } });
     return result;
+  }
+
+  /**
+   * A block must stop play, not just new bets: an open flip created before it
+   * could otherwise still be joined and resolved. Each goes through the same
+   * cancel + refund as a manual cancel.
+   */
+  private async cancelOpenFlips(userId: string): Promise<void> {
+    const open = await this.prisma.coinflipGame.findMany({
+      where: { creatorId: userId, status: 'open' },
+      select: { id: true },
+    });
+    for (const { id } of open) {
+      await this.prisma.$transaction((tx) => cancelOpenFlip(tx, id));
+    }
   }
 
   /**

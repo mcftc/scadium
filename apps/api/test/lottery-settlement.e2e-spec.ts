@@ -171,6 +171,14 @@ describe('lottery settlement (integration, real Postgres)', () => {
       bets.filter((x) => x.payoutLamports > 0n).length,
     );
     expect(elapsed).toBeLessThan(20_000);
+
+    // Leave the shared DB as other suites expect it: play-money winners are never
+    // marked paid on-chain, and 100 of them would crowd the prize sweep's batch
+    // (lottery-payout.e2e-spec scopes to its own winner but is batch-limited).
+    await prisma.lotteryTicket.updateMany({
+      where: { drawId: d.id, won: true },
+      data: { prizeTxSignature: 'test-play-money' },
+    });
   });
 
   it('induced failure: zero partial effects, draw stays open, dead-letter written', async () => {

@@ -125,6 +125,16 @@ export const COINFLIP = {
   PAYOUT_MULTIPLIER: Math.round(2 * RTP * 100) / 100,
   HOUSE_EDGE,
   SIDES: ['heads', 'tails'] as const,
+  // An unjoined PvP flip is cancelled and refunded after this long, so a stake
+  // is never parked indefinitely waiting for an opponent who never comes. The
+  // creator can call the house at any time before that.
+  OPEN_TTL_MS: 60 * 60_000,
+  // How often the API sweeps for expired flips while it is running (a sleeping
+  // container has no players to join them, so nothing is lost while it sleeps).
+  EXPIRY_SWEEP_MS: 60_000,
+  // Open flips one player may have at once — stops one account flooding the
+  // lobby and pushing everyone else's flips out of view.
+  MAX_OPEN_PER_USER: 5,
 } as const;
 
 export type CoinflipSide = (typeof COINFLIP.SIDES)[number];
@@ -1240,6 +1250,34 @@ const rtpPct = (edge: number): string => `${Math.round((1 - edge) * 100)}%`;
  * RTP is emergent from the rule set (optimal basic strategy); lottery/jackpot are
  * pari-mutuel (pooled prizes minus rake/burn — no per-bet RTP).
  */
+/**
+ * The house's expected take per unit wagered, per game — the ONE place a game's
+ * edge is looked up by id. Affiliate commission is a share of THIS, never of the
+ * stake: paying 5-15% of the stake on a 5% game let a referred pair flipping
+ * against each other earn more than the house took (four-games audit, B1).
+ *
+ * Lottery is 0 on purpose: it is pari-mutuel — ticket sales fund the prize pool,
+ * the 20% slice is burned rather than kept, and the house injects $SCAD into
+ * every draw — so it produces no house revenue to share. Referred lottery play
+ * still counts as referred volume (tiers), it just earns no commission.
+ * Blackjack is its basic-strategy edge (0.5%); crash is its nominal 5%, which is
+ * below the formula's true edge, so commission stays under the take.
+ */
+export const GAME_HOUSE_EDGE: Record<GameType, number> = {
+  crash: CRASH.HOUSE_EDGE,
+  coinflip: COINFLIP.HOUSE_EDGE,
+  jackpot: JACKPOT.HOUSE_EDGE,
+  lottery: 0,
+  blackjack: 0.005,
+  dice: DICE.HOUSE_EDGE,
+  limbo: LIMBO.HOUSE_EDGE,
+  wheel: HOUSE_EDGE,
+  plinko: HOUSE_EDGE,
+  mines: MINES.HOUSE_EDGE,
+  tower: TOWER.HOUSE_EDGE,
+  hilo: HILO.HOUSE_EDGE,
+};
+
 export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
   crash: { rtp: rtpPct(CRASH.HOUSE_EDGE) },
   coinflip: { rtp: rtpPct(COINFLIP.HOUSE_EDGE) },
@@ -1251,7 +1289,10 @@ export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
   tower: { rtp: rtpPct(TOWER.HOUSE_EDGE) },
   hilo: { rtp: rtpPct(HILO.HOUSE_EDGE) },
   blackjack: { rtp: '99.5%', note: 'optimal basic strategy' },
-  jackpot: { rtp: '95%', note: '5% rake' },
+  jackpot: {
+    rtp: rtpPct(JACKPOT.HOUSE_EDGE),
+    note: `${Math.round(JACKPOT.HOUSE_EDGE * 100)}% rake`,
+  },
   lottery: { rtp: 'Pari-mutuel', note: '20% burned' },
 };
 

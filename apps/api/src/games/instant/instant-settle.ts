@@ -169,7 +169,7 @@ export async function settleInstantBet(
     await deps.proofOfWager.accrue(tx, { userId, gameType, stakeLamports: amountLamports });
     // 5b) Affiliate commission: credit the bettor's referrer their tiered cut of
     //     this wager, in the SAME tx so it's atomic + replay-safe (#47 coverage).
-    await deps.affiliates.creditReferral(tx, userId, amountLamports);
+    await deps.affiliates.creditReferral(tx, userId, amountLamports, gameType);
 
     // 6) Unified Bet row with full fairness context (seedId null — instant games
     //    use the rotating ClientSeed state, not a per-round Seed row).

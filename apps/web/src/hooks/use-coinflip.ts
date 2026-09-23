@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { api } from '@/lib/api-client';
+import { api, ApiError } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
 import type { MeResponse } from '@/hooks/use-me';
@@ -13,6 +13,20 @@ import type { MeResponse } from '@/hooks/use-me';
  */
 const resolvedListeners = new Map<string, Set<(game: CoinflipGame) => void>>();
 const cancelledListeners = new Map<string, Set<() => void>>();
+/** The signed-in creator's flip was taken by another player (lobby auto-opens it). */
+const myFlipJoinedListeners = new Set<(game: CoinflipGame) => void>();
+
+/** Fan a resolution out to any modal watching it — from the socket OR an HTTP response. */
+function notifyResolved(game: CoinflipGame) {
+  resolvedListeners.get(game.id)?.forEach((cb) => cb(game));
+}
+
+export function subscribeMyFlipJoined(cb: (game: CoinflipGame) => void): () => void {
+  myFlipJoinedListeners.add(cb);
+  return () => {
+    myFlipJoinedListeners.delete(cb);
+  };
+}
 
 export function subscribeFlipResolved(
   gameId: string,
@@ -47,12 +61,16 @@ export interface CoinflipGame {
   joinerId: string | null;
   joinerUsername: string | null;
   joinerWallet: string | null;
+  /** Resolved against the house (no joiner; winnerId null when the house won). */
+  vsHouse: boolean;
   amountLamports: string;
   result: 'heads' | 'tails' | null;
   winnerId: string | null;
   status: 'open' | 'matched' | 'resolving' | 'completed' | 'cancelled';
   createdAt: string;
   resolvedAt: string | null;
+  /** When an unjoined PvP flip is cancelled + refunded; null once resolved. */
+  expiresAt: string | null;
   serverSeedHash: string | null;
   serverSeed: string | null;
   clientSeed: string | null;
@@ -65,27 +83,33 @@ export interface CoinflipGame {
  * `flip:resolved` / `flip:cancelled` socket event so the UI never needs a
  * refetch during the session.
  */
-export function useOpenCoinflips() {
+export type FlipSortKey = 'newest' | 'amount';
+
+export function useOpenCoinflips(sort: FlipSortKey = 'newest') {
   const qc = useQueryClient();
   const socket = useSocket('/coinflip');
 
   const query = useQuery({
-    queryKey: ['coinflip', 'open'],
-    queryFn: () => api<CoinflipGame[]>('/coinflip/open'),
+    queryKey: ['coinflip', 'open', sort],
+    // Sorted by the server: sorting only the newest page client-side made
+    // "Highest Price" the highest of whatever 20 happened to arrive.
+    queryFn: () => api<CoinflipGame[]>(`/coinflip/open?sort=${sort}`),
     staleTime: 10_000,
   });
 
   useEffect(() => {
     if (!socket) return;
+    const myId = () => qc.getQueryData<MeResponse>(['me'])?.id;
     const onCreated = (game: CoinflipGame) => {
-      qc.setQueryData<CoinflipGame[]>(['coinflip', 'open'], (prev) => {
+      qc.setQueriesData<CoinflipGame[]>({ queryKey: ['coinflip', 'open'] }, (prev) => {
         if (!prev) return [game];
         if (prev.some((g) => g.id === game.id)) return prev;
         return [game, ...prev];
       });
+      if (game.creatorId === myId()) qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
     };
     const onResolved = (game: CoinflipGame) => {
-      qc.setQueryData<CoinflipGame[]>(['coinflip', 'open'], (prev) =>
+      qc.setQueriesData<CoinflipGame[]>({ queryKey: ['coinflip', 'open'] }, (prev) =>
         prev ? prev.filter((g) => g.id !== game.id) : prev,
       );
       qc.setQueryData<CoinflipGame[]>(['coinflip', 'recent'], (prev) => {
@@ -94,17 +118,24 @@ export function useOpenCoinflips() {
       });
       // Balance + bet history changed only for the two players in it — every
       // other viewer refetching /me on every flip was N requests per flip.
-      const myId = qc.getQueryData<MeResponse>(['me'])?.id;
-      if (myId && (game.creatorId === myId || game.joinerId === myId)) {
+      const me = myId();
+      if (me && (game.creatorId === me || game.joinerId === me)) {
         qc.invalidateQueries({ queryKey: ['me'] });
+        qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
       }
       // Notify any open spectate modal watching this game.
-      resolvedListeners.get(game.id)?.forEach((cb) => cb(game));
+      notifyResolved(game);
+      // A creator who wasn't watching still gets their moment: someone took
+      // their flip (house flips are the creator's own action, already on screen).
+      if (me && game.creatorId === me && !game.vsHouse) {
+        myFlipJoinedListeners.forEach((cb) => cb(game));
+      }
     };
     const onCancelled = ({ id }: { id: string }) => {
-      qc.setQueryData<CoinflipGame[]>(['coinflip', 'open'], (prev) =>
+      qc.setQueriesData<CoinflipGame[]>({ queryKey: ['coinflip', 'open'] }, (prev) =>
         prev ? prev.filter((g) => g.id !== id) : prev,
       );
+      qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
       // A modal watching this flip must not sit on "Waiting for player…" forever.
       cancelledListeners.get(id)?.forEach((cb) => cb());
     };
@@ -139,17 +170,43 @@ export function useRecentCoinflips() {
   });
 }
 
+/** The signed-in player's open flips — their locked stakes, whatever the lobby shows. */
+export function useMyCoinflips() {
+  const token = useAuthStore((s) => s.accessToken);
+  return useQuery({
+    queryKey: ['coinflip', 'mine'],
+    enabled: !!token,
+    queryFn: () => api<CoinflipGame[]>('/coinflip/mine', { token }),
+    staleTime: 10_000,
+  });
+}
+
+/**
+ * POST with an idempotency key, retried ONCE with the same key on a network
+ * error. A response lost to a container restart used to look like a failure
+ * (and a retried create made a second, second-debited flip); with the key the
+ * server replays the original result instead.
+ */
+async function postOnce<T>(path: string, body: unknown, token: string | null): Promise<T> {
+  const headers = { 'Idempotency-Key': crypto.randomUUID() };
+  try {
+    return await api<T>(path, { method: 'POST', body, token, headers });
+  } catch (e) {
+    if (e instanceof ApiError) throw e; // the server answered — do not retry
+    return api<T>(path, { method: 'POST', body, token, headers });
+  }
+}
+
 export function useCreateCoinflip() {
   const token = useAuthStore((s) => s.accessToken);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: { side: 'heads' | 'tails'; amountLamports: string }) =>
-      api<CoinflipGame>('/coinflip', {
-        method: 'POST',
-        body: params,
-        token,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+    mutationFn: (params: { side: 'heads' | 'tails'; amountLamports: string; vsHouse?: boolean }) =>
+      postOnce<CoinflipGame>('/coinflip', params, token),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
+    },
   });
 }
 
@@ -157,12 +214,28 @@ export function useJoinCoinflip() {
   const token = useAuthStore((s) => s.accessToken);
   const qc = useQueryClient();
   return useMutation({
+    mutationFn: (gameId: string) => postOnce<CoinflipGame>(`/coinflip/${gameId}/join`, {}, token),
+    onSuccess: (game) => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      // The joiner's own result comes from THIS response, not the socket: with
+      // the socket down they used to sit on "Waiting for player…" after playing.
+      notifyResolved(game);
+    },
+  });
+}
+
+/** Send your own open flip to the house (creator only). */
+export function usePlayHouse() {
+  const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
+  return useMutation({
     mutationFn: (gameId: string) =>
-      api<CoinflipGame>(`/coinflip/${gameId}/join`, {
-        method: 'POST',
-        token,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+      api<CoinflipGame>(`/coinflip/${gameId}/house`, { method: 'POST', token }),
+    onSuccess: (game) => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
+      notifyResolved(game);
+    },
   });
 }
 
@@ -176,6 +249,9 @@ export function useCancelCoinflip() {
         token,
       }),
     // The stake refund lands on the play balance.
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['coinflip', 'mine'] });
+    },
   });
 }

@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Check, Eye, X, Swords } from 'lucide-react';
+import { COINFLIP } from '@scadium/shared';
 import { useRecentCoinflips, type CoinflipGame } from '@/hooks/use-coinflip';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -36,9 +37,7 @@ export function RecentFlipsList({
 
   if (sorted.length === 0) {
     return (
-      <div className="py-16 text-center text-foreground-muted text-sm">
-        No resolved flips yet.
-      </div>
+      <div className="py-16 text-center text-foreground-muted text-sm">No resolved flips yet.</div>
     );
   }
 
@@ -53,18 +52,17 @@ export function RecentFlipsList({
           flip.winnerId !== me.id;
 
         const creatorName = flip.creatorUsername ?? shortAddress(flip.creatorWallet ?? '');
-        const joinerName = flip.joinerUsername ?? shortAddress(flip.joinerWallet ?? '');
+        const joinerName = flip.vsHouse
+          ? 'House'
+          : (flip.joinerUsername ?? shortAddress(flip.joinerWallet ?? ''));
 
         return (
           <div
             key={flip.id}
             className={cn(
-              'grid grid-cols-[1fr_110px_130px_120px] gap-4 items-center px-5 py-3 transition-colors',
-              iWon
-                ? 'bg-emerald-500/5'
-                : iLost
-                  ? 'bg-red-500/5'
-                  : 'hover:bg-surface-elevated/30',
+              // Players + amount + replay on phones; the result column joins from sm.
+              'grid grid-cols-[1fr_auto_auto] sm:grid-cols-[1fr_110px_130px_minmax(120px,auto)] gap-3 sm:gap-4 items-center px-4 sm:px-5 py-3 transition-colors',
+              iWon ? 'bg-emerald-500/5' : iLost ? 'bg-red-500/5' : 'hover:bg-surface-elevated/30',
             )}
           >
             {/* Players: Creator VS Joiner */}
@@ -80,7 +78,9 @@ export function RecentFlipsList({
                 >
                   {creatorName.charAt(0).toUpperCase()}
                 </div>
-                <span className={cn('text-xs font-semibold truncate', creatorWon && 'text-emerald-400')}>
+                <span
+                  className={cn('text-xs font-semibold truncate', creatorWon && 'text-emerald-400')}
+                >
                   {creatorName}
                 </span>
                 {creatorWon ? (
@@ -101,7 +101,12 @@ export function RecentFlipsList({
                 >
                   {joinerName.charAt(0).toUpperCase()}
                 </div>
-                <span className={cn('text-xs font-semibold truncate', !creatorWon && 'text-emerald-400')}>
+                <span
+                  className={cn(
+                    'text-xs font-semibold truncate',
+                    !creatorWon && 'text-emerald-400',
+                  )}
+                >
                   {joinerName}
                 </span>
                 {!creatorWon ? (
@@ -113,7 +118,7 @@ export function RecentFlipsList({
             </div>
 
             {/* Result side */}
-            <div className="text-center">
+            <div className="hidden sm:block text-center">
               <span
                 className={cn(
                   'inline-block px-3 py-1 rounded-full text-xs font-bold uppercase',
@@ -133,7 +138,9 @@ export function RecentFlipsList({
 
             {/* Payout + replay */}
             <div className="flex items-center justify-end gap-1.5">
-              <span className="text-xs text-foreground-muted">1.9x</span>
+              <span className="hidden sm:inline text-xs text-foreground-muted">
+                {COINFLIP.PAYOUT_MULTIPLIER}x
+              </span>
               <button
                 type="button"
                 onClick={() => onWatch(flip)}

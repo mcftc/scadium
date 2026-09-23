@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { CoinflipService } from '../src/games/coinflip/coinflip.service';
 import { SeedManagerService } from '../src/fairness/seed-manager.service';
+import { COINFLIP } from '@scadium/shared';
 
 // TODO(harness #9): fold this bootstrap into the shared concurrency harness.
 const TEST_DB_URL =
@@ -52,17 +53,20 @@ describe('coinflip biggestWin under concurrency (integration, real Postgres)', (
     const stakes = Array.from({ length: N }, (_, i) => BigInt((i + 1) * 1_000_000)); // 1..20 mSOL
     const creator = await makeUser(1_000_000_000_000n); // amply funded
 
-    // Open all flips first (creator debited per create).
-    const games: Array<{ id: string }> = [];
-    for (const stake of stakes) {
-      games.push(await svc.create({ userId: creator.id, side: 'heads', amountLamports: stake }));
-    }
-
-    // Each flip joined by its own funded joiner, concurrently.
+    // A player may hold COINFLIP.MAX_OPEN_PER_USER open flips at once, so open
+    // them in batches of that size; each batch is joined concurrently (every
+    // joiner their own funded account), which is the race this test is about.
     const joiners = await Promise.all(stakes.map(() => makeUser(1_000_000_000_000n)));
-    await Promise.all(
-      games.map((g, i) => svc.join({ userId: joiners[i]!.id, gameId: g.id })),
-    );
+    for (let i = 0; i < N; i += COINFLIP.MAX_OPEN_PER_USER) {
+      const batch = stakes.slice(i, i + COINFLIP.MAX_OPEN_PER_USER);
+      const games: Array<{ id: string }> = [];
+      for (const stake of batch) {
+        games.push(await svc.create({ userId: creator.id, side: 'heads', amountLamports: stake }));
+      }
+      await Promise.all(
+        games.map((g, j) => svc.join({ userId: joiners[i + j]!.id, gameId: g.id })),
+      );
+    }
 
     // Cross-check against the Bet table: biggestWin must equal the creator's
     // largest single-flip profit (payout - stake) among won bets, or 0 if none.

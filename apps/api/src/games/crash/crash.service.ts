@@ -146,7 +146,7 @@ export class CrashService {
     // commission. Reached once per placed bet (a replay short-circuited at the
     // idempotency claim).
     await withSerializable(this.prisma, (tx) =>
-      this.affiliates.creditReferral(tx, params.userId, params.amountLamports),
+      this.affiliates.creditReferral(tx, params.userId, params.amountLamports, 'crash'),
     );
 
     // Persist the response for replay (response is JSON-safe: roundId is a

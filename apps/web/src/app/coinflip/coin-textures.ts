@@ -75,7 +75,15 @@ function ringText(
   ctx.restore();
 }
 
-function beadedRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, count: number, r: number, color: string): void {
+function beadedRing(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  count: number,
+  r: number,
+  color: string,
+): void {
   ctx.save();
   ctx.fillStyle = color;
   for (let i = 0; i < count; i++) {
@@ -128,8 +136,29 @@ function drawBase(ctx: CanvasRenderingContext2D, side: CoinSide): void {
   ctx.arc(c, c, inner * 0.76, 0, Math.PI * 2);
   ctx.stroke();
   // Circular legend: top arc reads normally, bottom arc curves the other way.
-  ringText(ctx, spec.legendTop, c, c, inner * 0.85, Math.PI * 1.5 - 0.6, 1.2, SIZE * 0.045, 'rgba(255,255,255,0.85)');
-  ringText(ctx, spec.legendBottom, c, c, inner * 0.85, Math.PI * 0.5 + 0.6, -1.2, SIZE * 0.038, 'rgba(255,255,255,0.7)', true);
+  ringText(
+    ctx,
+    spec.legendTop,
+    c,
+    c,
+    inner * 0.85,
+    Math.PI * 1.5 - 0.6,
+    1.2,
+    SIZE * 0.045,
+    'rgba(255,255,255,0.85)',
+  );
+  ringText(
+    ctx,
+    spec.legendBottom,
+    c,
+    c,
+    inner * 0.85,
+    Math.PI * 0.5 + 0.6,
+    -1.2,
+    SIZE * 0.038,
+    'rgba(255,255,255,0.7)',
+    true,
+  );
   // Sheen sweep.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -244,7 +273,15 @@ function drawDenomination(ctx: CanvasRenderingContext2D): void {
       const ly = c + SIZE * 0.1 - k * SIZE * 0.055;
       const lx = bx + dir * SIZE * 0.012 + dir * k * SIZE * 0.004;
       ctx.beginPath();
-      ctx.ellipse(lx + dir * SIZE * 0.022, ly, SIZE * 0.024, SIZE * 0.011, dir * 0.7, 0, Math.PI * 2);
+      ctx.ellipse(
+        lx + dir * SIZE * 0.022,
+        ly,
+        SIZE * 0.024,
+        SIZE * 0.011,
+        dir * 0.7,
+        0,
+        Math.PI * 2,
+      );
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.fill();
     }

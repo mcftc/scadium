@@ -593,11 +593,18 @@ model CoinflipGame {
   seed           Seed?          @relation(fields: [seedId], references: [id])
   nonce          Int?
   txSignature    String?
+  // Resolved against the house instead of a second player (no joiner; winnerId
+  // is null when the house wins). The outcome derives from the CREATOR's seed.
+  vsHouse        Boolean        @default(false)
+  // An open PvP flip is cancelled + refunded after this; null for house flips.
+  expiresAt      DateTime?
   createdAt      DateTime       @default(now())
   resolvedAt     DateTime?
 
   @@index([status, createdAt])
-  @@index([creatorId])
+  @@index([status, resolvedAt])
+  @@index([creatorId, status])
+  @@index([status, expiresAt])
 }
 
 // ==================== LOTTERY ====================

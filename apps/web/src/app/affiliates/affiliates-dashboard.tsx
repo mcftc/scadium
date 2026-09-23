@@ -8,6 +8,10 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { formatSol, shortAddress, formatDate } from '@/lib/format';
+import { AFFILIATE, GAME_HOUSE_EDGE } from '@scadium/shared';
+
+/** Display names for AFFILIATE's tiers (the thresholds and rates live in shared). */
+const TIER_NAMES = ['Bronze', 'Silver', 'Gold', 'Diamond'] as const;
 
 interface Stats {
   refCode: string;
@@ -79,11 +83,7 @@ export function AffiliatesDashboard() {
       </Card>
 
       <div className="grid grid-cols-3 gap-4">
-        <StatCard
-          icon={Users}
-          label="Referrals"
-          value={stats.data.referralCount.toString()}
-        />
+        <StatCard icon={Users} label="Referrals" value={stats.data.referralCount.toString()} />
         <StatCard
           icon={Coins}
           label="Volume"
@@ -122,9 +122,7 @@ export function AffiliatesDashboard() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-mono text-sm">
-                      {formatSol(r.commissionLamports, 4)}
-                    </div>
+                    <div className="font-mono text-sm">{formatSol(r.commissionLamports, 4)}</div>
                     <div className="text-[10px] uppercase tracking-wider text-foreground-muted">
                       earned
                     </div>
@@ -141,17 +139,21 @@ export function AffiliatesDashboard() {
           <CardTitle>Commission tiers</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-4 gap-3 text-center">
-            {[
-              { tier: 'Bronze', volume: '0+', rate: '5%' },
-              { tier: 'Silver', volume: '10 SOL', rate: '8%' },
-              { tier: 'Gold', volume: '100 SOL', rate: '12%' },
-              { tier: 'Diamond', volume: '1000 SOL', rate: '15%' },
-            ].map((t) => (
-              <div
-                key={t.tier}
-                className="rounded-xl border border-border bg-surface-elevated p-4"
-              >
+          <p className="mb-3 text-xs text-foreground-muted">
+            You earn this share of the <span className="text-foreground">house edge</span> on every
+            wager your referrals make — e.g. {Math.round((AFFILIATE.TIER_COMMISSION[0] ?? 0) * 100)}
+            % of a coinflip&apos;s {Math.round(GAME_HOUSE_EDGE.coinflip * 100)}% edge is{' '}
+            {((AFFILIATE.TIER_COMMISSION[0] ?? 0) * GAME_HOUSE_EDGE.coinflip * 100).toFixed(2)}% of
+            the stake. The lottery has no house edge, so it earns volume but no commission.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            {TIER_NAMES.map((tier, i) => ({
+              tier,
+              volume:
+                i === 0 ? '0+' : `${Number(AFFILIATE.TIER_THRESHOLDS_LAMPORTS[i] ?? 0) / 1e9} SOL`,
+              rate: `${Math.round((AFFILIATE.TIER_COMMISSION[i] ?? 0) * 100)}%`,
+            })).map((t) => (
+              <div key={t.tier} className="rounded-xl border border-border bg-surface-elevated p-4">
                 <div className="text-xs uppercase tracking-wider text-foreground-muted">
                   {t.tier}
                 </div>
@@ -181,14 +183,10 @@ function StatCard({
     <Card>
       <CardContent className="p-5">
         <div className="flex items-center justify-between">
-          <span className="text-xs uppercase tracking-wider text-foreground-muted">
-            {label}
-          </span>
+          <span className="text-xs uppercase tracking-wider text-foreground-muted">{label}</span>
           <Icon className="h-4 w-4 text-primary-400" />
         </div>
-        <div className={`mt-2 text-2xl font-bold ${accent ? 'text-gradient' : ''}`}>
-          {value}
-        </div>
+        <div className={`mt-2 text-2xl font-bold ${accent ? 'text-gradient' : ''}`}>{value}</div>
       </CardContent>
     </Card>
   );

@@ -197,12 +197,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     if (!coinflip) return;
     // Prefer joining an open flip created by another bot so it resolves; else
     // create a fresh open flip for the next bot (or a human) to join.
-    const open = (await coinflip.listOpen(10).catch(() => [])) as Array<{
-      id: string;
-      creator?: { id?: string };
-    }>;
+    // Typed from the service itself: a hand-written shape here once read a
+    // `creator.id` that listOpen never returns, so bots tried their own flips.
+    const open = await coinflip
+      .listOpen(10)
+      .catch(() => [] as Awaited<ReturnType<CoinflipService['listOpen']>>);
     const joiner = this.pickBot();
-    const joinable = open.find((g) => g.creator?.id !== joiner.id);
+    const joinable = open.find((g) => g.creatorId !== joiner.id);
     if (joinable) {
       await coinflip.join({ userId: joiner.id, gameId: joinable.id });
       return;

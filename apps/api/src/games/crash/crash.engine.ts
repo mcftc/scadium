@@ -724,7 +724,7 @@ export class CrashEngine implements OnModuleInit, OnModuleDestroy {
           // a live round (atomic with the delete; a cancel race rolls this back
           // too). Crediting at schedule time instead let schedule→cancel loops
           // mint commission at zero cost. Mirrors placeBet's at-commit credit.
-          await this.affiliates?.creditReferral(tx, queued.userId, queued.amountLamports);
+          await this.affiliates?.creditReferral(tx, queued.userId, queued.amountLamports, 'crash');
         });
       } catch (e) {
         // Durable write failed (DB error) OR the bet was cancelled concurrently

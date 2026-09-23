@@ -317,7 +317,7 @@ export async function advanceStatefulRound(
     // coverage contract requires every game to call this.
     await deps.proofOfWager.accrue(tx, { userId, gameType, stakeLamports: stake });
     // Affiliate commission on this wager, in-tx (#47 coverage).
-    await deps.affiliates.creditReferral(tx, userId, stake);
+    await deps.affiliates.creditReferral(tx, userId, stake, gameType);
 
     const bet = await tx.bet.create({
       data: {

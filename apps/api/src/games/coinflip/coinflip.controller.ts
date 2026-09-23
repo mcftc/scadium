@@ -24,9 +24,20 @@ export class CoinflipController {
   constructor(private readonly coinflip: CoinflipService) {}
 
   @Get('open')
-  @ApiOperation({ summary: 'List open flips waiting for a joiner' })
-  listOpen(@Query('limit') limit?: string) {
-    return this.coinflip.listOpen(parseLimit(limit, 20, 100));
+  @ApiOperation({ summary: 'List open flips waiting for a joiner (sort=newest|amount)' })
+  listOpen(@Query('limit') limit?: string, @Query('sort') sort?: string) {
+    return this.coinflip.listOpen(
+      parseLimit(limit, 20, 100),
+      sort === 'amount' ? 'amount' : 'newest',
+    );
+  }
+
+  @Get('mine')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: "The caller's open flips (their locked stakes)" })
+  listMine(@CurrentUser() user: AuthContextLike) {
+    return this.coinflip.listMine(user.userId);
   }
 
   @Get('recent')
@@ -50,9 +61,19 @@ export class CoinflipController {
         userId: user.userId,
         side: dto.side,
         amountLamports: BigInt(dto.amountLamports),
+        vsHouse: dto.vsHouse === true,
       },
       key,
     );
+  }
+
+  @Post(':id/house')
+  @Throttle({ default: BET_THROTTLE })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Play your own open flip against the house (creator only)' })
+  playHouse(@CurrentUser() user: AuthContextLike, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.coinflip.playHouse({ userId: user.userId, gameId: id });
   }
 
   @Post(':id/join')

@@ -1,8 +1,4 @@
-import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-} from '@nestjs/websockets';
+import { WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 import { resolveCorsOrigins } from '../../config/cors';

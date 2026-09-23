@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Lock } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { CreateFlipBar } from './create-flip-form';
 import { OpenFlipsList } from './open-flips-list';
@@ -9,7 +10,8 @@ import { FlipModal } from './flip-modal';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { HouseEdgeBadge } from '@/components/game/house-edge-badge';
-import type { CoinflipGame } from '@/hooks/use-coinflip';
+import { subscribeMyFlipJoined, useMyCoinflips, type CoinflipGame } from '@/hooks/use-coinflip';
+import { formatSol } from '@/lib/format';
 
 export type FlipSort = 'price' | 'newest';
 
@@ -31,6 +33,10 @@ export function CoinflipLobby() {
     setModalOpen(true);
   }
 
+  // Someone took my flip while I was looking elsewhere in the lobby: show me
+  // the flip instead of letting it silently vanish from the list.
+  useEffect(() => subscribeMyFlipJoined(watch), []);
+
   return (
     <div className="flex gap-4">
       <div className="flex-1 min-w-0">
@@ -46,7 +52,8 @@ export function CoinflipLobby() {
             </div>
           </div>
           {isAuthenticated ? (
-            <CreateFlipBar />
+            // A house flip comes back already resolved — play it in the theater.
+            <CreateFlipBar onCreated={(g) => g.status === 'completed' && watch(g)} />
           ) : (
             <button
               type="button"
@@ -57,6 +64,8 @@ export function CoinflipLobby() {
             </button>
           )}
         </div>
+
+        {isAuthenticated && <MyOpenFlips onWatch={watch} />}
 
         {/* List controls: tabs + sort */}
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -100,9 +109,9 @@ export function CoinflipLobby() {
         {/* Game list */}
         <Card>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <div className="min-w-[560px]">
-                <div className="grid grid-cols-[1fr_110px_130px_120px] gap-4 px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
+            <div>
+              <div>
+                <div className="hidden sm:grid grid-cols-[1fr_110px_130px_minmax(120px,auto)] gap-4 px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
                   <div>Players</div>
                   <div className="text-center">Side</div>
                   <div className="text-right">Amount</div>
@@ -124,6 +133,48 @@ export function CoinflipLobby() {
       </div>
 
       <FlipModal game={watched} open={modalOpen} onClose={() => setModalOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * The player's own open flips — their locked stakes — whether or not they are
+ * among the newest the lobby shows, with how long each has before it expires.
+ */
+function MyOpenFlips({ onWatch }: { onWatch: (game: CoinflipGame) => void }) {
+  const { data } = useMyCoinflips();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!data || data.length === 0) return null;
+  const locked = data.reduce((sum, g) => sum + BigInt(g.amountLamports), BigInt(0));
+  return (
+    <div className="mb-4 rounded-xl border border-primary-400/30 bg-primary-400/5 px-4 py-3">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
+        <Lock className="h-3.5 w-3.5 text-primary-400" />
+        Your open flips · {formatSol(locked.toString(), 4)} SOL locked
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {data.map((g) => {
+          const mins = g.expiresAt
+            ? Math.max(0, Math.ceil((Date.parse(g.expiresAt) - now) / 60_000))
+            : null;
+          return (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => onWatch(g)}
+              className="rounded-lg border border-border bg-surface-elevated/60 px-2.5 py-1.5 text-[11px] hover:border-primary-400/40 transition-colors"
+            >
+              <span className="font-mono font-semibold">{formatSol(g.amountLamports, 4)}</span>{' '}
+              <span className="uppercase text-foreground-muted">{g.creatorSide}</span>
+              {mins !== null && <span className="text-foreground-muted"> · refund in {mins}m</span>}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

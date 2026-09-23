@@ -742,7 +742,7 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
               stakeLamports: info.amount,
             });
             // Affiliate commission on this entry's wager, in-tx (#47 coverage).
-            await this.affiliates.creditReferral(tx, userId, info.amount);
+            await this.affiliates.creditReferral(tx, userId, info.amount, 'jackpot');
             // Credit the play balance through the single mutation point (ledger
             // row in this tx). Only the winner is credited; losers move nothing.
             if (credited > BigInt(0)) {

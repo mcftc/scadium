@@ -63,7 +63,8 @@ describe('CoinflipService.join — status compare-and-swap (unit)', () => {
     );
 
     expect(casUpdateMany).toHaveBeenCalledWith({
-      where: { id: 'g1', status: 'open' },
+      // open AND not expired (C1) — an expired flip is no longer joinable
+      where: expect.objectContaining({ id: 'g1', status: 'open' }),
       data: { status: 'resolving' },
     });
     expect(userUpdateMany).not.toHaveBeenCalled(); // no debit
@@ -131,7 +132,11 @@ describe('CoinflipService.join — RG gate sees the real stake (unit, H20)', () 
       // Stop join right after the RG pre-check so we only assert the gate call.
       $transaction: vi.fn().mockRejectedValue(new Error('stop-after-rg')),
     } as never;
-    const gateway = { emitCreated: vi.fn(), emitResolved: vi.fn(), emitCancelled: vi.fn() } as never;
+    const gateway = {
+      emitCreated: vi.fn(),
+      emitResolved: vi.fn(),
+      emitCancelled: vi.fn(),
+    } as never;
     const svc = new CoinflipService(
       prisma,
       gateway,

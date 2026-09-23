@@ -100,9 +100,8 @@ export function BetAmountInput({
  * so a cleared field can't silently place the minimum bet).
  */
 export function isValidBetSol(sol: string, minLamports: number): boolean {
-  const n = Number(sol);
-  if (!Number.isFinite(n) || n <= 0) return false;
-  return Math.floor(n * LAMPORTS_PER_SOL) >= minLamports;
+  const lamports = parseSolToLamports(sol);
+  return lamports !== null && lamports > 0n && lamports >= BigInt(minLamports);
 }
 
 /** SOL string → lamports string, clamped to the game's MIN/MAX. */
@@ -111,9 +110,29 @@ export function solToLamportsClamped(
   minLamports: number,
   maxLamports: number,
 ): string {
-  const raw = Math.floor(Number(sol) * LAMPORTS_PER_SOL);
+  const raw = parseSolToLamports(sol);
   // Empty/zero/negative/NaN are not valid bets — fall back to the min so the API
   // still receives a well-formed value, but submit is gated by `isValidBetSol`.
-  if (!Number.isFinite(raw) || raw <= 0) return String(minLamports);
-  return String(Math.min(maxLamports, Math.max(minLamports, raw)));
+  if (raw === null || raw <= 0n) return String(minLamports);
+  const clamped =
+    raw < BigInt(minLamports)
+      ? BigInt(minLamports)
+      : raw > BigInt(maxLamports)
+        ? BigInt(maxLamports)
+        : raw;
+  return clamped.toString();
+}
+
+/**
+ * Exact decimal SOL → lamports. `Math.floor(Number(sol) * 1e9)` is off by one
+ * lamport for ordinary amounts ('0.3' × 1e9 = 299999999.99999997), so every bet
+ * of such an amount was placed a lamport short. Returns null for anything that
+ * is not a plain non-negative decimal; digits past the 9th are truncated.
+ */
+export function parseSolToLamports(sol: string): bigint | null {
+  const m = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(sol);
+  if (!m || (!m[1] && !m[2])) return null;
+  const whole = BigInt(m[1] || '0');
+  const frac = (m[2] ?? '').slice(0, 9).padEnd(9, '0');
+  return whole * BigInt(LAMPORTS_PER_SOL) + BigInt(frac);
 }

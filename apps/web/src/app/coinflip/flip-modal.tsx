@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink, Swords } from 'lucide-react';
+import { ExternalLink, Landmark, Swords } from 'lucide-react';
+import { COINFLIP } from '@scadium/shared';
 import { Dialog } from '@/components/ui/dialog';
 import {
   subscribeFlipResolved,
@@ -71,8 +72,14 @@ export function FlipModal({
     ? (game.joinerUsername ?? shortAddress(game.joinerWallet ?? ''))
     : null;
   const creatorWon = game.winnerId != null && game.winnerId === game.creatorId;
-  const joinerWon = game.winnerId != null && game.winnerId === game.joinerId;
-  const payout = (BigInt(game.amountLamports) * BigInt(19)) / BigInt(10);
+  // The house wins a vs-house flip when nobody human did.
+  const joinerWon = game.vsHouse
+    ? game.status === 'completed' && !creatorWon
+    : game.winnerId != null && game.winnerId === game.joinerId;
+  const stake = BigInt(game.amountLamports);
+  // Same constant the server pays with — never a hard-coded 19/10.
+  const payout = (stake * BigInt(Math.round(COINFLIP.PAYOUT_MULTIPLIER * 100))) / BigInt(100);
+  const opponentName = game.vsHouse ? 'House' : joinerName;
   const iWon = me?.id != null && game.winnerId === me.id;
   const iPlayed = me?.id != null && (game.creatorId === me.id || game.joinerId === me.id);
 
@@ -94,9 +101,10 @@ export function FlipModal({
             highlight={stage === 'done' ? (creatorWon ? 'win' : 'lose') : null}
           />
           <Swords className="h-5 w-5 shrink-0 text-foreground-muted" />
-          {joinerName ? (
+          {opponentName ? (
             <PlayerCard
-              name={joinerName}
+              name={opponentName}
+              house={game.vsHouse}
               side={game.creatorSide === 'heads' ? 'tails' : 'heads'}
               highlight={stage === 'done' ? (joinerWon ? 'win' : 'lose') : null}
             />
@@ -157,12 +165,22 @@ export function FlipModal({
               </div>
               <div className="text-sm">
                 <span className="font-bold text-success">
-                  {creatorWon ? creatorName : joinerName}
+                  {creatorWon ? creatorName : opponentName}
                 </span>{' '}
-                <span className="text-foreground-muted">wins</span>{' '}
-                <span className="font-mono font-bold text-success">
-                  +{formatSol(payout.toString(), 3)}
-                </span>
+                {creatorWon || !game.vsHouse ? (
+                  <>
+                    <span className="text-foreground-muted">wins</span>{' '}
+                    <span className="font-mono font-bold text-success">
+                      {formatSol(payout.toString(), 3)}
+                    </span>{' '}
+                    {/* The payout includes the stake back — show the profit too. */}
+                    <span className="text-foreground-muted">
+                      (+{formatSol((payout - stake).toString(), 3)})
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-foreground-muted">wins</span>
+                )}
               </div>
               {iPlayed && (
                 <div
@@ -199,10 +217,12 @@ function PlayerCard({
   name,
   side,
   highlight,
+  house = false,
 }: {
   name: string;
   side: 'heads' | 'tails';
   highlight: 'win' | 'lose' | null;
+  house?: boolean;
 }) {
   return (
     <div
@@ -223,7 +243,7 @@ function PlayerCard({
             : 'bg-cyan-500/80 ring-cyan-400/50',
         )}
       >
-        {name.slice(0, 1).toUpperCase()}
+        {house ? <Landmark className="h-4 w-4" /> : name.slice(0, 1).toUpperCase()}
       </span>
       <div className="truncate text-xs font-bold">{name}</div>
       <div

@@ -24,6 +24,8 @@ type Options = {
   body?: unknown;
   token?: string | null;
   signal?: AbortSignal;
+  /** Extra request headers (e.g. `Idempotency-Key` on money-moving POSTs). */
+  headers?: Record<string, string>;
   /** Internal: set on the single automatic retry after a token refresh (#35). */
   _retried?: boolean;
 };
@@ -70,6 +72,7 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   const url = `${env.apiUrl}/api/v1${path.startsWith('/') ? path : `/${path}`}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...opts.headers,
   };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
 
@@ -91,7 +94,11 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
     if (res.status === 401 && opts.token && typeof window !== 'undefined' && !opts._retried) {
       const refreshed = await refreshAccessToken();
       if (refreshed) {
-        return api<T>(path, { ...opts, token: useAuthStore.getState().accessToken, _retried: true });
+        return api<T>(path, {
+          ...opts,
+          token: useAuthStore.getState().accessToken,
+          _retried: true,
+        });
       }
       useAuthStore.getState().clear();
     }

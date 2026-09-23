@@ -118,7 +118,8 @@ describe('crash schedule→cancel must not mint affiliate commission (integratio
     const ref = await prisma.referral.findUniqueOrThrow({ where: { refereeId: referee.id } });
     expect(ref.referrerId).toBe(referrer.id);
     expect(ref.volumeLamports).toBe(STAKE);
-    expect(ref.commissionLamports).toBe((STAKE * 5n) / 100n);
+    // STAKE × crash's 5% edge × tier-0 5% — a share of the house take (B1).
+    expect(ref.commissionLamports).toBe((STAKE * 5n * 5n) / 10_000n);
     expect(ref.flagged).toBe(false);
     expect(await prisma.scheduledCrashBet.findUnique({ where: { userId: referee.id } })).toBeNull();
   });

@@ -27,10 +27,7 @@ export function FlipCoin({
   const finalDeg = 1800 + (result === 'tails' ? 180 : 0);
 
   return (
-    <div
-      className="relative mx-auto"
-      style={{ width: size, height: size, perspective: size * 6 }}
-    >
+    <div className="relative mx-auto" style={{ width: size, height: size, perspective: size * 6 }}>
       {/* Drop shadow that breathes with the toss */}
       <motion.div
         className="absolute left-1/2 -translate-x-1/2 rounded-[50%] bg-black/50 blur-md"
