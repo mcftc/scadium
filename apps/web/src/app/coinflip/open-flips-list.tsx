@@ -11,6 +11,7 @@ import {
 } from '@/hooks/use-coinflip';
 import { useWalletAuth } from '@/hooks/use-wallet-auth';
 import { useMe } from '@/hooks/use-me';
+import { useCustodyConfig } from '@/hooks/use-custody';
 import { useWalletModal } from '@/components/wallet/wallet-modal-provider';
 import { formatSol, shortAddress } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -34,6 +35,7 @@ export function OpenFlipsList({
   const { data, isLoading, isError } = useOpenCoinflips(sort === 'price' ? 'amount' : 'newest');
   const { isAuthenticated } = useWalletAuth();
   const { data: me } = useMe();
+  const { data: custody } = useCustodyConfig();
   const { open: openWallet } = useWalletModal();
   const joinMutation = useJoinCoinflip();
   const cancelMutation = useCancelCoinflip();
@@ -92,6 +94,8 @@ export function OpenFlipsList({
       ) : null}
       {sorted.map((flip) => {
         const isOwn = me?.id === flip.creatorId;
+        // While custody is on, deposited SOL and play money never meet in a flip.
+        const otherBalance = !!custody?.enabled && !!me && flip.creatorFunded !== me.funded;
         const pending =
           joinMutation.isPending && joinMutation.variables === flip.id
             ? 'join'
@@ -182,11 +186,18 @@ export function OpenFlipsList({
                 <button
                   type="button"
                   onClick={() => joinWithModal(flip)}
-                  disabled={pending === 'join'}
+                  disabled={pending === 'join' || otherBalance}
+                  title={
+                    otherBalance
+                      ? flip.creatorFunded
+                        ? 'Played with deposited SOL — deposit to join'
+                        : 'A play-money flip'
+                      : undefined
+                  }
                   className="flex flex-1 sm:flex-none items-center justify-center gap-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-xs font-bold text-white transition-colors disabled:opacity-50"
                 >
                   {pending === 'join' ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                  Join
+                  {otherBalance ? (flip.creatorFunded ? 'SOL only' : 'Play only') : 'Join'}
                 </button>
               )}
             </div>

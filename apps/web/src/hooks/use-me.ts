@@ -43,6 +43,8 @@ export interface MeResponse {
   };
   scadiumBalance: string;
   playBalanceLamports: string;
+  /** Custody (ADR 0005): true once a deposit was credited — the balance is withdrawable SOL. */
+  funded: boolean;
   xp: number;
   level: number;
   xpCurrentLevelFloor: number;

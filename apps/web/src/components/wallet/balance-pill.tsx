@@ -2,16 +2,21 @@
 
 import Link from 'next/link';
 import { useMe } from '@/hooks/use-me';
+import { useCustodyConfig } from '@/hooks/use-custody';
 import { lamportsToSol } from '@/lib/format';
 
 /**
- * Play-money balance pill shown in the header once authenticated. This is the
- * `User.playBalanceLamports` gambling balance (seeded at 10 SOL) — the balance
- * the API actually debits/credits on every bet, NOT the on-chain wallet balance. Once a user makes a verified vault deposit (#27) this becomes the CUSTODY-BACKED spendable balance (play seed forfeited at conversion).
+ * The site balance, shown in the header once authenticated — the
+ * `User.playBalanceLamports` every bet debits/credits, NOT the on-chain wallet
+ * balance. It starts as a 10 SOL play-money seed; the first custody deposit
+ * (ADR 0005) replaces it with deposited, withdrawable SOL. While custody is on
+ * the unit says which of the two it is.
  */
 export function BalancePill() {
   const { data: me } = useMe();
+  const { data: custody } = useCustodyConfig();
   if (!me) return null;
+  const unit = custody?.enabled && !me.funded ? 'PLAY' : 'SOL';
 
   return (
     <Link
@@ -33,7 +38,7 @@ export function BalancePill() {
       <span className="text-xs font-bold font-mono tabular-nums">
         {lamportsToSol(me.playBalanceLamports).toFixed(3)}
       </span>
-      <span className="hidden sm:inline text-[10px] font-semibold text-foreground-muted">SOL</span>
+      <span className="hidden sm:inline text-[10px] font-semibold text-foreground-muted">{unit}</span>
     </Link>
   );
 }

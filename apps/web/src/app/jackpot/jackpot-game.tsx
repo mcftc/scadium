@@ -23,6 +23,7 @@ import { useGameSound } from '@/components/instant/use-game-sound';
 import { cn } from '@/lib/cn';
 import { GAME_RTP } from '@scadium/shared';
 import { fairnessHref } from '@/lib/fairness-link';
+import { DepositToPlay } from '@/components/wallet/deposit-to-play';
 
 const QUICK = ['0.05', '0.25', '1', '5'];
 const BAR_COLORS = ['#22d3ee', '#FFBE3D', '#f59e0b', '#34d399', '#FF7A45', '#60a5fa'];
@@ -139,6 +140,8 @@ export function JackpotGame() {
               </button>
             ))}
           </div>
+
+          <DepositToPlay game="Jackpot" />
 
           {error && (
             <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">

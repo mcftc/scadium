@@ -1,240 +1,361 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { ArrowDownToLine, ArrowUpFromLine, ExternalLink } from 'lucide-react';
+import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import Link from 'next/link';
-import { api } from '@/lib/api-client';
-import { useAuthStore } from '@/store/auth-store';
+import { parseSolToLamports } from '@/components/instant/bet-amount-input';
 import { useMe } from '@/hooks/use-me';
 import { useStatus } from '@/hooks/use-status';
-import { buildDepositTx, buildWithdrawTx, userVaultPda } from '@/lib/vault';
+import {
+  useConfirmDeposit,
+  useCustodyConfig,
+  useCustodyTransfers,
+  useScanDeposits,
+  useWithdraw,
+  type CustodyConfig,
+  type CustodyTransfer,
+  type HoldReason,
+} from '@/hooks/use-custody';
+import { formatSol } from '@/lib/format';
 import { solscanTx } from '@/lib/explorer';
+import { env } from '@/config/env';
 
-interface VaultConfig {
-  enabled: boolean;
-  programId: string | null;
-  cluster: string;
-  kycEnabled?: boolean;
-}
-interface VaultBalance {
-  vaultLamports: string;
-  enabled: boolean;
-}
+const HOLD_COPY: Record<HoldReason, string> = {
+  unattributed:
+    'Sent from a wallet that is not linked to your account — link it in Settings and it is credited.',
+  ambiguous_sender:
+    'Signed by wallets of more than one account, so it cannot be credited automatically — contact support.',
+  below_minimum: 'Below the minimum deposit, so it is not credited.',
+  paused: 'Deposits are paused for maintenance — it is credited automatically afterwards.',
+  deposit_limit: 'Over your daily deposit limit — credited automatically once the limit allows.',
+  age_unverified: 'Confirm you are 18+ to have it credited.',
+  open_play_positions:
+    'You still have play-money bets running — it is credited as soon as they finish.',
+};
+
+const STATUS_COPY: Record<CustodyTransfer['status'], string> = {
+  held: 'On hold',
+  credited: 'Credited',
+  pending: 'Queued',
+  sent: 'Sending',
+  confirmed: 'Sent',
+  failed: 'Refunded',
+};
 
 /**
- * Transfer Funds — move SOL between the connected wallet and the on-site
- * vault (insta-wallet). Deposit/withdraw txs are built client-side and
- * signed by the user's wallet; the vault PDA itself enforces that only the
- * owner can withdraw.
+ * Wallet page (ADR 0005): deposit SOL from the connected wallet to the site
+ * balance, withdraw it back to the account's wallet. Deposits are ordinary
+ * transfers to the treasury, verified on chain by the API; withdrawals are sent
+ * by the server. On devnet everything is test SOL with no value.
  */
 export function TransferFunds() {
-  const token = useAuthStore((s) => s.accessToken);
-  const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
-  const qc = useQueryClient();
-  const [amount, setAmount] = useState('0.1');
-  const [busy, setBusy] = useState<null | 'deposit' | 'withdraw'>(null);
-  const [lastSig, setLastSig] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const config = useQuery({
-    queryKey: ['vault', 'config'],
-    queryFn: () => api<VaultConfig>('/vault/config'),
-    staleTime: 60_000,
-  });
-  const vaultBalance = useQuery({
-    queryKey: ['vault', 'balance'],
-    enabled: !!token,
-    queryFn: () => api<VaultBalance>('/vault/balance', { token }),
-    refetchInterval: 15_000,
-  });
-  // KYC gate (#45): when KYC is enabled, deposits/withdrawals require approval.
+  const cfg = useCustodyConfig();
   const { data: me } = useMe();
-  const kycBlocked = !!config.data?.kycEnabled && me?.kycStatus !== 'approved';
-  // Global pause (#56): block deposits/withdrawals while ops have the kill-switch on.
-  const { data: status } = useStatus();
-  const paused = !!status?.paused;
-  const walletBalance = useQuery({
+
+  if (!cfg.data) return <p className="text-center text-foreground-muted">Loading…</p>;
+  if (!cfg.data.enabled) {
+    return (
+      <Notice>
+        Wallet deposits are not open here yet — the site runs on play money for now.
+      </Notice>
+    );
+  }
+  if (!cfg.data.active) {
+    return <Notice>Wallet deposits are offline right now: {cfg.data.inactiveReason}.</Notice>;
+  }
+  return (
+    <div className="max-w-xl mx-auto space-y-6">
+      {cfg.data.cluster !== 'mainnet-beta' && <TestNetworkGuide />}
+      <Balances funded={!!me?.funded} siteLamports={me?.playBalanceLamports ?? null} />
+      <Deposit cfg={cfg.data} funded={!!me?.funded} accountWallet={me?.walletAddress ?? null} />
+      {me?.funded && <Withdraw cfg={cfg.data} wallet={me.walletAddress} />}
+      <History />
+    </div>
+  );
+}
+
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <Card className="max-w-xl mx-auto">
+      <CardContent className="py-10 text-center text-foreground-muted">{children}</CardContent>
+    </Card>
+  );
+}
+
+function TestNetworkGuide() {
+  return (
+    <Card>
+      <CardContent className="py-4 space-y-2 text-sm">
+        <p>
+          <span className="font-bold text-amber-400">Test network.</span> Deposits and withdrawals
+          use devnet SOL, which has no real value. Switch your wallet to devnet first:
+        </p>
+        <ul className="list-disc pl-5 text-foreground-muted space-y-1">
+          <li>Phantom: Settings → Developer Settings → Testnet Mode on → Solana Devnet.</li>
+          <li>Solflare: Settings → General → Network → Devnet.</li>
+          <li>
+            Free test SOL:{' '}
+            <a
+              href="https://faucet.solana.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary-400 underline"
+            >
+              faucet.solana.com
+            </a>{' '}
+            (paste your wallet address, choose devnet).
+          </li>
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Balances({ funded, siteLamports }: { funded: boolean; siteLamports: string | null }) {
+  const { connection } = useConnection();
+  const { publicKey } = useWallet();
+  const wallet = useQuery({
     queryKey: ['wallet', 'sol', publicKey?.toBase58()],
     enabled: !!publicKey,
     queryFn: async () => connection.getBalance(publicKey!),
     refetchInterval: 15_000,
   });
-
-  // Read the id into a primitive so the memo dep matches the value actually
-  // used (the React Compiler otherwise infers `config.data` and skips
-  // optimizing this component).
-  const programIdStr = config.data?.programId;
-  const programId = useMemo(
-    () => (programIdStr ? new PublicKey(programIdStr) : null),
-    [programIdStr],
-  );
-
-  const run = useCallback(
-    async (kind: 'deposit' | 'withdraw') => {
-      if (!programId || !publicKey) return;
-      setError(null);
-      setLastSig(null);
-      const sol = Number(amount);
-      if (!Number.isFinite(sol) || sol <= 0) {
-        setError('Enter a valid amount');
-        return;
-      }
-      const lamports = BigInt(Math.round(sol * LAMPORTS_PER_SOL));
-      setBusy(kind);
-      try {
-        const tx =
-          kind === 'deposit'
-            ? buildDepositTx(programId, publicKey, lamports)
-            : buildWithdrawTx(programId, publicKey, lamports);
-        const latest = await connection.getLatestBlockhash();
-        const sig = await sendTransaction(tx, connection);
-        await connection.confirmTransaction({ signature: sig, ...latest }, 'confirmed');
-        setLastSig(sig);
-        // Bridge (#27): tell the API so it verifies the program's own event and
-        // credits/debits the custody-backed spendable balance (idempotent on sig).
-        await api(kind === 'deposit' ? '/vault/deposit-confirm' : '/vault/withdraw-confirm', {
-          method: 'POST',
-          token: useAuthStore.getState().accessToken,
-          body: { signature: sig },
-        });
-        void qc.invalidateQueries({ queryKey: ['vault', 'balance'] });
-        void qc.invalidateQueries({ queryKey: ['wallet', 'sol'] });
-        void qc.invalidateQueries({ queryKey: ['me'] });
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [amount, connection, programId, publicKey, qc, sendTransaction],
-  );
-
-  if (config.data && !config.data.enabled) {
-    return (
-      <Card>
-        <CardContent className="py-10 text-center text-foreground-muted">
-          On-chain vault is not enabled on this server yet.
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const vaultSol = vaultBalance.data
-    ? Number(BigInt(vaultBalance.data.vaultLamports)) / LAMPORTS_PER_SOL
-    : null;
-  const walletSol = walletBalance.data != null ? walletBalance.data / LAMPORTS_PER_SOL : null;
-
   return (
-    <div className="max-w-xl mx-auto space-y-6">
-      {kycBlocked && (
-        <Card>
-          <CardContent className="py-4 text-sm">
-            <span className="font-bold text-amber-400">Verify your identity</span> to deposit or
-            withdraw real funds.{' '}
-            <Link href="/verify" className="text-primary-400 underline">
-              Start verification
-            </Link>
-            .
-          </CardContent>
-        </Card>
-      )}
-      <Card>
-        <CardHeader>
-          <CardTitle>Transfer Funds</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <p className="text-sm text-foreground-muted">
-            Move SOL between your wallet and your on-site vault. Bets settle against the vault
-            instantly — no per-bet wallet confirmations. Only your wallet signature can withdraw.
-          </p>
-
-          <div className="grid grid-cols-2 gap-4">
-            <BalanceBox label="Wallet balance" sol={walletSol} />
-            <BalanceBox label="Vault balance" sol={vaultSol} accent />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-wider text-foreground-muted">
-              Amount (SOL)
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full rounded-xl border border-border bg-surface-elevated px-4 py-3 font-mono text-sm focus:border-primary-400/60 focus:outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              variant="primary"
-              size="lg"
-              disabled={busy !== null || !publicKey || kycBlocked || paused}
-              onClick={() => void run('deposit')}
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              {busy === 'deposit' ? 'Depositing…' : 'Deposit'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              // Withdrawals are NEVER blocked by the pause (#56): players must
-              // always be able to get money out. Only deposits are gated.
-              disabled={busy !== null || !publicKey || kycBlocked}
-              onClick={() => void run('withdraw')}
-            >
-              <ArrowUpFromLine className="h-4 w-4" />
-              {busy === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
-            </Button>
-          </div>
-
-          {error && <p className="text-xs text-danger break-all">{error}</p>}
-          {lastSig && (
-            <a
-              href={solscanTx(lastSig)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-primary-400 hover:underline break-all"
-            >
-              View transaction on Solscan
-              <ExternalLink className="h-3 w-3 shrink-0" />
-            </a>
-          )}
-
-          {publicKey && programId && (
-            <p className="text-[10px] text-foreground-muted/60 font-mono break-all">
-              Vault PDA: {userVaultPda(programId, publicKey).toBase58()}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+    <div className="grid grid-cols-2 gap-4">
+      <BalanceBox
+        label="Wallet"
+        value={wallet.data != null ? `${(wallet.data / LAMPORTS_PER_SOL).toFixed(4)} SOL` : '…'}
+      />
+      <BalanceBox
+        label={funded ? 'Site balance' : 'Play money'}
+        value={siteLamports != null ? `${formatSol(siteLamports, 4)} SOL` : '…'}
+        accent
+      />
     </div>
   );
 }
 
-function BalanceBox({
-  label,
-  sol,
-  accent,
-}: {
-  label: string;
-  sol: number | null;
-  accent?: boolean;
-}) {
+function BalanceBox({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="rounded-xl border border-border bg-surface-elevated p-4">
       <div className="text-xs uppercase tracking-wider text-foreground-muted">{label}</div>
       <div className={`mt-1 text-xl font-bold font-mono ${accent ? 'text-gradient' : ''}`}>
-        {sol == null ? '…' : `${sol.toFixed(4)} SOL`}
+        {value}
       </div>
     </div>
+  );
+}
+
+function AmountInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <input
+      inputMode="decimal"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="Amount in SOL"
+      className="w-full rounded-xl border border-border bg-surface-elevated px-4 py-3 font-mono text-sm focus:border-primary-400/60 focus:outline-none"
+    />
+  );
+}
+
+function Deposit({
+  cfg,
+  funded,
+  accountWallet,
+}: {
+  cfg: CustodyConfig;
+  funded: boolean;
+  accountWallet: string | null;
+}) {
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
+  const { data: status } = useStatus();
+  const confirm = useConfirmDeposit();
+  const scan = useScanDeposits();
+  const [amount, setAmount] = useState('0.1');
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  const otherWallet = !!publicKey && !!accountWallet && publicKey.toBase58() !== accountWallet;
+  // This page was built for one network; the API proved which one it runs on.
+  // If they ever differ, a deposit would go to the treasury address on the
+  // wrong network and never be credited — so refuse.
+  const wrongNetwork = cfg.cluster !== env.solanaNetwork;
+
+  async function deposit() {
+    setError(null);
+    setMessage(null);
+    const lamports = parseSolToLamports(amount);
+    if (lamports == null || lamports < BigInt(cfg.minDepositLamports)) {
+      setError(`Enter at least ${formatSol(cfg.minDepositLamports)} SOL`);
+      return;
+    }
+    if (!publicKey || !cfg.treasury || wrongNetwork) return;
+    setSending(true);
+    try {
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(cfg.treasury),
+          lamports,
+        }),
+      );
+      const latest = await connection.getLatestBlockhash();
+      const signature = await sendTransaction(tx, connection);
+      await connection.confirmTransaction({ signature, ...latest }, 'confirmed');
+      setMessage('Sent — waiting for the network to finalize it…');
+      const r = await confirm.mutateAsync(signature);
+      if (!('id' in r)) setMessage('Still finalizing — it will be credited automatically.');
+      else if (r.status === 'credited') setMessage('Deposit credited.');
+      else setMessage(r.heldReason ? HOLD_COPY[r.heldReason] : 'Deposit received, on hold.');
+    } catch (e) {
+      setMessage(null);
+      setError((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Deposit</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!funded && (
+          <p className="text-sm text-foreground-muted">
+            Your first deposit <span className="text-foreground">replaces your play-money
+            balance</span>: from then on your balance is SOL you can withdraw. Play money cannot be
+            withdrawn. Jackpot and lottery are played with deposited SOL only.
+          </p>
+        )}
+        {wrongNetwork && (
+          <p className="text-xs text-danger">
+            Deposits run on {cfg.cluster} but this page was built for {env.solanaNetwork} — deposits
+            are disabled here until that is fixed.
+          </p>
+        )}
+        {otherWallet && (
+          <p className="text-xs text-amber-400">
+            The connected wallet is not your account&apos;s wallet. A deposit from it is credited
+            only if the wallet is linked to your account.
+          </p>
+        )}
+        <AmountInput value={amount} onChange={setAmount} />
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          disabled={sending || !publicKey || !!status?.paused || wrongNetwork}
+          onClick={() => void deposit()}
+        >
+          <ArrowDownToLine className="h-4 w-4" />
+          {!publicKey ? 'Connect your wallet' : sending ? 'Depositing…' : 'Deposit'}
+        </Button>
+        {message && <p className="text-sm">{message}</p>}
+        {error && <p className="text-xs text-danger break-all">{error}</p>}
+        <button
+          type="button"
+          onClick={() => scan.mutate()}
+          disabled={scan.isPending}
+          className="inline-flex items-center gap-1.5 text-xs text-foreground-muted hover:text-foreground"
+        >
+          <RefreshCw className={`h-3 w-3 ${scan.isPending ? 'animate-spin' : ''}`} />
+          Sent SOL but it is not here? Check again
+        </button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Withdraw({ cfg, wallet }: { cfg: CustodyConfig; wallet: string }) {
+  const withdraw = useWithdraw();
+  const [amount, setAmount] = useState('0.1');
+  const [error, setError] = useState<string | null>(null);
+
+  function submit() {
+    setError(null);
+    const lamports = parseSolToLamports(amount);
+    if (lamports == null || lamports < BigInt(cfg.minWithdrawLamports)) {
+      setError(`Enter at least ${formatSol(cfg.minWithdrawLamports)} SOL`);
+      return;
+    }
+    withdraw.mutate(lamports.toString(), { onError: (e) => setError(e.message) });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Withdraw</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-foreground-muted">
+          Sent to your account&apos;s wallet{' '}
+          <span className="font-mono text-foreground">
+            {wallet.slice(0, 4)}…{wallet.slice(-4)}
+          </span>
+          . Up to {formatSol(cfg.maxWithdrawLamports, 2)} SOL per withdrawal and{' '}
+          {formatSol(cfg.dailyWithdrawLamports, 2)} SOL a day.
+        </p>
+        <AmountInput value={amount} onChange={setAmount} />
+        <Button
+          variant="secondary"
+          size="lg"
+          className="w-full"
+          disabled={withdraw.isPending}
+          onClick={submit}
+        >
+          <ArrowUpFromLine className="h-4 w-4" />
+          {withdraw.isPending ? 'Requesting…' : 'Withdraw'}
+        </Button>
+        {error && <p className="text-xs text-danger break-all">{error}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function History() {
+  const { data } = useCustodyTransfers();
+  if (!data?.length) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>History</CardTitle>
+      </CardHeader>
+      <CardContent className="divide-y divide-border">
+        {data.map((t) => (
+          <div key={t.id} className="py-3 text-sm space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold">
+                {t.kind === 'deposit' ? 'Deposit' : 'Withdrawal'}{' '}
+                <span className="font-mono">{formatSol(t.amountLamports, 4)} SOL</span>
+              </span>
+              <span className="text-xs text-foreground-muted">{STATUS_COPY[t.status]}</span>
+            </div>
+            {t.heldReason && t.status === 'held' && (
+              <p className="text-xs text-amber-400">{HOLD_COPY[t.heldReason]}</p>
+            )}
+            <div className="flex items-center justify-between text-xs text-foreground-muted">
+              <span>{new Date(t.createdAt).toLocaleString()}</span>
+              {t.txSignature && (
+                <a
+                  href={solscanTx(t.txSignature)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary-400 hover:underline"
+                >
+                  Explorer <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

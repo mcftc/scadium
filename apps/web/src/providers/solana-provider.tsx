@@ -43,8 +43,9 @@ export function SolanaProvider({ children }: { children: ReactNode }) {
       new Coin98WalletAdapter(),
       new NightlyWalletAdapter(),
       new LedgerWalletAdapter(),
-      // Demo wallet — no extension needed; signs in-browser. Devnet/play-money only.
-      new UnsafeBurnerWalletAdapter(),
+      // Demo wallet — no extension needed; signs in-browser. Never on mainnet: its
+      // key lives in browser storage, and custody withdraws to the account's wallet.
+      ...(env.solanaNetwork === 'mainnet-beta' ? [] : [new UnsafeBurnerWalletAdapter()]),
     ],
     [],
   );

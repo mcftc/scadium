@@ -12,6 +12,7 @@ import { AgeGate } from '@/components/compliance/age-gate';
 import { LegalGate } from '@/components/compliance/legal-gate';
 import { CookieBanner } from '@/components/compliance/cookie-banner';
 import { MaintenanceBanner } from '@/components/layout/maintenance-banner';
+import { CustodyBanner } from '@/components/layout/custody-banner';
 import { LiveBetTicker } from '@/components/layout/live-bet-ticker';
 import { usePlatformLive } from '@/hooks/use-platform';
 
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <LegalGate />
       <CookieBanner />
       <MaintenanceBanner />
+      <CustodyBanner />
       <Header />
       <LiveBetTicker />
       <div className="flex flex-1 min-h-0">

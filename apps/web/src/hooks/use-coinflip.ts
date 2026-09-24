@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { api, ApiError } from '@/lib/api-client';
+import { api, postOnce } from '@/lib/api-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useSocket } from '@/providers/socket-provider';
 import type { MeResponse } from '@/hooks/use-me';
@@ -58,6 +58,8 @@ export interface CoinflipGame {
   creatorUsername: string | null;
   creatorWallet: string | null;
   creatorSide: 'heads' | 'tails';
+  /** The creator played deposited SOL (custody): only deposited accounts may join. */
+  creatorFunded: boolean;
   joinerId: string | null;
   joinerUsername: string | null;
   joinerWallet: string | null;
@@ -179,22 +181,6 @@ export function useMyCoinflips() {
     queryFn: () => api<CoinflipGame[]>('/coinflip/mine', { token }),
     staleTime: 10_000,
   });
-}
-
-/**
- * POST with an idempotency key, retried ONCE with the same key on a network
- * error. A response lost to a container restart used to look like a failure
- * (and a retried create made a second, second-debited flip); with the key the
- * server replays the original result instead.
- */
-async function postOnce<T>(path: string, body: unknown, token: string | null): Promise<T> {
-  const headers = { 'Idempotency-Key': crypto.randomUUID() };
-  try {
-    return await api<T>(path, { method: 'POST', body, token, headers });
-  } catch (e) {
-    if (e instanceof ApiError) throw e; // the server answered — do not retry
-    return api<T>(path, { method: 'POST', body, token, headers });
-  }
 }
 
 export function useCreateCoinflip() {

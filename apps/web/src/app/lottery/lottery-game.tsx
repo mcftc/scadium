@@ -27,6 +27,7 @@ import { JackpotWinnersTab } from './jackpot-winners-tab';
 import { PrizeTable } from './prize-table';
 import { MyTickets } from './my-tickets';
 import { LotteryFairness } from './lottery-fairness';
+import { DepositToPlay } from '@/components/wallet/deposit-to-play';
 
 const EMPTY_ROW: TicketRow = { digits: [null, null, null, null, null, null] };
 
@@ -359,6 +360,8 @@ function BuyTab({ snap }: { snap: ReturnType<typeof useLottery> }) {
                 </button>
               )}
             </div>
+
+            <DepositToPlay game="Lottery" />
 
             {token ? (
               <div className="space-y-2">

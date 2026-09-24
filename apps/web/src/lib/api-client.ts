@@ -117,3 +117,19 @@ function safeParse(text: string): unknown {
     return text;
   }
 }
+
+/**
+ * POST with an idempotency key, retried ONCE with the same key on a network
+ * error. A response lost to a container restart used to look like a failure
+ * (and a retried create made a second, second-debited flip); with the key the
+ * server replays the original result instead.
+ */
+export async function postOnce<T>(path: string, body: unknown, token: string | null): Promise<T> {
+  const headers = { 'Idempotency-Key': crypto.randomUUID() };
+  try {
+    return await api<T>(path, { method: 'POST', body, token, headers });
+  } catch (e) {
+    if (e instanceof ApiError) throw e; // the server answered — do not retry
+    return api<T>(path, { method: 'POST', body, token, headers });
+  }
+}
