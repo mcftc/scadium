@@ -28,14 +28,14 @@ describe('global pause kill-switch', () => {
     );
   });
 
-  it('blocks deposits with 503 when paused', async () => {
+  it('holds deposits (paused) when paused', async () => {
     const rg = new RgService(
       prismaThatWouldThrow as never,
       { isPaused: async () => true } as never,
       { realMoneyEnabled: false } as never,
     );
-    await expect(rg.assertCanDeposit('u1', 1000n)).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
+    await expect(rg.depositBlock(prismaThatWouldThrow as never, 'u1', 1000n)).resolves.toBe(
+      'paused',
     );
   });
 

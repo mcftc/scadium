@@ -6,7 +6,7 @@ import { RgService } from '../src/responsible-gambling/rg.service';
 /**
  * Server-side age-gate enforcement (#146, integration, real Postgres).
  * Every game/bet entry routes through RgService.assertCanWager (and deposits
- * through assertCanDeposit), so enforcing the 18+ acknowledgement there gates
+ * through depositBlock), so enforcing the 18+ acknowledgement there gates
  * all play at the API — not just the client modal (#44). Enforced only when
  * real money is enabled; the play-money demo treats the gate as a UX ack.
  */
@@ -34,10 +34,10 @@ describe('age-gate enforcement (#146)', () => {
     );
   });
 
-  it('blocks an un-acked user from depositing when real money is enabled', async () => {
+  it('holds the deposit of an un-acked user when real money is enabled', async () => {
     const u = await makeUser(0n);
-    await expect(realMoneyOn.assertCanDeposit(u.id, 100_000_000n)).rejects.toThrow(
-      /age verification/i,
+    await expect(realMoneyOn.depositBlock(prisma as never, u.id, 100_000_000n)).resolves.toBe(
+      'age_unverified',
     );
   });
 

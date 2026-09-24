@@ -307,6 +307,7 @@ export class UsersService {
     gamesPlayed: number;
     scadiumBalance: bigint;
     playBalanceLamports: bigint;
+    fundedAt: Date | null;
     ageConfirmedAt: Date | null;
     acceptedLegalVersion: string | null;
     acceptedLegalAt: Date | null;
@@ -347,6 +348,8 @@ export class UsersService {
       },
       scadiumBalance: user.scadiumBalance.toString(),
       playBalanceLamports: user.playBalanceLamports.toString(),
+      // Custody (ADR 0005): the balance is deposited SOL (withdrawable), not play-money.
+      funded: user.fundedAt !== null,
       ageConfirmedAt: user.ageConfirmedAt?.toISOString() ?? null,
       acceptedLegalVersion: user.acceptedLegalVersion,
       acceptedLegalAt: user.acceptedLegalAt?.toISOString() ?? null,

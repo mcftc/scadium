@@ -140,28 +140,31 @@ export class RgService {
     return (flips._sum.amountLamports ?? 0n) + (tickets._sum.costLamports ?? 0n);
   }
 
-  /** Deposit guard (#46): today's deposits + amount must not exceed the limit. */
-  async assertCanDeposit(userId: string, amount: bigint): Promise<void> {
-    if (await this.maintenance.isPaused()) {
-      throw new ServiceUnavailableException('Deposits are paused for maintenance');
-    }
-    const u = await this.prisma.user.findUniqueOrThrow({
+  /**
+   * Deposit guard (#46): why `amount` may not be credited right now, or null.
+   * A custody deposit has already arrived on chain, so this is not a refusal —
+   * the deposit is HELD with this reason and retried later (custody). Takes the
+   * caller's transaction so the daily sum is read on the crediting snapshot.
+   */
+  async depositBlock(
+    db: Prisma.TransactionClient,
+    userId: string,
+    amount: bigint,
+  ): Promise<'paused' | 'age_unverified' | 'deposit_limit' | null> {
+    if (await this.maintenance.isPaused()) return 'paused';
+    const u = await db.user.findUniqueOrThrow({
       where: { id: userId },
       select: { ageConfirmedAt: true, dailyDepositLimitLamports: true },
     });
     // Age gate (#146): block real-money deposits by an un-acknowledged user.
-    if (this.compliance.realMoneyEnabled && u.ageConfirmedAt == null) {
-      throw new ForbiddenException('Age verification required');
-    }
-    if (u.dailyDepositLimitLamports == null) return;
-    const agg = await this.prisma.vaultTransfer.aggregate({
-      where: { userId, kind: 'deposit', createdAt: { gte: startOfUtcDay() } },
+    if (this.compliance.realMoneyEnabled && u.ageConfirmedAt == null) return 'age_unverified';
+    if (u.dailyDepositLimitLamports == null) return null;
+    const agg = await db.custodyTransfer.aggregate({
+      where: { userId, kind: 'deposit', status: 'credited', settledAt: { gte: startOfUtcDay() } },
       _sum: { amountLamports: true },
     });
     const today = agg._sum.amountLamports ?? 0n;
-    if (today + amount > u.dailyDepositLimitLamports) {
-      throw new ForbiddenException('Daily deposit limit reached');
-    }
+    return today + amount > u.dailyDepositLimitLamports ? 'deposit_limit' : null;
   }
 
   /** Set/clear daily limits. Lowering is immediate; `null` clears a limit. */

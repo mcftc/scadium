@@ -115,12 +115,13 @@ describe('RgService age gate (#146)', () => {
     await expect(svc.assertCanWager('u', 100n)).resolves.toBeUndefined();
   });
 
-  it('blocks (403) a real-money deposit by an un-acked user', async () => {
+  it('holds a real-money deposit by an un-acked user (age_unverified)', async () => {
     const svc = makeSvc(
       { ...active, ageConfirmedAt: null, dailyDepositLimitLamports: null },
       undefined,
       true,
     );
-    await expect(svc.assertCanDeposit('u', 100n)).rejects.toThrow(/age verification/i);
+    const db = (svc as unknown as { prisma: never }).prisma;
+    await expect(svc.depositBlock(db, 'u', 100n)).resolves.toBe('age_unverified');
   });
 });

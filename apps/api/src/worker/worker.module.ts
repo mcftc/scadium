@@ -14,6 +14,7 @@ import { VaultModule } from '../vault/vault.module';
 import { ResponsibleGamblingModule } from '../responsible-gambling/rg.module';
 import { MaintenanceModule } from '../maintenance/maintenance.module';
 import { KycModule } from '../kyc/kyc.module';
+import { CustodyModule } from '../custody/custody.module';
 import { AffiliatesModule } from '../affiliates/affiliates.module';
 
 /**
@@ -41,6 +42,7 @@ import { AffiliatesModule } from '../affiliates/affiliates.module';
     MaintenanceModule,
     ResponsibleGamblingModule,
     KycModule,
+    CustodyModule,
     AffiliatesModule,
     AirdropModule,
     SwapModule,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventDiscriminator, parseVaultEvent, programScopedEventPayloads } from './vault-events';
+import { eventDiscriminator, programScopedEventPayloads } from './vault-events';
 
 const VAULT = 'Vau1t1111111111111111111111111111111111111';
 const IMPOSTER = 'Imp0ster1111111111111111111111111111111111';
@@ -26,38 +26,34 @@ const framed = (program: string, ...inner: string[]) => [
   `Program ${program} success`,
 ];
 
-describe('vault event parsing (#27) — program-scoped (#H5a)', () => {
-  it('decodes a Deposited event our vault program emitted', () => {
+/** How many `name` events `programId` emitted, per the scoped payloads. */
+const count = (logs: readonly string[] | null, name: 'Deposited' | 'Withdrawn', programId: string | null) =>
+  programScopedEventPayloads(logs, programId).filter((p) =>
+    p.subarray(0, 8).equals(eventDiscriminator(name)),
+  ).length;
+
+describe('program-scoped event payloads (#H5a)', () => {
+  it('returns the data line our program emitted, with its discriminator', () => {
     const logs = framed(VAULT, 'Program log: x', eventData('Deposited', 7, 500_000_000n, 501_002_240n));
-    const ev = parseVaultEvent(logs, 'Deposited', VAULT);
-    expect(ev).not.toBeNull();
-    expect(ev!.amount).toBe(500_000_000n);
-    expect(ev!.vaultBalance).toBe(501_002_240n);
-    expect(ev!.user.length).toBeGreaterThan(30);
+    const [payload] = programScopedEventPayloads(logs, VAULT);
+    expect(payload!.readBigUInt64LE(40)).toBe(500_000_000n);
+    expect(count(logs, 'Deposited', VAULT)).toBe(1);
+    expect(count(logs, 'Withdrawn', VAULT)).toBe(0);
   });
 
-  it('does not cross-match event types', () => {
-    const logs = framed(VAULT, eventData('Withdrawn', 7, 100n, 0n));
-    expect(parseVaultEvent(logs, 'Deposited', VAULT)).toBeNull();
-    expect(parseVaultEvent(logs, 'Withdrawn', VAULT)!.amount).toBe(100n);
-  });
-
-  it('REJECTS a forged event emitted by a look-alike program (#H5a)', () => {
+  it('REJECTS a forged event emitted by a look-alike program', () => {
     // Same discriminator + payload, but emitted inside the IMPOSTER's frame.
     const forged = framed(IMPOSTER, eventData('Deposited', 7, 999_000_000n, 999_000_000n));
-    expect(parseVaultEvent(forged, 'Deposited', VAULT)).toBeNull();
-    // And it IS accepted when it really is our program's frame.
+    expect(count(forged, 'Deposited', VAULT)).toBe(0);
     const genuine = framed(VAULT, eventData('Deposited', 7, 999_000_000n, 999_000_000n));
-    expect(parseVaultEvent(genuine, 'Deposited', VAULT)!.amount).toBe(999_000_000n);
+    expect(count(genuine, 'Deposited', VAULT)).toBe(1);
   });
 
   it('rejects a data line at the top level (no invoke frame → no active program)', () => {
-    expect(parseVaultEvent([eventData('Deposited', 7, 1n, 1n)], 'Deposited', VAULT)).toBeNull();
+    expect(count([eventData('Deposited', 7, 1n, 1n)], 'Deposited', VAULT)).toBe(0);
   });
 
   it('scopes correctly across a CPI: an inner impostor invoke does not leak into our frame', () => {
-    // Our program invokes, then CPIs into the impostor which emits the forged
-    // event; that data line belongs to the impostor (top of stack), not us.
     const logs = [
       `Program ${VAULT} invoke [1]`,
       `Program ${IMPOSTER} invoke [2]`,
@@ -65,19 +61,16 @@ describe('vault event parsing (#27) — program-scoped (#H5a)', () => {
       `Program ${IMPOSTER} success`,
       `Program ${VAULT} success`,
     ];
-    expect(parseVaultEvent(logs, 'Deposited', VAULT)).toBeNull();
+    expect(count(logs, 'Deposited', VAULT)).toBe(0);
   });
 
-  it('ignores missing/empty/garbage logs and a null programId', () => {
-    expect(parseVaultEvent(null, 'Deposited', VAULT)).toBeNull();
-    expect(parseVaultEvent([], 'Deposited', VAULT)).toBeNull();
-    expect(parseVaultEvent(framed(VAULT, 'Program data: AAAA'), 'Deposited', VAULT)).toBeNull();
-    expect(
-      parseVaultEvent(framed(VAULT, eventData('Deposited', 7, 1n, 1n)), 'Deposited', null),
-    ).toBeNull();
+  it('ignores missing/empty logs and a null programId', () => {
+    expect(count(null, 'Deposited', VAULT)).toBe(0);
+    expect(count([], 'Deposited', VAULT)).toBe(0);
+    expect(count(framed(VAULT, eventData('Deposited', 7, 1n, 1n)), 'Deposited', null)).toBe(0);
   });
 
-  it('programScopedEventPayloads returns only the target program’s data lines', () => {
+  it('returns only the target program’s data lines', () => {
     const logs = [
       `Program ${IMPOSTER} invoke [1]`,
       'Program data: AAAA', // impostor's — excluded

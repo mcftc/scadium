@@ -53,6 +53,7 @@ import { GeoGuard } from './compliance/geo.guard';
 import { ResponsibleGamblingModule } from './responsible-gambling/rg.module';
 import { KycModule } from './kyc/kyc.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { CustodyModule } from './custody/custody.module';
 import { onlyIfEnabled } from './games/enabled-games';
 import { JobsModule } from './jobs/jobs.module';
 
@@ -81,7 +82,7 @@ import { JobsModule } from './jobs/jobs.module';
     PrismaModule,
     RedisModule,
     QueueModule,
-    // POST /internal/jobs/:name — Cloudflare Cron Triggers drive the 9 economy
+    // POST /internal/jobs/:name — Cloudflare Cron Triggers drive the economy + custody
     // jobs here when the container has been asleep (spec §5.2). Shared-secret gated.
     JobsModule,
     SolanaModule,
@@ -125,6 +126,7 @@ import { JobsModule } from './jobs/jobs.module';
     ResponsibleGamblingModule,
     KycModule,
     MaintenanceModule,
+    CustodyModule,
   ],
   controllers: [HealthController, MetricsController],
   // Activate the configured rate limiter globally — ThrottlerModule alone is inert

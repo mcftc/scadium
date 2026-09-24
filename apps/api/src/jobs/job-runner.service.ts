@@ -10,6 +10,9 @@ import { DistributionService } from '../engine/distribution.service';
 import { BlockMiningService } from '../engine/block-mining.service';
 import { VaultAccrualService } from '../vault/vault-accrual.service';
 import { RedisService } from '../redis/redis.service';
+import { CustodyRuntime } from '../custody/custody-runtime';
+import { DepositService } from '../custody/deposit.service';
+import { WithdrawalService } from '../custody/withdrawal.service';
 import { runJob, type JobDeps, type JobPayload } from './job-registry';
 
 /**
@@ -41,6 +44,9 @@ export class JobRunnerService {
         distribution: get(DistributionService),
         blockMining: get(BlockMiningService),
         vaultAccrual: get(VaultAccrualService),
+        custody: get(CustodyRuntime),
+        deposits: get(DepositService),
+        withdrawals: get(WithdrawalService),
         redis: get(RedisService),
       };
     }

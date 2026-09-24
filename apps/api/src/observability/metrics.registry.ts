@@ -66,3 +66,17 @@ export const payoutFailedTotal = new Counter({
   labelNames: ['kind'] as const,
   registers: [metricsRegistry],
 });
+
+/** Custody (ADR 0005): the hot wallet holding every deposited lamport. */
+export const custodyHotWalletLamports = new Gauge({
+  name: 'scadium_custody_hot_wallet_lamports',
+  help: 'Custody hot wallet balance in lamports',
+  registers: [metricsRegistry],
+});
+
+/** Custody: what the hot wallet owes — funded balances, unpaid withdrawals, held deposits. */
+export const custodyLiabilitiesLamports = new Gauge({
+  name: 'scadium_custody_liabilities_lamports',
+  help: 'Lamports the custody hot wallet owes players',
+  registers: [metricsRegistry],
+});

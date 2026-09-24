@@ -4,7 +4,6 @@ import { AuthModule } from '../auth/auth.module';
 import { ChainService } from './chain.service';
 import { OnchainRngService } from './onchain-rng.service';
 import { VaultController } from './vault.controller';
-import { VaultBridgeService } from './vault-bridge.service';
 import { COSIGNER_PROVIDER, createCosignerProvider } from './cosigner-key.provider';
 
 /**
@@ -32,13 +31,12 @@ import { COSIGNER_PROVIDER, createCosignerProvider } from './cosigner-key.provid
     },
     ChainService,
     OnchainRngService,
-    VaultBridgeService,
   ],
   // COSIGNER_PROVIDER is exported (and the module is @Global) so other modules
   // that sign privileged txs (e.g. SwapService buy-and-burn) consume the same
   // fail-closed custody seam instead of readFileSync-ing a plaintext key (#36).
   // OnchainRngService is exported so EVERY game engine can anchor its round on
   // the shared scadium_rng program (the single-contract provably-fair source).
-  exports: [ChainService, OnchainRngService, VaultBridgeService, COSIGNER_PROVIDER],
+  exports: [ChainService, OnchainRngService, COSIGNER_PROVIDER],
 })
 export class SolanaModule {}

@@ -187,14 +187,14 @@ model User {
   // dividend claim, finalized on confirm or restored on permanent failure.
   usdsBalance               BigInt        @default(0)
   usdsReserved              BigInt        @default(0)
-  // Play-money balance used by the off-chain game loop until on-chain
-  // programs land. New users get 10 SOL equivalent (10_000_000_000 lamports).
-  // Once the vault is live this becomes a CACHE of the on-chain UserVault
-  // balance (reconciled periodically) — fast validation stays in Postgres.
+  // The spendable SOL balance every game debits/credits. New users get a 10 SOL
+  // play-money seed; the first credited custody deposit (ADR 0005) zeroes the
+  // seed and from then on the balance is real (custody-backed) value.
   playBalanceLamports       BigInt        @default(10000000000)
-  // On-chain custody (Phase A): UserVault PDA address once the user has
-  // deposited at least once; null = never deposited (still play-money).
-  vaultAddress              String?       @unique
+  // Custody (ADR 0005): when the first deposit was credited. null = play-money
+  // account; set = the balance is real and withdrawable. The play/real economy
+  // rules (custody/economy.ts) key off this.
+  fundedAt                  DateTime?
   lastDailyCaseAt           DateTime?
   // "Reset Stats" timestamp — when set, the lifetime stats grid counts only
   // bets settled after this instant (computed from the Bet table). null =
@@ -241,7 +241,7 @@ model User {
   updatedAt                 DateTime      @updatedAt
 
   sessions             Session[]
-  vaultTransfers       VaultTransfer[]
+  custodyTransfers     CustodyTransfer[]
   vaultPositions       VaultPosition[]
   bets                 Bet[]
   instantRounds        InstantRound[]
@@ -305,26 +305,79 @@ model Session {
   @@index([userId])
 }
 
+// Custody (ADR 0005): one row per SOL movement across the wallet boundary —
+// a deposit to the hot wallet or a withdrawal from it.
+//   deposit : held → credited. `txSignature` @unique makes crediting idempotent
+//             (a replayed signature inserts nothing, credits nothing). `userId`
+//             is null while the sender wallet is not linked to any account.
+//   withdraw: pending → sent → confirmed | pending again (the stored signature is
+//             provably dead) | failed (refunded). The signature is stored BEFORE
+//             broadcast, so a row can never have two live transfers.
+model CustodyTransfer {
+  id                   String             @id @default(uuid()) @db.Uuid
+  kind                 CustodyKind
+  status               CustodyStatus
+  userId               String?            @db.Uuid
+  user                 User?              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  // Deposit: the sending wallet. Withdraw: the destination wallet.
+  wallet               String
+  amountLamports       BigInt
+  txSignature          String?            @unique
+  slot                 BigInt?
+  // Withdraw: the signed blockhash's expiry height — past it (finalized) an
+  // unseen signature can never land.
+  lastValidBlockHeight BigInt?
+  attempts             Int                @default(0)
+  heldReason           CustodyHoldReason?
+  error                String?
+  settledAt            DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([userId, kind, createdAt])
+  @@index([kind, status])
+}
+
+enum CustodyKind {
+  deposit
+  withdraw
+}
+
+enum CustodyStatus {
+  held
+  credited
+  pending
+  sent
+  confirmed
+  failed
+}
+
+enum CustodyHoldReason {
+  unattributed
+  // Signed by wallets of MORE than one account: never auto-credited (who paid is
+  // not provable from the balance delta) — resolved by hand.
+  ambiguous_sender
+  below_minimum
+  paused
+  deposit_limit
+  age_unverified
+  open_play_positions
+}
+
+// Where a chain-history scanner stopped (custody treasury scan). `key` names
+// the scanner; `signature` is the newest signature it has processed.
+model ScanCursor {
+  key       String   @id
+  signature String
+  slot      BigInt
+  updatedAt DateTime @updatedAt
+}
+
 // Append-only double-entry ledger (Phase G): one row per playBalance movement,
 // written in the SAME transaction as the mutation via `applyBalanceDelta`. This
 // makes `User.playBalanceLamports` a re-derivable projection — SUM(delta) per
 // user must equal the live balance, and `balanceAfter` is the running sum at the
 // time the row was written. Never updated or deleted by application code.
-// Verified on-chain vault transfers (#27): one row per confirmed deposit /
-// withdraw signature — @unique makes crediting idempotent (a replayed
-// signature inserts nothing and credits nothing).
-model VaultTransfer {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  txSignature    String   @unique
-  kind           String // 'deposit' | 'withdraw'
-  amountLamports BigInt
-  createdAt      DateTime @default(now())
-
-  @@index([userId, createdAt])
-}
-
 model BalanceLedger {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid

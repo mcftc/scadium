@@ -22,7 +22,7 @@ interface JobRunResult {
 }
 
 /**
- * ONE generic route for all 9 economy jobs — deliberately not one endpoint per
+ * ONE generic route for all the economy + custody jobs — deliberately not one endpoint per
  * job. A new job arrives as a new entry in `JOB_HANDLERS`, not a new route here.
  *
  * Called by the Cloudflare Cron Trigger worker (see `worker/index.ts`). It is the

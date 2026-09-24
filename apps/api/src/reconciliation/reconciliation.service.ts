@@ -1,10 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { HOUSE } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChainService } from '../solana/chain.service';
 import { settlementMoved } from '../solana/settlement-verify';
-import { houseVaultLamports, lowBankrollAlertsTotal } from '../observability/metrics.registry';
+import {
+  custodyHotWalletLamports,
+  custodyLiabilitiesLamports,
+  houseVaultLamports,
+  lowBankrollAlertsTotal,
+} from '../observability/metrics.registry';
+import { CustodyRuntime } from '../custody/custody-runtime';
+import { custodyConfig } from '../custody/custody.config';
 
 /** Rent::minimum_balance(0) on mainnet params — the house_vault PDA holds no
  * data, so this is its non-spendable floor (mirrors the on-chain check). */
@@ -44,6 +51,7 @@ export class ReconciliationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chain: ChainService,
+    @Optional() private readonly custody?: CustodyRuntime,
   ) {}
 
   /**
@@ -56,42 +64,46 @@ export class ReconciliationService {
    * drifted receipts (flag-only; never mutates).
    */
   /**
-   * Funded-custody drift (#27): for converted (vaultAddress != null) users the
-   * spendable balance is a cache of on-chain vault custody ± settled-unswept
-   * play. Flags users whose |spendable − vault-above-rent| exceeds the
-   * tolerance. Flag-only.
+   * Custody solvency (ADR 0005): the hot wallet must hold at least what it owes
+   * — every funded balance, every debited-but-unpaid withdrawal, every deposit
+   * it has received but not credited — plus the fee reserve. Publishes both
+   * gauges; logs an error (flag-only) on a shortfall. Null while custody is not
+   * active or the balance is unreadable.
    */
-  async fundedDrift(toleranceLamports = 0n, limit = 100): Promise<number> {
-    if (!this.chain.enabled) return 0;
-    const users = await this.prisma.user.findMany({
-      where: { vaultAddress: { not: null } },
-      take: limit,
-      select: { id: true, walletAddress: true, playBalanceLamports: true },
-    });
-    let drift = 0;
-    for (const u of users) {
-      try {
-        const vault = await this.chain.vaultBalance(u.walletAddress);
-        // UserVault rent floor is not spendable; the program enforces it on
-        // withdraw, so compare against the above-rent custody.
-        const rent = 1_002_240n; // Rent::minimum_balance(UserVault::SIZE) on mainnet params
-        const backing = vault > rent ? vault - rent : 0n;
-        const delta =
-          u.playBalanceLamports > backing
-            ? u.playBalanceLamports - backing
-            : backing - u.playBalanceLamports;
-        if (delta > toleranceLamports) {
-          drift += 1;
-          this.logger.error(
-            `funded drift: user ${u.id} spendable=${u.playBalanceLamports} vault-above-rent=${backing}`,
-          );
-        }
-      } catch (e) {
-        drift += 1;
-        this.logger.error(`funded drift: user ${u.id} unverifiable: ${String(e)}`);
-      }
+  async custodySolvency(): Promise<{ hotLamports: bigint; owedLamports: bigint; ok: boolean } | null> {
+    const active = this.custody?.active;
+    if (!active) return null;
+    let hot: bigint;
+    try {
+      hot = await this.custody!.chain.balance(active.treasury);
+    } catch (e) {
+      this.logger.warn(`custody solvency: hot wallet unreadable (${String(e)}) — skipping`);
+      return null;
     }
-    return drift;
+    const balances = await this.prisma.user.aggregate({
+      where: { fundedAt: { not: null } },
+      _sum: { playBalanceLamports: true },
+    });
+    const owed = await this.prisma.custodyTransfer.aggregate({
+      where: {
+        OR: [
+          { kind: 'withdraw', status: { in: ['pending', 'sent'] } },
+          { kind: 'deposit', status: 'held' },
+        ],
+      },
+      _sum: { amountLamports: true },
+    });
+    const owedLamports =
+      (balances._sum.playBalanceLamports ?? 0n) + (owed._sum.amountLamports ?? 0n);
+    custodyHotWalletLamports.set(Number(hot));
+    custodyLiabilitiesLamports.set(Number(owedLamports));
+    const ok = hot >= owedLamports + custodyConfig().feeReserveLamports;
+    if (!ok) {
+      this.logger.error(
+        `CUSTODY SHORTFALL: hot wallet ${hot} < owed ${owedLamports} + fee reserve — top it up`,
+      );
+    }
+    return { hotLamports: hot, owedLamports, ok };
   }
 
   /**

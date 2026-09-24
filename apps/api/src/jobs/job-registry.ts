@@ -9,9 +9,12 @@ import type { RewardsService } from '../rewards/rewards.service';
 import type { DistributionService } from '../engine/distribution.service';
 import type { BlockMiningService } from '../engine/block-mining.service';
 import type { VaultAccrualService } from '../vault/vault-accrual.service';
+import type { CustodyRuntime } from '../custody/custody-runtime';
+import type { DepositService } from '../custody/deposit.service';
+import type { WithdrawalService } from '../custody/withdrawal.service';
 
 /**
- * The 9 economy jobs, defined ONCE.
+ * The economy and custody jobs, defined ONCE.
  *
  * Two callers drive these, and neither owns the logic:
  *   1. `@scadium/worker`'s BullMQ consumers, while the process is awake.
@@ -36,6 +39,9 @@ export interface JobDeps {
   distribution: DistributionService;
   blockMining: BlockMiningService;
   vaultAccrual: VaultAccrualService;
+  custody: CustodyRuntime;
+  deposits: DepositService;
+  withdrawals: WithdrawalService;
   redis: RedisService;
 }
 
@@ -83,6 +89,7 @@ export const JOB_HANDLERS: Record<QueueName, JobHandler> = {
     await reconciliation.scadLedgerDrift();
     await reconciliation.stakeLedgerDrift();
     await reconciliation.usdsSolvency();
+    await reconciliation.custodySolvency();
   },
 
   // #29: pay_prize retry sweep — the Payout PDA per (draw,winner) backstops
@@ -121,6 +128,17 @@ export const JOB_HANDLERS: Record<QueueName, JobHandler> = {
     await withRedisLock(redis.client, 'lock:vault-accrual', LOCK_TTL_MS, () =>
       vaultAccrual.accrue(),
     );
+  },
+
+  // Custody (ADR 0005): record deposits whose confirm call never arrived, retry
+  // held ones, and move unfinished withdrawals on. Idempotent (unique signature,
+  // CAS transitions); the lock keeps replicas from walking the same history.
+  [QUEUE_NAMES.custody]: async ({ custody, deposits, withdrawals, redis }) => {
+    if (!custody.active) return;
+    await withRedisLock(redis.client, 'lock:custody', LOCK_TTL_MS, async () => {
+      await deposits.scan();
+      await withdrawals.resumeAll();
+    });
   },
 };
 

@@ -12,6 +12,9 @@ import {
   DistributionService,
   BlockMiningService,
   VaultAccrualService,
+  CustodyRuntime,
+  DepositService,
+  WithdrawalService,
   RedisService,
   queueConnection,
   QUEUE_NAMES,
@@ -45,6 +48,9 @@ async function bootstrap(): Promise<void> {
   const distribution = app.get(DistributionService, { strict: false });
   const blockMining = app.get(BlockMiningService, { strict: false });
   const vaultAccrual = app.get(VaultAccrualService, { strict: false });
+  const custody = app.get(CustodyRuntime, { strict: false });
+  const deposits = app.get(DepositService, { strict: false });
+  const withdrawals = app.get(WithdrawalService, { strict: false });
   const redis = app.get(RedisService, { strict: false });
 
   // Plain options object — each Queue/Worker spins its own BullMQ connection.
@@ -64,6 +70,9 @@ async function bootstrap(): Promise<void> {
     distribution,
     blockMining,
     vaultAccrual,
+    custody,
+    deposits,
+    withdrawals,
     redis,
   };
 
@@ -93,6 +102,7 @@ async function bootstrap(): Promise<void> {
   const distributionQueue = new Queue(QUEUE_NAMES.distribution, { connection });
   const blockMiningQueue = new Queue(QUEUE_NAMES.blockMining, { connection });
   const vaultAccrualQueue = new Queue(QUEUE_NAMES.vaultAccrual, { connection });
+  const custodyQueue = new Queue(QUEUE_NAMES.custody, { connection });
 
   await airdropQueue.upsertJobScheduler(
     'airdrop-hourly',
@@ -142,7 +152,11 @@ async function bootstrap(): Promise<void> {
     { name: 'mine' },
   );
 
-  logger.log('worker up — 9 queues, schedulers registered');
+  // Custody: a deposit whose confirm call never arrived is credited within a
+  // minute; the job returns at once while custody is inactive.
+  await custodyQueue.upsertJobScheduler('custody-1min', { every: 60_000 }, { name: 'custody' });
+
+  logger.log(`worker up — ${JOB_NAMES.length} queues, schedulers registered`);
 
   // Health endpoint so the worker can also run as a standalone "web service" on
   // hosts that require an open HTTP port. No-op locally / in docker-compose, and
@@ -169,6 +183,9 @@ async function bootstrap(): Promise<void> {
         rewardClaimsQueue,
         lotteryPayoutsQueue,
         distributionQueue,
+        blockMiningQueue,
+        vaultAccrualQueue,
+        custodyQueue,
       ].map((q) => q.close()),
     );
     await app.close();

@@ -24,6 +24,8 @@ export const QUEUE_NAMES = {
   vaultAccrual: 'vault-accrual',
   /** SCAD Engine v2: hourly Proof-of-Play block-reward mining round. */
   blockMining: 'block-mining',
+  /** Custody (ADR 0005): treasury deposit scan + unfinished withdrawals. */
+  custody: 'custody',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

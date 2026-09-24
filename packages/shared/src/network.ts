@@ -100,3 +100,18 @@ function resolveWithNetwork(
   }
   return { network, rpcUrl: derived };
 }
+
+/**
+ * Genesis hash → cluster, for PROVING which cluster an RPC endpoint serves
+ * (custody, ADR 0005): a configured network name is a claim, the genesis hash a
+ * fact. Any other hash is a private cluster (a local validator) → 'localnet'.
+ */
+const GENESIS_HASHES: Record<string, Exclude<SolanaNetwork, 'localnet'>> = {
+  '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d': 'mainnet-beta',
+  EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG: 'devnet',
+  '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY': 'testnet',
+};
+
+export function clusterForGenesisHash(genesisHash: string): SolanaNetwork {
+  return GENESIS_HASHES[genesisHash] ?? 'localnet';
+}
