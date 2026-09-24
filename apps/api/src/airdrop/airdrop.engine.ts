@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { lastCompletedHourPeriod, periodForHour } from '../queue/queue.constants';
 import { RgService } from '../responsible-gambling/rg.service';
 import { AirdropGateway } from './airdrop.gateway';
+import { assertPlayOnly, promotionRecipients, stillPlay } from '../custody/economy';
 
 /**
  * Hourly airdrop pool engine (solpump left-rail widget). Each hour has one
@@ -86,6 +88,8 @@ export class AirdropEngine implements OnModuleInit {
     await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new Error('User not found');
+      // The pool is a play-money promotion: deposited SOL never goes in (ADR 0005).
+      await assertPlayOnly(tx, userId, 'Tipping the airdrop');
       // Atomic conditional debit (single mutation point) — also writes the
       // ledger row; rejects with 'Insufficient balance' if underfunded.
       await applyBalanceDelta(tx, userId, -amountLamports, {
@@ -119,12 +123,13 @@ export class AirdropEngine implements OnModuleInit {
   /**
    * Sybil filter (#47): from the wager+chat candidates keep only age-confirmed
    * users and drop any cluster of accounts sharing a signup IP-hash (a free-
-   * wallet farm). Users with no recorded IP are not penalised.
+   * wallet farm). Users with no recorded IP are not penalised. While custody is
+   * on, the pool is play-money only, so deposited accounts are not eligible.
    */
   private async filterEligibleForSybil(candidates: string[]): Promise<string[]> {
     if (candidates.length === 0) return [];
     const users = await this.prisma.user.findMany({
-      where: { id: { in: candidates } },
+      where: { id: { in: candidates }, ...promotionRecipients() },
       select: { id: true, ageConfirmedAt: true, signupIpHash: true },
     });
     const ageOk = users.filter((u) => u.ageConfirmedAt != null);
@@ -179,7 +184,6 @@ export class AirdropEngine implements OnModuleInit {
 
       if (eligible.length === 0) {
         // Nobody qualified — roll the pool into the next hour instead of burning it.
-        const nextPeriod = this.periodFor(Date.now() + 3_600_000 - 60_000);
         await this.prisma.$transaction(async (tx) => {
           // Same guarded claim (#216): only the run that flips this period
           // distributed false→true rolls it over, so two concurrent no-eligible
@@ -189,34 +193,14 @@ export class AirdropEngine implements OnModuleInit {
             data: { distributed: true },
           });
           if (claimed.count === 0) return; // a concurrent run already rolled it over
-          await tx.airdropPool.upsert({
-            where: { period: nextPeriod },
-            update: { baseLamports: { increment: total } },
-            create: { period: nextPeriod, baseLamports: this.baseLamports + total },
-          });
-          // Forced run still records the privileged action even though it rolled
-          // over (no eligible users) — atomic with the rollover.
-          if (forcedByUserId) {
-            await tx.auditLog.create({
-              data: {
-                actorUserId: forcedByUserId,
-                action: 'forced_airdrop',
-                targetUserId: null,
-                metadataJson: {
-                  period,
-                  participantCount: 0,
-                  totalLamports: total.toString(),
-                  rolledOver: true,
-                },
-              },
-            });
-          }
+          await this.rollOver(tx, period, total, forcedByUserId);
         });
         this.logger.log(`airdrop ${period}: no eligible users — ${total} rolled over`);
         return result;
       }
 
-      const share = total / BigInt(eligible.length);
+      let payees: string[] = [];
+      let share = 0n;
       await this.prisma.$transaction(async (tx) => {
         // Claim the pool atomically (#216): a guarded flip so two concurrent
         // distribute() runs can't both credit. Only the run that transitions
@@ -228,10 +212,20 @@ export class AirdropEngine implements OnModuleInit {
           data: { distributed: true },
         });
         if (claimed.count === 0) return; // a concurrent run already distributed
+        // The pool is play money: re-check, under row locks, that each payee is
+        // still a play account now (a first deposit may have landed since the
+        // eligibility read — ADR 0005).
+        const kept = await stillPlay(tx, eligible);
+        payees = eligible.filter((id) => kept.has(id));
+        if (payees.length === 0) {
+          await this.rollOver(tx, period, total, forcedByUserId);
+          return;
+        }
+        share = total / BigInt(payees.length);
         const event = await tx.airdropEvent.create({
-          data: { totalLamports: total, participantCount: eligible.length },
+          data: { totalLamports: total, participantCount: payees.length },
         });
-        for (const userId of eligible) {
+        for (const userId of payees) {
           const claim = await tx.airdropClaim.create({
             data: { eventId: event.id, userId, lamports: share },
           });
@@ -252,29 +246,57 @@ export class AirdropEngine implements OnModuleInit {
               targetUserId: null,
               metadataJson: {
                 period,
-                participantCount: eligible.length,
+                participantCount: payees.length,
                 totalLamports: total.toString(),
               },
             },
           });
         }
       });
+      if (payees.length === 0) return result;
 
       this.gateway.emitDropped({
         totalLamports: total.toString(),
-        participantCount: eligible.length,
+        participantCount: payees.length,
         perUserLamports: share.toString(),
       });
       this.logger.log(
-        `airdrop ${period}: ${total} lamports → ${eligible.length} users (${share} each)`,
+        `airdrop ${period}: ${total} lamports → ${payees.length} users (${share} each)`,
       );
-      return { participantCount: eligible.length, totalLamports: total.toString() };
+      return { participantCount: payees.length, totalLamports: total.toString() };
     } finally {
       const snap = await this.poolSnapshot(); // also seeds the new hour's pool
       this.gateway.emitPool({
         poolLamports: snap.poolLamports,
         endsAt: snap.endsAt,
         tipsCount: snap.tipsCount,
+      });
+    }
+  }
+
+  /** Carry an undistributed pool into the next hour (and audit a forced run). */
+  private async rollOver(
+    tx: Prisma.TransactionClient,
+    period: string,
+    total: bigint,
+    forcedByUserId?: string,
+  ): Promise<void> {
+    const nextPeriod = this.periodFor(Date.now() + 3_600_000 - 60_000);
+    await tx.airdropPool.upsert({
+      where: { period: nextPeriod },
+      update: { baseLamports: { increment: total } },
+      create: { period: nextPeriod, baseLamports: this.baseLamports + total },
+    });
+    // A forced run still records the privileged action even though it rolled
+    // over — atomic with the rollover.
+    if (forcedByUserId) {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: forcedByUserId,
+          action: 'forced_airdrop',
+          targetUserId: null,
+          metadataJson: { period, participantCount: 0, totalLamports: total.toString(), rolledOver: true },
+        },
       });
     }
   }

@@ -33,6 +33,7 @@ import {
 import { DEMO_BOTS, DEMO_BOT_BALANCE, demoBotsEnabled } from '../bots/demo-bots.const';
 import { displayHandle, publicPlayerId } from '../../common/public-player';
 import { BeaconService } from '../../beacon/beacon.service';
+import { economyEnforced } from '../../custody/economy';
 
 /**
  * One entry's slice of the pot, as persisted with the drawn round and sent with
@@ -236,6 +237,9 @@ export class JackpotEngine implements OnModuleInit, OnModuleDestroy {
     bot: (typeof DEMO_BOTS)[number],
     amount: bigint,
   ): Promise<void> {
+    // Demo bots stake play money; while custody is on the pot takes deposited
+    // SOL only (economy.ts E1), so bots sit it out.
+    if (economyEnforced()) return;
     try {
       await this.prisma.$transaction(async (tx) => {
         await applyBalanceDelta(tx, bot.id, -amount, {

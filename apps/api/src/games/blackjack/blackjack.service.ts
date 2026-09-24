@@ -10,6 +10,7 @@ import { BlackjackEngine } from './blackjack.engine';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { withSerializable } from '../../prisma/with-serializable';
+import { assertDepositedOnly } from '../../custody/economy';
 
 /**
  * HTTP facade for the multiplayer blackjack tables. All balance movement
@@ -103,6 +104,9 @@ export class BlackjackService {
 
     // loadUser enforces banned/exists; the conditional debit enforces funds.
     await this.loadUser(params.userId);
+    // Seats live in memory between debit and saved state — deposited SOL only
+    // while custody is on (economy.ts E1).
+    await assertDepositedOnly(this.prisma, params.userId, 'blackjack');
     await this.rg.assertCanWager(params.userId, total);
     await this.debit(params.userId, total, params.tableId);
     try {

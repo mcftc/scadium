@@ -6,6 +6,7 @@ import { DEMO_BOT_IDS } from '../games/bots/demo-bots.const';
 import { withSerializable } from '../prisma/with-serializable';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
 import { dayPeriodStartMs } from '../queue/queue.constants';
+import { promotionRecipients, stillPlay } from '../custody/economy';
 
 const DAY_MS = 86_400_000;
 const WINDOW_CACHE_MS = 30_000;
@@ -125,6 +126,9 @@ export class LeaderboardService {
     end: Date | undefined,
     limit: number,
     freshExclude = false,
+    // The race pays a play-money pool, so while custody is on its standings are
+    // play accounts only (ADR 0005); the plain boards rank everyone.
+    racers?: Prisma.UserWhereInput,
   ): Promise<WindowEntry[]> {
     const exclude = await this.excludedUserIds(freshExclude);
     const grouped = await this.prisma.bet.groupBy({
@@ -133,6 +137,7 @@ export class LeaderboardService {
         createdAt: end ? { gte: start, lt: end } : { gte: start },
         status: { in: ['won', 'lost'] },
         userId: { notIn: exclude },
+        ...(racers ? { user: racers } : {}),
       },
       _sum: { amountLamports: true },
       // Secondary key so a volume tie at the payout boundary is deterministic
@@ -161,13 +166,15 @@ export class LeaderboardService {
   async windowedTop(
     period: 'daily' | 'weekly',
     limit: number = RACE.BOARD_SIZE,
+    race = false,
   ): Promise<WindowEntry[]> {
-    const key = `${period}:${limit}`;
+    const racers = race ? promotionRecipients() : undefined;
+    const key = `${period}:${limit}:${racers ? 'race' : 'all'}`;
     const hit = this.windowCache.get(key);
     if (hit && Date.now() - hit.at < WINDOW_CACHE_MS) return hit.rows;
     const now = Date.now();
     const start = period === 'daily' ? startOfUtcDayMs(now) : startOfIsoWeekMs(now);
-    const rows = await this.topByWindowVolume(new Date(start), undefined, limit);
+    const rows = await this.topByWindowVolume(new Date(start), undefined, limit, false, racers);
     this.windowCache.set(key, { rows, at: now });
     return rows;
   }
@@ -178,7 +185,7 @@ export class LeaderboardService {
    * reset. Prizes are indicative until the day completes and `settleRace` pays.
    */
   async raceStandings(limit: number = RACE.BOARD_SIZE) {
-    const entries = await this.windowedTop('daily', limit);
+    const entries = await this.windowedTop('daily', limit, true);
     return {
       resetAt: startOfUtcDayMs(Date.now()) + DAY_MS,
       poolLamports: BigInt(RACE.DAILY_POOL_LAMPORTS).toString(),
@@ -206,6 +213,7 @@ export class LeaderboardService {
       new Date(dayStart + DAY_MS),
       RACE.PAYOUT_BPS.length,
       true,
+      promotionRecipients(),
     );
     let paid = 0;
     let total = BigInt(0);
@@ -220,6 +228,9 @@ export class LeaderboardService {
       if (prize <= BigInt(0)) continue;
       try {
         const credited = await withSerializable(this.prisma, async (tx) => {
+          // The pool is play money: a winner converted by a first deposit since
+          // the standings were read is skipped, not paid in real SOL (ADR 0005).
+          if (!(await stillPlay(tx, [w.userId])).has(w.userId)) return false;
           let rr: { id: string };
           try {
             rr = await tx.raceResult.create({

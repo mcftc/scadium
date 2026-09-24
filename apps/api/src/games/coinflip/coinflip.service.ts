@@ -29,6 +29,7 @@ import { LiveFeedService } from '../../live/live-feed.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 import { cancelOpenFlip } from './cancel-open-flip';
+import { assertSameEconomy } from '../../custody/economy';
 
 type Side = 'heads' | 'tails';
 
@@ -61,7 +62,7 @@ interface SettledSide {
 }
 
 const GAME_INCLUDE = {
-  creator: { select: { id: true, username: true, walletAddress: true } },
+  creator: { select: { id: true, username: true, walletAddress: true, fundedAt: true } },
   joiner: { select: { id: true, username: true, walletAddress: true } },
   seed: true,
 } as const;
@@ -305,6 +306,8 @@ export class CoinflipService implements OnModuleInit, OnModuleDestroy {
       if (game.creatorId === params.userId) {
         throw new BadRequestException("Can't join your own flip");
       }
+      // Play-money flips pair play accounts, deposited ones pair deposited (ADR 0005).
+      await assertSameEconomy(tx, game.creatorId, params.userId);
       const result = await this.resolve(tx, game, {
         kind: 'player',
         userId: params.userId,
@@ -623,7 +626,12 @@ export class CoinflipService implements OnModuleInit, OnModuleDestroy {
     id: string;
     creatorId: string;
     creatorSide: string;
-    creator?: { id: string; username: string | null; walletAddress: string } | null;
+    creator?: {
+      id: string;
+      username: string | null;
+      walletAddress: string;
+      fundedAt?: Date | null;
+    } | null;
     joinerId: string | null;
     joiner?: { id: string; username: string | null; walletAddress: string } | null;
     amountLamports: bigint;
@@ -643,6 +651,8 @@ export class CoinflipService implements OnModuleInit, OnModuleDestroy {
       creatorUsername: game.creator?.username ?? null,
       creatorWallet: game.creator?.walletAddress ?? null,
       creatorSide: game.creatorSide,
+      // Deposited-SOL flip vs play-money flip: only the same kind may join (ADR 0005).
+      creatorFunded: game.creator?.fundedAt != null,
       joinerId: game.joinerId,
       joinerUsername: game.joiner?.username ?? null,
       joinerWallet: game.joiner?.walletAddress ?? null,

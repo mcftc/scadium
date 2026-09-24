@@ -12,6 +12,7 @@ import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
 import { displayHandle, publicPlayerId } from '../../common/public-player';
+import { assertPooledEntry } from '../../custody/economy';
 
 /**
  * HTTP facade for the jackpot. Validates entries, debits the play-money
@@ -75,6 +76,9 @@ export class JackpotService {
       const replay = await claimIdempotency(tx, params.userId, 'jackpot_enter', key);
       if (replay)
         return { response: replay as ReturnType<typeof this.serializeEnter>, replayed: true };
+
+      // One pot, so one economy: deposited funds only while custody is on (ADR 0005).
+      await assertPooledEntry(tx, params.userId, 'jackpot', open.id);
 
       // Atomic conditional debit inside the tx — closes the double-spend race.
       await applyBalanceDelta(tx, params.userId, -amount, {

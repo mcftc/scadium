@@ -4,6 +4,7 @@ import { AFFILIATE, GAME_HOUSE_EDGE, type GameType } from '@scadium/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { withSerializable } from '../prisma/with-serializable';
 import { applyBalanceDelta } from '../prisma/apply-balance-delta';
+import { sharesEconomy } from '../custody/economy';
 
 /** Commission rate for a referrer's cumulative referred volume (#47). */
 export function tierCommission(referredVolumeLamports: bigint): number {
@@ -80,7 +81,10 @@ export class AffiliatesService {
       select: { signupIpHash: true },
     });
     const sameIp = !!referee.signupIpHash && referee.signupIpHash === referrer?.signupIpHash;
-    const commission = sameIp ? 0n : referralCommission(stakeLamports, gameType, rate);
+    // Play-money wagering never earns a deposited referrer commission, nor the
+    // reverse (ADR 0005): the volume is still tracked, the commission is 0.
+    const earns = !sameIp && (await sharesEconomy(tx, referrerId, refereeId));
+    const commission = earns ? referralCommission(stakeLamports, gameType, rate) : 0n;
 
     await tx.referral.upsert({
       where: { refereeId },

@@ -12,6 +12,7 @@ import { LotteryEngine } from './lottery.engine';
 import { RgService } from '../../responsible-gambling/rg.service';
 import { applyBalanceDelta } from '../../prisma/apply-balance-delta';
 import { claimIdempotency, storeIdempotency } from '../../prisma/idempotency';
+import { assertPooledEntry } from '../../custody/economy';
 
 const SCAD_BASE = 10 ** LOTTERY.SCAD_DECIMALS;
 
@@ -201,6 +202,8 @@ export class LotteryService {
       const user = await tx.user.findUnique({ where: { id: params.userId } });
       if (!user) throw new NotFoundException('User not found');
       if (user.banned) throw new ForbiddenException('Account banned');
+      // A free ticket still wins a share of the pooled pot (ADR 0005).
+      await assertPooledEntry(tx, params.userId, 'lottery', open.id);
       // Spend the earned ticket with ONE guarded update: it only matches while a
       // whole ticket's worth of wager is still unspent. A read-then-increment
       // let ~20 parallel requests each pass the same stale read and redeem one
@@ -292,6 +295,8 @@ export class LotteryService {
       if (replay) {
         return { response: replay as ReturnType<typeof this.serializePurchase>, replayed: true };
       }
+      // One pot, so one economy: deposited funds only while custody is on (ADR 0005).
+      await assertPooledEntry(tx, params.userId, 'lottery', open.id);
 
       await applyBalanceDelta(tx, params.userId, -debitLamports, {
         reason: 'lottery_ticket',
