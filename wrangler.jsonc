@@ -71,6 +71,7 @@
     "DAILY_ACTIVE_SECONDS": "3600",
     "CORS_ORIGIN": "https://scadium.com",
     "API_ORIGIN": "https://api.scadium.com",
-    "SOLANA_NETWORK": "devnet"
+    "SOLANA_NETWORK": "devnet",
+    "CUSTODY_ENABLED": "true"
   }
 }

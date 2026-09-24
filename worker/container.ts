@@ -251,9 +251,10 @@ function unwrap(result: Response | Error): Response {
  * value is hardcoded here.
  */
 /**
- * Game-loop and fairness-beacon tunables the API reads from its environment
- * (defaults live in the API; see docs/runbooks/cloudflare.md). Forwarded only
- * when set as a Worker var, so an operator can change one with a var + deploy.
+ * Game-loop, fairness-beacon and custody settings the API reads from its
+ * environment (defaults live in the API; see docs/runbooks/cloudflare.md).
+ * Forwarded only when set as a Worker var, so an operator can change one with a
+ * var + deploy.
  */
 const CONTAINER_TUNABLES = [
   'SETTLE_TX_TIMEOUT_MS',
@@ -268,6 +269,16 @@ const CONTAINER_TUNABLES = [
   'FAIR_BEACON_RELAYS',
   'FAIR_BEACON_WAIT_MS',
   'FAIR_BEACON_RELAY_TIMEOUT_MS',
+  'CUSTODY_ENABLED',
+  'CUSTODY_COMMITMENT',
+  'CUSTODY_MIN_DEPOSIT_LAMPORTS',
+  'CUSTODY_MIN_WITHDRAW_LAMPORTS',
+  'CUSTODY_MAX_WITHDRAW_LAMPORTS',
+  'CUSTODY_DAILY_WITHDRAW_LAMPORTS',
+  'CUSTODY_FEE_RESERVE_LAMPORTS',
+  'CUSTODY_WITHDRAW_MAX_ATTEMPTS',
+  'CUSTODY_EXPIRY_MARGIN_BLOCKS',
+  'CUSTODY_SCAN_PAGE',
 ] as const;
 
 function buildContainerEnv(env: Env): Record<string, string> {
@@ -286,9 +297,9 @@ function buildContainerEnv(env: Env): Record<string, string> {
     METRICS_TOKEN: env.METRICS_TOKEN,
     GEO_IP_SALT: env.GEO_IP_SALT,
     GEO_PROXY_SECRET: env.GEO_PROXY_SECRET,
-    SOLANA_RPC: env.SOLANA_RPC,
+    SOLANA_RPC_URL: env.SOLANA_RPC_URL,
     SOLANA_NETWORK: env.SOLANA_NETWORK,
-    HOUSE_WALLET_SECRET_KEY: env.HOUSE_WALLET_SECRET_KEY,
+    CUSTODY_HOT_WALLET_SECRET_KEY: env.CUSTODY_HOT_WALLET_SECRET_KEY,
   };
   return Object.fromEntries(
     Object.entries(candidates).filter((e): e is [string, string] => e[1] !== undefined),

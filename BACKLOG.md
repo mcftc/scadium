@@ -24,13 +24,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **Cxx/Hxx** map to audi
 - [ ] **H13 · Reward claim `period = Date.now()` defeats idempotency.** Use a fixed bucket (per-day/week) so `@@unique([userId,kind,period])` + the ClaimRecord PDA actually bind. `rewards.service.ts:56,147`.
 - [x] **H5a · `verifyVaultTransfer` trusts forged events.** ✅ Fixed: new `programScopedEventPayloads` tracks the Solana invoke stack so only `Program data:` lines emitted while OUR vault program is the active frame are trusted; a look-alike program's forged event (incl. via CPI) is rejected. `vault-events.ts` + `chain.service.ts`. Test: `vault-events.spec.ts`.
 - [x] **H5 · `verifyTicketTx` accepts forged `TicketBought` events** → ✅ same fix: ticket parse now scoped to the configured lottery program via `programScopedEventPayloads`. `chain.service.ts`.
-- [ ] **H5b · On-chain settlement bridge unwired.** `settleBet` has zero callers → net play never sweeps between user/house vaults (loser self-withdraws deposit; winner unfunded). Wire it + schedule the `fundedDrift/chainDrift/vaultDrift` monitors. `chain.service.ts:291`, `vault-bridge.service.ts:97`.
-- [ ] **H5a · `verifyVaultTransfer` trusts forged events.** Assert the confirmed tx invoked `VAULT_PROGRAM_ID` + verify lamport delta. `chain.service.ts:227`.
+- [x] **H5b · superseded (ADR 0005, 2026-09-24):** SOL custody left the vault program — deposits/withdrawals are hot-wallet transfers verified by `custody/`, so there is no vault↔balance sweep to wire. Original: **On-chain settlement bridge unwired.** `settleBet` has zero callers → net play never sweeps between user/house vaults (loser self-withdraws deposit; winner unfunded). Wire it + schedule the `fundedDrift/chainDrift/vaultDrift` monitors. `chain.service.ts:291`, `vault-bridge.service.ts:97`.
+- [x] **H5a (duplicate) · superseded (ADR 0005):** `verifyVaultTransfer` is gone with the vault bridge. Original: **`verifyVaultTransfer` trusts forged events.** Assert the confirmed tx invoked `VAULT_PROGRAM_ID` + verify lamport delta. `chain.service.ts:227`.
 - [x] **H4 · Lottery never pays winners in default (chain-disabled) mode.** ✅ Fixed: the settle now credits each winning ticket's `payoutLamports` to the winner's play balance via `applyBalanceDelta` when the chain is disabled (on-chain mode still pays $SCAD on-chain, so no double-pay). `lottery.engine.ts`. Test: `lottery-playmoney-payout.e2e-spec.ts` (red→green).
 - [ ] **H6 · `/lottery/faucet` drains the cosigner.** 100 $SCAD to any caller, no devnet/admin/limit guard. `lottery.service.ts:214`.
 - [ ] **H7 · On-chain daily draw can never reveal** (`target_slot` expires before reveal → synthetic fallback, `pay_prize` fails forever). Re-pin the slot near reveal. `lottery.engine.ts:401`.
 - [x] **H8 · Restart settles the open lottery draw early.** ✅ Fixed 2026-09-23 — and it was LIVE, not dormant: on Cloudflare the hourly cron boots the container, so production ran ~35 draws a day. Recovery now settles only draws whose `drawAt` has passed and resumes the not-yet-due one (tallies rebuilt from its tickets, timer re-armed). Test: `round-recovery.e2e-spec.ts` (future `drawAt`).
-- [ ] **H9 · Real-money gate not coupled to mainnet-custody config.** A non-prod `NODE_ENV` + mainnet + program id + file cosigner enables real deposits with KYC failing open. `real-money-gate.ts:23`.
+- [~] **H9 · Real-money gate not coupled to mainnet-custody config.** SOL deposits: closed by ADR 0005 — custody activates only on a genesis-hash-proven cluster and never on mainnet in this phase. Still open for the remaining cosigner-signed chain paths ($SCAD claims, lottery) when they go live: A non-prod `NODE_ENV` + mainnet + program id + file cosigner enables real deposits with KYC failing open. `real-money-gate.ts:23`.
 - [ ] **H10 · Program deploy keypairs committed to git** → IDs burned. Regenerate fresh, uncommitted keypairs before any deploy. `target/deploy/*-keypair.json`.
 - [ ] **Swap module (unverified) ·** forged `Swapped` events in `recentTrades`; `runBuyAndBurn` not crash-idempotent; burn burns the entire cosigner ATA. Audit + fix before enabling the pool. `swap.service.ts`.
 - [ ] **Reward reserve/restore writes no ledger row** → false solvency drift once chain is on. Route through the ledger (or add a reserved-aware drift rule).
@@ -45,6 +45,19 @@ All of tiers A–D shipped; see CHANGELOG. Left out of scope, still open:
 - [ ] **Coinflip DB-read snipe**: anyone with DB read access can compute an open PvP flip's result for a chosen client seed. Needs post-join entropy (the beacon could serve: fold the round published after the join).
 - [ ] **RG pending stakes** cover coinflip + lottery (the unbounded cases); crash/jackpot hold one stake per round and are not counted until settled.
 - [ ] **Deploy overlap**: during a Cloudflare rollout the new container's recovery can void a round the old container is still draining (money-safe via the claim gate; the round is refunded rather than completed).
+
+## Wallet custody (2026-09-24) — spec `docs/superpowers/specs/2026-09-24-wallet-custody-design.md`, ADR 0005
+
+Phase 1 shipped (deposit / play / withdraw on devnet; see CHANGELOG). Deferred:
+- [ ] **Phase 2 · play from the wallet (solpump-style)**: stake pulled from the wallet per bet, payout auto-withdrawn — composed from the custody primitives. Needs its own spec.
+- [ ] **Mainnet prerequisites** (a legal decision first — licence; Turkish law bans unlicensed online gambling and crypto payments): a managed signer (KMS) for the hot wallet, a dedicated RPC, a review queue for large withdrawals, hot/cold split + sweeping, and crash exposure sized from the hot wallet (`bankroll-model.md` still sizes the `house_vault` PDA).
+- [ ] **Exchange deposits**: deposits are attributed by the SENDING wallet, so a transfer from an exchange lands `unattributed`. Needs a memo/reference or per-user deposit addresses before mainnet.
+- [ ] **Embedded (Privy) wallets** cannot deposit from the wallet page yet — it signs through wallet-adapter only.
+- [ ] **Devnet faucet button**: players get test SOL from faucet.solana.com today (limits apply); a site drip would need a funded, rate-limited hot wallet.
+- [ ] **Race / airdrop for deposited accounts**: both stay play-money promotions (a 50 SOL/day race pool paid in real SOL is a business decision, not a default).
+- [ ] **A banned user's first deposit cannot convert** (the debit guard refuses banned accounts), so it stays held and is retried every scan; resolve by hand (unban or refund on chain).
+- [ ] **Dead on-chain settle code**: `ChainService.settleBet` and the program's `deposit`/`withdraw`/`settle_bet` are unused since ADR 0005 — remove with the next program change.
+- [ ] `render.yaml` (legacy host) still names `SOLANA_RPC`.
 
 ## Tier 3 — Product copy / compliance (cheap; before any public launch)
 

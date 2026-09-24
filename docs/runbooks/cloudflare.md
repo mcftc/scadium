@@ -24,7 +24,8 @@ cd apps/web && pnpm cf:build && pnpm cf:deploy
 
 Secrets are set once with `npx wrangler secret put <NAME>`:
 `DATABASE_URL`, `JWT_SECRET`, `INTERNAL_JOB_SECRET`, `METRICS_TOKEN`,
-`GEO_IP_SALT`, `GEO_PROXY_SECRET`. They are never committed.
+`GEO_IP_SALT`, `GEO_PROXY_SECRET`, `CUSTODY_HOT_WALLET_SECRET_KEY` (and optionally
+`SOLANA_RPC_URL`). They are never committed.
 
 ## Expected behaviour after an idle period
 
@@ -248,7 +249,7 @@ pnpm --filter @scadium/api test:unit
 # integration needs a real Postgres; :5432 may be taken by another project
 docker run -d --name scadium-testpg -p 5433:5432 \
   -e POSTGRES_USER=scadium -e POSTGRES_PASSWORD=scadium -e POSTGRES_DB=scadium_test postgres:16-alpine
-docker compose -f infra/docker-compose.yml up -d redis
+docker compose -f infra/docker-compose.yml up -d redis solana   # solana: custody chain suite
 export TEST_DATABASE_URL='postgresql://scadium:scadium@localhost:5433/scadium_test?schema=public'
 DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @scadium/api exec prisma migrate deploy
 pnpm --filter @scadium/api test:integration
@@ -277,6 +278,90 @@ The container needs outbound HTTPS to the beacon relays. If none answers in
 time, crash **voids** the round and refunds it (log: `beacon round … no relay
 answered`), the jackpot retries then refunds, and the lottery draw retries — none
 falls back to a seed-only result.
+
+## Wallet custody (deposits & withdrawals — ADR 0005)
+
+Players deposit SOL from their own wallet to the **hot wallet** (the treasury),
+play with it, and withdraw it back to a wallet linked to their account. The API
+verifies every deposit on chain and signs every withdrawal; the Postgres ledger
+stays the source of truth. Design: `docs/superpowers/specs/2026-09-24-wallet-custody-design.md`.
+
+**Custody is on in production, on devnet** (`CUSTODY_ENABLED=true`,
+`SOLANA_NETWORK=devnet` in `wrangler.jsonc`). Everything moving through it is
+test SOL with no value; the site says so in a banner.
+
+### Secrets
+
+| Secret | What |
+| ------ | ---- |
+| `CUSTODY_HOT_WALLET_SECRET_KEY` | The treasury key, base58 or a JSON byte array. `wrangler secret put CUSTODY_HOT_WALLET_SECRET_KEY`. Never in the repo, never a var. |
+| `SOLANA_RPC_URL` | Optional. Unset → the network's public RPC. A dedicated RPC (e.g. Helius) carries an API key, so it is a secret too. |
+
+The treasury address is the key's public key — `GET /api/v1/custody/config`
+shows it. Fund it from the devnet faucet (faucet.solana.com, GitHub login for
+the higher limit): it pays withdrawal fees and any net winnings.
+
+### Settings (Worker vars; defaults in code, `apps/api/src/custody/custody.config.ts`)
+
+| Setting | Default | What it does |
+| ------- | ------- | ------------ |
+| `CUSTODY_ENABLED` | false | Custody on. Also switches on the play/real economy rules (below). |
+| `CUSTODY_COMMITMENT` | finalized | When a deposit counts and a withdrawal is done (~13 s at finalized). `confirmed` is allowed off mainnet. |
+| `CUSTODY_MIN_DEPOSIT_LAMPORTS` | 0.01 SOL | Smaller deposits are held; smaller transfers from unknown wallets are ignored entirely. |
+| `CUSTODY_MIN_WITHDRAW_LAMPORTS` / `CUSTODY_MAX_WITHDRAW_LAMPORTS` | 0.01 / 10 SOL | Per request. |
+| `CUSTODY_DAILY_WITHDRAW_LAMPORTS` | 25 SOL | Per user per UTC day. |
+| `CUSTODY_FEE_RESERVE_LAMPORTS` | 0.01 SOL | Kept in the hot wallet for fees; a withdrawal waits rather than dip below it. |
+| `CUSTODY_WITHDRAW_MAX_ATTEMPTS` | 5 | Provably-dead signatures before a withdrawal is refunded. |
+| `CUSTODY_EXPIRY_MARGIN_BLOCKS` | 150 | How far past its blockhash's expiry the finalized height must be before an unseen withdrawal signature counts as dead (room for a lagging RPC node). |
+| `CUSTODY_SCAN_PAGE` | 1000 | Signatures per history page (the RPC maximum). |
+
+### Active vs enabled
+
+Enabled is the setting; **active** needs proof: the key parses and the RPC's
+genesis hash shows the cluster `SOLANA_NETWORK` names. Mainnet never activates
+in this phase (it needs a managed signer and the real-money gate). While
+inactive, deposits and withdrawals return 503 with the reason, which
+`GET /custody/config` also reports (`inactiveReason`):
+
+- `no hot wallet key` — the secret is missing.
+- `the RPC serves X but SOLANA_NETWORK is Y` — wrong RPC URL. Fix the URL; never the check.
+- `the Solana RPC is unreachable` — retried every 30 s on its own.
+
+### What runs when
+
+- A deposit is credited when the page posts its signature; if the tab closed,
+  the `custody` job (worker every minute, the hourly cron) scans the treasury
+  history and credits it. Held deposits are retried on every scan.
+- A withdrawal is driven right after the request; anything left over is moved on
+  by the same job. It is safe to run any number of times at once.
+- The reconcile job logs `CUSTODY SHORTFALL` when the hot wallet holds less than
+  it owes (funded balances + unpaid withdrawals + held deposits + fee reserve) and
+  publishes `scadium_custody_hot_wallet_lamports` / `scadium_custody_liabilities_lamports`.
+  A withdrawal the hot wallet cannot cover waits (log: `withdrawal … waits: hot
+  wallet …`, metric `scadium_treasury_payout_blocked_total{kind="custody_withdraw"}`) —
+  top up the treasury and it goes out on the next job run.
+
+### Economy rules while custody is on
+
+Play-money and deposited SOL share one balance column, so value never moves from
+play to real: jackpot and lottery (and the hidden blackjack) take deposited SOL only; a PvP coinflip is
+joined only from the creator's balance type; airdrop tips and the daily race are
+play-money only; referral commission accrues only between accounts of the same
+type; and a first deposit waits while the player still has play-money bets
+running (`heldReason: open_play_positions`). The first deposit forfeits the
+play-money balance, unclaimed commission and earned free tickets.
+
+### Emergency stop
+
+Use the **global pause** (`POST /api/v1/admin/pause`, see #56): immediately, with
+no redeploy, it stops new wagers, holds incoming deposits (`heldReason: paused`,
+credited after resume), refuses new withdrawals and signs nothing new for queued
+ones — a withdrawal already broadcast is still followed to its outcome.
+
+`CUSTODY_ENABLED=false` is **not** an emergency switch: it turns custody off
+together with the economy rules that keep play-money out of withdrawable
+balances. Use it only to go back to a pure play-money site, and do not switch it
+back on after funded accounts played without the rules.
 
 ## Restart safety
 

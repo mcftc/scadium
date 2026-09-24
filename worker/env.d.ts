@@ -54,7 +54,9 @@ export interface Env {
   METRICS_TOKEN?: string;
   GEO_IP_SALT?: string;
   GEO_PROXY_SECRET?: string;
-  SOLANA_RPC?: string;
+  /** A dedicated RPC may carry an API key, so it is a secret (unset → the network's public RPC). */
+  SOLANA_RPC_URL?: string;
   SOLANA_NETWORK?: string;
-  HOUSE_WALLET_SECRET_KEY?: string;
+  /** Custody hot wallet (ADR 0005): the treasury key. Never a var, never in the repo. */
+  CUSTODY_HOT_WALLET_SECRET_KEY?: string;
 }

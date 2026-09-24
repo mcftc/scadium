@@ -133,6 +133,17 @@ jobs:
       - name: Prisma migrate (test DB)
         run: pnpm --filter @scadium/api exec prisma migrate deploy
 
+      - name: Start the local Solana validator (custody chain suite)
+        # The same compose service developers run — image + flags live in one place.
+        run: |
+          docker compose -f infra/docker-compose.yml up -d solana
+          for i in $(seq 1 60); do
+            curl -sf -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' http://127.0.0.1:8899 && exit 0
+            sleep 1
+          done
+          docker logs scadium-solana; exit 1
+
       - name: Integration tests
         # Fork pool + app.close() guarantee the run cannot hang on the engines'
         # background round timers.

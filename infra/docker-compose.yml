@@ -32,6 +32,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Local Solana validator for the custody chain suite
+  # (apps/api/test/custody-chain.e2e-spec.ts). Agave 3.1.15 — the `stable` tag on
+  # 2026-09-24 — pinned by digest. Agave requires io_uring, which Docker's default
+  # seccomp profile blocks, so this throwaway test chain runs unconfined. The
+  # ledger is reset on every start: nothing here is worth keeping.
+  solana:
+    image: anzaxyz/agave@sha256:dd3fcbcad752a2830de899feb4979416a702745016139a236a47493b9407f3f7
+    container_name: scadium-solana
+    entrypoint: ['solana-test-validator']
+    command: ['--reset', '--ledger', '/tmp/ledger']
+    security_opt:
+      - seccomp=unconfined
+    ports:
+      - '8899:8899'
+      - '8900:8900'
+
 volumes:
   scadium-pg-data:
   scadium-redis-data:
