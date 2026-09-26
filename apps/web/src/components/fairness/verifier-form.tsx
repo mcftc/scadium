@@ -17,6 +17,7 @@ import {
   fetchBeaconRandomness,
   diceRoll,
   limboResult,
+  kenoDraw,
   wheelSpin,
   plinkoDrop,
   mineField,
@@ -39,6 +40,7 @@ import {
   plinkoPayouts,
   diceMultiplier,
   wheelMultiplier,
+  KENO,
   type Card,
   type DiceMode,
 } from '@scadium/shared';
@@ -55,7 +57,8 @@ type Game =
   | 'wheel'
   | 'mines'
   | 'hilo'
-  | 'tower';
+  | 'tower'
+  | 'keno';
 
 const GAMES: Game[] = [
   'crash',
@@ -70,6 +73,7 @@ const GAMES: Game[] = [
   'mines',
   'hilo',
   'tower',
+  'keno',
 ];
 
 const HILO_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
@@ -300,6 +304,9 @@ export function VerifierForm() {
         const seq = await hiloSequence(sSeed, cSeed, nonceNum, HILO.MAX_STEPS + 1);
         const cards = seq.map((c) => `${HILO_RANKS[c % 13]}${HILO_SUITS[Math.floor(c / 13)]}`);
         output = `committed sequence (base card first):\n${cards.join('  ')}`;
+      } else if (game === 'keno') {
+        const drawn = await kenoDraw(sSeed, cSeed, nonceNum, KENO.CELLS, KENO.DRAWS);
+        output = `drawn numbers: ${drawn.join(', ')}  (${KENO.DRAWS} of 1–${KENO.CELLS}; your hits are the picks among them)`;
       } else if (game === 'tower') {
         const traps = await towerTraps(
           sSeed,

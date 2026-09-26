@@ -475,3 +475,22 @@ export async function verifyCommit(serverSeed: string, committedHash: string): P
   const computed = await sha256Hex(serverSeed);
   return computed.toLowerCase() === committedHash.toLowerCase();
 }
+
+/** Matches @scadium/fair `kenoDraw` — `draws` distinct numbers in 1..cells, sorted. */
+export async function kenoDraw(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  cells: number,
+  draws: number,
+): Promise<number[]> {
+  const floats = await floatsFromHmac(serverSeed, clientSeed, nonce, cells);
+  const arr = Array.from({ length: cells }, (_, i) => i + 1);
+  for (let i = cells - 1; i > 0; i -= 1) {
+    const j = Math.floor(floats[cells - 1 - i]! * (i + 1));
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr.slice(0, draws).sort((a, b) => a - b);
+}

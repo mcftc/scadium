@@ -34,6 +34,7 @@ export const GAME_TYPE_INDEX: Record<string, number> = {
   mines: 9,
   hilo: 10,
   tower: 11,
+  keno: 12,
 };
 
 /**

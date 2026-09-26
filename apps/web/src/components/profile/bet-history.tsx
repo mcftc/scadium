@@ -13,6 +13,7 @@ import {
   Rocket,
   Circle,
   Bomb,
+  Grid3x3,
 } from 'lucide-react';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ const gameIcon: Record<string, typeof TrendingUp> = {
   limbo: Rocket,
   plinko: Circle,
   wheel: Bomb,
+  keno: Grid3x3,
 };
 
 const FILTERS: [BetGameType | 'all', string][] = [
@@ -44,6 +46,7 @@ const FILTERS: [BetGameType | 'all', string][] = [
   ['limbo', 'Limbo'],
   ['plinko', 'Plinko'],
   ['wheel', 'Wheel'],
+  ['keno', 'Keno'],
 ];
 
 /**

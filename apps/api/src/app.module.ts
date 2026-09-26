@@ -25,6 +25,7 @@ import { JackpotModule } from './games/jackpot/jackpot.module';
 import { BlackjackModule } from './games/blackjack/blackjack.module';
 import { DiceModule } from './games/dice/dice.module';
 import { LimboModule } from './games/limbo/limbo.module';
+import { KenoModule } from './games/keno/keno.module';
 import { WheelModule } from './games/wheel/wheel.module';
 import { PlinkoModule } from './games/plinko/plinko.module';
 import { MinesModule } from './games/mines/mines.module';
@@ -101,6 +102,7 @@ import { JobsModule } from './jobs/jobs.module';
     ...onlyIfEnabled('blackjack', BlackjackModule),
     ...onlyIfEnabled('dice', DiceModule),
     ...onlyIfEnabled('limbo', LimboModule),
+    ...onlyIfEnabled('keno', KenoModule),
     ...onlyIfEnabled('wheel', WheelModule),
     ...onlyIfEnabled('plinko', PlinkoModule),
     ...onlyIfEnabled('mines', MinesModule),

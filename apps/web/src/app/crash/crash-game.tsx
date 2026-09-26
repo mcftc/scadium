@@ -13,8 +13,9 @@ import { useGameSound } from '@/components/instant/use-game-sound';
 import { SoundToggle } from '@/components/instant/sound-toggle';
 
 /**
- * solpump layout: game center (full immersion), bet panel + players RIGHT.
- * Chat lives in the global left rail (AppShell), not in this component.
+ * solpump layout: round history across the top, bet panel + live bets on the
+ * LEFT, the game canvas taking the rest. On mobile the canvas comes first.
+ * Chat lives in the global (collapsible) left rail, not in this component.
  */
 export function CrashGame() {
   const { state, cashouts, connected, interrupted, dismissInterruption } = useCrash();
@@ -23,55 +24,57 @@ export function CrashGame() {
   const myBet = state?.bets.find((b) => b.playerId === me?.publicId) ?? null;
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4">
-      {/* CENTER: Game area */}
-      <div className="flex-1 min-w-0 space-y-3">
-        <CrashHistory history={state?.history ?? []} />
-        <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[calc(100vh-11rem)] lg:min-h-[560px] lg:max-h-[820px]">
-          <CrashCurve state={state} cashouts={cashouts} myBet={myBet} />
-          {/* Live player count overlay (top-left), like solpump */}
-          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10">
-            <Users className="h-3 w-3 text-cyan-300" />
-            <span className="text-[11px] font-semibold text-white/90 tabular-nums">
-              {state?.bets.length ?? 0}
-            </span>
-            <span className="text-[10px] text-white/50">Playing</span>
-          </div>
-          {/* The round on screen is frozen while the socket is down — say so. */}
-          {state && !connected && (
-            <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-sm border border-amber-400/40 text-[11px] font-semibold text-amber-200">
-              <WifiOff className="h-3 w-3" />
-              Reconnecting…
+    <div className="space-y-3">
+      <CrashHistory history={state?.history ?? []} />
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* Game canvas — right on desktop, first on mobile */}
+        <div className="flex-1 min-w-0 lg:order-2">
+          <div className="relative rounded-2xl overflow-hidden border border-border/50 aspect-[16/9] lg:aspect-auto lg:h-[calc(100vh-13rem)] lg:min-h-[560px] lg:max-h-[860px]">
+            <CrashCurve state={state} cashouts={cashouts} myBet={myBet} />
+            {/* Live player count overlay (top-left), like solpump */}
+            <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10">
+              <Users className="h-3 w-3 text-cyan-300" />
+              <span className="text-[11px] font-semibold text-white/90 tabular-nums">
+                {state?.bets.length ?? 0}
+              </span>
+              <span className="text-[10px] text-white/50">Playing</span>
             </div>
-          )}
-          {/* Mute toggle (top-right) — sound is on by default; bust plays an explosion. */}
-          <SoundToggle sound={sound} className="absolute top-3 right-3 z-20" />
-        </div>
-      </div>
-
-      {/* RIGHT (desktop) / BELOW (mobile): Bet panel + players */}
-      <div className="w-full lg:w-[320px] shrink-0 space-y-4">
-        <Card className="p-5">
-          <CrashBetPanel
-            state={state}
-            connected={connected}
-            interrupted={interrupted}
-            onDismissInterruption={dismissInterruption}
-          />
-        </Card>
-        <Card className="p-4 max-h-[380px] overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
-              Live bets
-            </h3>
-            <span className="flex items-center gap-1 text-[10px] font-semibold text-foreground-muted">
-              <Users className="h-3 w-3" />
-              {state?.bets.length ?? 0} Playing
-            </span>
+            {/* The round on screen is frozen while the socket is down — say so. */}
+            {state && !connected && (
+              <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1 rounded-lg bg-black/60 backdrop-blur-sm border border-amber-400/40 text-[11px] font-semibold text-amber-200">
+                <WifiOff className="h-3 w-3" />
+                Reconnecting…
+              </div>
+            )}
+            {/* Mute toggle (top-right) — sound is on by default; bust plays an explosion. */}
+            <SoundToggle sound={sound} className="absolute top-3 right-3 z-20" />
           </div>
-          <CrashPlayersList bets={state?.bets ?? []} />
-        </Card>
-        <CrashFairness state={state} />
+        </div>
+
+        {/* LEFT (desktop) / BELOW (mobile): Bet panel + players */}
+        <div className="w-full lg:w-[320px] shrink-0 space-y-4 lg:order-1">
+          <Card className="p-5">
+            <CrashBetPanel
+              state={state}
+              connected={connected}
+              interrupted={interrupted}
+              onDismissInterruption={dismissInterruption}
+            />
+          </Card>
+          <Card className="p-4 max-h-[380px] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
+                Live bets
+              </h3>
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-foreground-muted">
+                <Users className="h-3 w-3" />
+                {state?.bets.length ?? 0} Playing
+              </span>
+            </div>
+            <CrashPlayersList bets={state?.bets ?? []} />
+          </Card>
+          <CrashFairness state={state} />
+        </div>
       </div>
     </div>
   );

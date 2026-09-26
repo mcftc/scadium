@@ -59,6 +59,7 @@ export const GAME_CATALOG = [
   { id: 'mines', label: 'Mines', href: '/mines', category: 'instant' },
   { id: 'hilo', label: 'Hi-Lo', href: '/hilo', category: 'instant' },
   { id: 'tower', label: 'Tower', href: '/tower', category: 'instant' },
+  { id: 'keno', label: 'Keno', href: '/keno', category: 'instant' },
 ] as const satisfies readonly GameCatalogEntry[];
 
 /** Every game id the platform knows about, including disabled ones. */
@@ -85,7 +86,7 @@ export type GameType = GameId;
  * Postgres enum migration that cannot run without destroying the bet history
  * the provably-fair audit trail depends on.
  */
-export const DEFAULT_ENABLED_GAMES = ['crash', 'coinflip', 'jackpot', 'lottery'] as const;
+export const DEFAULT_ENABLED_GAMES = ['crash', 'coinflip', 'jackpot', 'lottery', 'keno'] as const;
 
 /**
  * Parse an `ENABLED_GAMES` value (comma-separated ids) into a validated set.
@@ -1128,6 +1129,63 @@ export function plinkoPayouts(rows: number): number[] | undefined {
   return PLINKO_PAYOUTS[rows];
 }
 
+// ---------- Keno ----------
+/**
+ * Keno: the player picks 1–10 of 40 numbers; the round draws 10. The payout
+ * depends on the number of hits, the number of picks and the risk level.
+ *
+ * Paytables are GENERATED, not hand-typed: each risk level is a payout SHAPE
+ * over the hit count (nothing below a threshold, then a power curve), scaled so
+ * the expected return — exact, from the hypergeometric hit distribution — is
+ * the platform RTP, then floored to 2 decimals (so the real RTP is at most the
+ * advertised one). Changing a shape here changes the feel, never the edge.
+ */
+export const KENO = {
+  MIN_BET_LAMPORTS: 1_000_000,
+  MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
+  HOUSE_EDGE,
+  CELLS: 40,
+  DRAWS: 10,
+  MIN_PICKS: 1,
+  MAX_PICKS: 10,
+  /** threshold = the smallest paying hit count, as a share of the picks; power = how steep. */
+  RISKS: {
+    low: { threshold: 0.3, power: 1.2 },
+    medium: { threshold: 0.45, power: 2.2 },
+    high: { threshold: 0.6, power: 3.6 },
+  },
+} as const;
+
+export type KenoRisk = keyof typeof KENO.RISKS;
+export const KENO_RISKS = Object.keys(KENO.RISKS) as KenoRisk[];
+
+function choose(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  let r = 1;
+  for (let i = 1; i <= k; i += 1) r = (r * (n - k + i)) / i;
+  return r;
+}
+
+/** P(exactly `hits` of `picks` numbers are among the draw) — hypergeometric. */
+export function kenoHitProbability(picks: number, hits: number): number {
+  return (
+    (choose(picks, hits) * choose(KENO.CELLS - picks, KENO.DRAWS - hits)) /
+    choose(KENO.CELLS, KENO.DRAWS)
+  );
+}
+
+/** Multiplier per hit count (index = hits, 0..picks) for a risk level. */
+export function kenoPaytable(risk: KenoRisk, picks: number, targetRtp = RTP): number[] {
+  const { threshold, power } = KENO.RISKS[risk];
+  const minHits = Math.max(1, Math.ceil(picks * threshold));
+  const shape = Array.from({ length: picks + 1 }, (_, h) =>
+    h < minHits ? 0 : (h - minHits + 1) ** power,
+  );
+  const rawEv = shape.reduce((ev, w, h) => ev + w * kenoHitProbability(picks, h), 0);
+  const k = targetRtp / rawEv;
+  return shape.map((w) => Math.floor(w * k * 100) / 100);
+}
+
 export const MINES = {
   MIN_BET_LAMPORTS: 1_000_000,
   MAX_BET_LAMPORTS: 100 * LAMPORTS_PER_SOL,
@@ -1328,6 +1386,7 @@ export const GAME_HOUSE_EDGE: Record<GameType, number> = {
   mines: MINES.HOUSE_EDGE,
   tower: TOWER.HOUSE_EDGE,
   hilo: HILO.HOUSE_EDGE,
+  keno: KENO.HOUSE_EDGE,
 };
 
 export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
@@ -1340,6 +1399,7 @@ export const GAME_RTP: Record<string, { rtp: string; note?: string }> = {
   mines: { rtp: rtpPct(MINES.HOUSE_EDGE) },
   tower: { rtp: rtpPct(TOWER.HOUSE_EDGE) },
   hilo: { rtp: rtpPct(HILO.HOUSE_EDGE) },
+  keno: { rtp: rtpPct(KENO.HOUSE_EDGE) },
   blackjack: { rtp: '99.5%', note: 'optimal basic strategy' },
   jackpot: {
     rtp: rtpPct(JACKPOT.HOUSE_EDGE),

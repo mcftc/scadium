@@ -27,6 +27,7 @@ const REFERRAL_FILE: Record<GameType, string> = {
   // Single-shot instant games share one settlement path.
   dice: 'src/games/instant/instant-settle.ts',
   limbo: 'src/games/instant/instant-settle.ts',
+  keno: 'src/games/instant/instant-settle.ts',
   wheel: 'src/games/instant/instant-settle.ts',
   plinko: 'src/games/instant/instant-settle.ts',
   // Stateful instant games share the round-based settlement path.

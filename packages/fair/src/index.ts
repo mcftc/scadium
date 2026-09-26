@@ -14,5 +14,6 @@ export * from './plinko';
 export * from './mines';
 export * from './hilo';
 export * from './tower';
+export * from './keno';
 export * from './engine-draw';
 export * from './derive';

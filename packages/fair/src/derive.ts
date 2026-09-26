@@ -5,6 +5,7 @@ import { crashPoint } from './crash';
 import { coinflipResult } from './coinflip';
 import { diceRoll } from './dice';
 import { limboResult } from './limbo';
+import { kenoDraw } from './keno';
 import { wheelSpin } from './wheel';
 import { plinkoDrop } from './plinko';
 import { mineField } from './mines';
@@ -162,6 +163,8 @@ export function deriveOutcome(
       return { sequence: hiloSequence(s, c, n, Number(p.length ?? 26)) };
     case 'tower':
       return { traps: towerTraps(s, c, n, TOWER.ROWS, TOWER.COLUMNS, TOWER.SAFE_PER_ROW) };
+    case 'keno':
+      return { drawn: kenoDraw(s, c, n) };
     case 'jackpot':
       return {
         ticket: jackpotWinningTicket(s, c, n, BigInt(String(p.totalLamports ?? '1'))).toString(),

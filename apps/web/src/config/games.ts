@@ -11,6 +11,7 @@ import {
   Gem,
   Layers,
   ArrowUpDown,
+  Grid3x3,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -111,6 +112,11 @@ const PRESENTATION: Record<GameId, Omit<GameMeta, 'id' | 'label' | 'href' | 'cat
     icon: Layers,
     description: 'Climb floor by floor. One wrong tile ends it.',
     accent: 'from-[#FBBF24] to-[#D97706]',
+  },
+  keno: {
+    icon: Grid3x3,
+    description: 'Pick up to 10 numbers. Ten are drawn.',
+    accent: 'from-[#2DD4BF] to-[#0D9488]',
   },
 };
 

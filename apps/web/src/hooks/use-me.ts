@@ -63,7 +63,8 @@ export type BetGameType =
   | 'wheel'
   | 'mines'
   | 'tower'
-  | 'hilo';
+  | 'hilo'
+  | 'keno';
 
 export interface BetSeed {
   clientSeed: string;

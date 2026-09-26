@@ -37,6 +37,7 @@ enum GameType {
   mines
   hilo
   tower
+  keno
 }
 
 // Dual-currency model (sweepstakes): `jeton` is the bought, NON-redeemable

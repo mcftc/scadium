@@ -23,15 +23,49 @@ const WINDOW_S = CRASH.BET_WINDOW_MS / 1000;
  * multipliers (2–8×), then eases out to park top-right at high m (the starfield
  * + rescaling ruler carry the remaining sense of speed).
  */
-const AXIS_RAMP = 3;
+const AXIS_RAMP = 4.5; // slower climb across the canvas (was 3 — the rocket raced to the corner)
 const LAUNCH_EASE = 2; // ease-in on the flight fraction → slow launch, then accelerate
 function crashAxis(multiplier: number) {
   const m = Math.max(1.0001, multiplier);
-  // progress ≈ 8% @2x, 40% @4x, 75% @7x, 90% @10x — flat launch, mid-flight accel.
+  // progress ≈ 4% @2x, 23% @4x, 51% @7x, 71% @10x, 91% @20x — flat launch, gradual accel.
   const progress = Math.pow(1 - Math.exp(-(m - 1) / AXIS_RAMP), LAUNCH_EASE);
   const fxTip = 0.08 + 0.82 * progress; // tip x: 8% → 90% of plot width
   const fyTip = 0.15 + 0.72 * progress; // tip y: 15% → 87% of plot height
   return { m, progress, fxTip, fyTip, yMax: m / fyTip };
+}
+
+/**
+ * Display-only smoothing of the rocket's multiplier. The server ticks at 20 Hz;
+ * drawing each tick directly makes the rocket jump in steps. This eases the
+ * DRAWN value toward the latest tick every animation frame (frame-rate
+ * independent), and snaps on a new round or a bust — the payout number, the
+ * bust point and every outcome still come straight from the server.
+ */
+const SMOOTHING_PER_SECOND = 9;
+function useSmoothedMultiplier(target: number, phase: string | undefined, roundId?: string) {
+  const [value, setValue] = useState(target);
+  const current = useRef(target);
+  useEffect(() => {
+    if (phase !== 'running') {
+      current.current = target;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- snap the drawn value outside flight
+      setValue(target);
+      return;
+    }
+    let raf = 0;
+    let prev = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(0.1, (now - prev) / 1000);
+      prev = now;
+      const k = 1 - Math.exp(-SMOOTHING_PER_SECOND * dt);
+      current.current += (target - current.current) * k;
+      setValue(current.current);
+      if (Math.abs(target - current.current) > 1e-4) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, phase, roundId]);
+  return value;
 }
 
 /**
@@ -71,6 +105,7 @@ export function CrashCurve({
   // Fire the explosion SFX exactly once when a round busts (keyed on roundId so a
   // re-render in the busted phase doesn't replay it).
   const { explosion, cashout } = useGameSound();
+  const drawnM = useSmoothedMultiplier(state?.multiplier ?? 1, state?.phase, state?.roundId);
   const bustedRound = useRef<string | null>(null);
   useEffect(() => {
     if (state?.phase === 'busted' && state.roundId && bustedRound.current !== state.roundId) {
@@ -119,8 +154,8 @@ export function CrashCurve({
     <div className="absolute inset-0 bg-[#080A12] overflow-hidden">
       <Starfield speeding={running} />
 
-      {/* 3D Perspective Grid Floor */}
-      <PerspectiveGrid />
+      {/* 3D perspective floor — scrolls toward the viewer in flight */}
+      <PerspectiveGrid phase={state.phase} multiplier={m} />
 
       {/* Gradient atmosphere */}
       <div
@@ -148,10 +183,12 @@ export function CrashCurve({
       </AnimatePresence>
 
       {/* Multiplier ruler + horizontal grid lines */}
-      <MultiplierRuler multiplier={m} phase={state.phase} />
+      <MultiplierRuler multiplier={running ? drawnM : m} phase={state.phase} />
 
       {/* Crash curve + rocket (only when running or busted) */}
-      {(running || busted) && <CrashTrail multiplier={m} busted={busted} cashouts={cashouts} />}
+      {(running || busted) && (
+        <CrashTrail multiplier={running ? drawnM : m} busted={busted} cashouts={cashouts} />
+      )}
 
       {/* Center display — nudged a little below centre so it sits over the curve */}
       <div className="absolute inset-0 flex flex-col items-center justify-center pt-[12%] z-10 pointer-events-none">
@@ -294,29 +331,69 @@ function Starfield({ speeding }: { speeding: boolean }) {
   );
 }
 
-/** CSS-only 3D perspective grid receding into the horizon. */
-function PerspectiveGrid() {
+/**
+ * The floor: a 3D perspective grid receding to a glowing horizon (solpump's
+ * look, CSS only — no video asset to ship). In flight the grid scrolls toward
+ * the viewer, faster as the multiplier climbs, so the ground itself sells the
+ * speed; while waiting it drifts slowly, and on a bust it stops dead.
+ */
+const GRID_CELL_PX = 64;
+function PerspectiveGrid({ phase, multiplier }: { phase: string; multiplier: number }) {
+  const running = phase === 'running';
+  const busted = phase === 'busted';
+  // Seconds per grid cell: ~1.1 s at launch, down to ~0.25 s at high multipliers.
+  const secondsPerCell = running
+    ? Math.max(0.25, 1.1 / (1 + Math.log(Math.max(1, multiplier))))
+    : 5;
+  const line = busted ? 'rgba(239,68,68,0.28)' : 'rgba(139,92,246,0.32)';
+  const lineSoft = busted ? 'rgba(239,68,68,0.12)' : 'rgba(139,92,246,0.16)';
   return (
-    <div className="absolute inset-0 overflow-hidden" style={{ perspective: '400px' }}>
+    <div className="absolute inset-0 overflow-hidden" style={{ perspective: '420px' }}>
+      {/* horizon glow */}
       <div
-        className="absolute left-[-50%] right-[-50%] bottom-0 h-[70%]"
+        className="absolute inset-x-0 h-[18%] transition-colors duration-500"
         style={{
-          transform: 'rotateX(60deg)',
-          transformOrigin: 'center bottom',
-          backgroundImage: `
-            linear-gradient(90deg, rgba(100,100,180,0.12) 1px, transparent 1px),
-            linear-gradient(0deg, rgba(100,100,180,0.12) 1px, transparent 1px)
-          `,
-          backgroundSize: '80px 80px',
+          bottom: '27%',
+          background: busted
+            ? 'radial-gradient(60% 100% at 50% 100%, rgba(239,68,68,0.28), transparent 70%)'
+            : 'radial-gradient(60% 100% at 50% 100%, rgba(139,92,246,0.30), transparent 70%)',
         }}
+      />
+      <div
+        className="absolute left-[-60%] right-[-60%] bottom-0 h-[72%]"
+        style={{ transform: 'rotateX(64deg)', transformOrigin: 'center bottom' }}
       >
-        <div className="absolute inset-0 bg-gradient-to-b from-[#080A12] via-transparent to-transparent" />
+        <motion.div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `
+              linear-gradient(90deg, ${line} 1px, transparent 1px),
+              linear-gradient(0deg, ${lineSoft} 1px, transparent 1px)
+            `,
+            backgroundSize: `${GRID_CELL_PX}px ${GRID_CELL_PX}px`,
+          }}
+          animate={
+            busted
+              ? { backgroundPositionY: 0 }
+              : { backgroundPositionY: [`0px`, `${GRID_CELL_PX}px`] }
+          }
+          transition={
+            busted
+              ? { duration: 0 }
+              : { duration: secondsPerCell, repeat: Infinity, ease: 'linear' }
+          }
+        />
+        {/* fade the far end into the horizon */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#080A12] via-[#080A12]/40 to-transparent" />
       </div>
       <div
         className="absolute left-0 right-0 h-px"
         style={{
-          bottom: '30%',
-          background: 'linear-gradient(90deg, transparent, rgba(100,100,180,0.35), transparent)',
+          bottom: '28%',
+          background: busted
+            ? 'linear-gradient(90deg, transparent, rgba(239,68,68,0.6), transparent)'
+            : 'linear-gradient(90deg, transparent, rgba(167,139,250,0.7), transparent)',
+          boxShadow: busted ? '0 0 18px rgba(239,68,68,0.5)' : '0 0 18px rgba(139,92,246,0.55)',
         }}
       />
     </div>
@@ -561,7 +638,7 @@ function CrashTrail({
       {/* Our rocket at the tip of the curve, nose along the tangent */}
       {last && !busted && (
         <div
-          className="absolute z-10 transition-all duration-75"
+          className="absolute z-10"
           style={{ left: `${last.x}%`, top: `${last.y}%`, transform: 'translate(-50%, -50%)' }}
         >
           <div

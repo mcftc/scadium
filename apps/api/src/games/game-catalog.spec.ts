@@ -34,6 +34,7 @@ describe('game catalogue', () => {
       'mines',
       'hilo',
       'tower',
+      'keno',
     ]);
   });
 
@@ -42,8 +43,8 @@ describe('game catalogue', () => {
     for (const g of GAME_CATALOG) expect(g.href).toBe(`/${g.id}`);
   });
 
-  it('defaults to the four games currently in scope', () => {
-    expect([...DEFAULT_ENABLED_GAMES]).toEqual(['crash', 'coinflip', 'jackpot', 'lottery']);
+  it('defaults to the games currently in scope', () => {
+    expect([...DEFAULT_ENABLED_GAMES]).toEqual(['crash', 'coinflip', 'jackpot', 'lottery', 'keno']);
     // Every default must actually exist in the catalogue.
     for (const id of DEFAULT_ENABLED_GAMES) expect(ALL_GAME_IDS).toContain(id);
   });

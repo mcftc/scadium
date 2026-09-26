@@ -54,7 +54,7 @@ describe('game gating coverage', () => {
     }
   });
 
-  it('ships the four games currently in scope by default', () => {
-    expect([...DEFAULT_ENABLED_GAMES]).toEqual(['crash', 'coinflip', 'jackpot', 'lottery']);
+  it('ships the games currently in scope by default', () => {
+    expect([...DEFAULT_ENABLED_GAMES]).toEqual(['crash', 'coinflip', 'jackpot', 'lottery', 'keno']);
   });
 });

@@ -24,6 +24,7 @@ const WAGER_GATE_FILE: Record<GameType, string> = {
   // The single-shot stake-style instant games share one wager/settle path.
   dice: 'src/games/instant/instant-settle.ts',
   limbo: 'src/games/instant/instant-settle.ts',
+  keno: 'src/games/instant/instant-settle.ts',
   wheel: 'src/games/instant/instant-settle.ts',
   plinko: 'src/games/instant/instant-settle.ts',
   // The stateful instant games (round-based start/step/cashout) gate the wager

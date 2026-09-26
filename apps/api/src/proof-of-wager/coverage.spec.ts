@@ -25,6 +25,7 @@ const SETTLEMENT_FILE: Record<GameType, string> = {
   // The stake-style instant games share one settlement path.
   dice: 'src/games/instant/instant-settle.ts',
   limbo: 'src/games/instant/instant-settle.ts',
+  keno: 'src/games/instant/instant-settle.ts',
   wheel: 'src/games/instant/instant-settle.ts',
   plinko: 'src/games/instant/instant-settle.ts',
   // The stateful instant games (round-based start/step/cashout) share one

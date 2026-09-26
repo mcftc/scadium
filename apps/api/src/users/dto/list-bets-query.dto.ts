@@ -13,6 +13,7 @@ const GAME_TYPES = [
   'jackpot',
   'dice',
   'limbo',
+  'keno',
   'wheel',
   'plinko',
   'mines',
